@@ -21,4 +21,5 @@
 - Role configuration đã chuyển vào bảng metadata bền vững, seed đủ tám role và được chụp vào `config_snapshot` của từng run; test restart-equivalent persistence qua database pass.
 - OpenAPI và TaskResult JSON Schema hiện được xuất từ FastAPI/Pydantic canonical source bằng `scripts/export_contracts.py`; không có schema frontend/adapter thứ hai.
 - Worker thực thi task theo dependency DAG; role `codex-cli` được route vào worktree/TaskExecutor khi có `project.repo` và file scope hợp lệ, còn thiếu điều kiện sẽ fail rõ ràng thay vì fallback fixture.
+- DAG ordering/cycle guard đã tách thành module được test độc lập; cycle hoặc dependency không thỏa bị reject trước khi task chạy.
 - Chưa đạt: Paperclip server/contract end-to-end, Docker Compose image runtime (Docker daemon chưa có), full role-specific runner routing, and production model configuration/usage accounting for every role.

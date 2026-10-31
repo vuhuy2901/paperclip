@@ -6,6 +6,7 @@ from apps.core_api.db import SessionLocal, Base, engine
 from apps.core_api.models import WorkflowRun, Approval, Deployment, Task, Artifact, ChangeRequest, Project
 from apps.core_api.service import transition, emit
 from apps.orchestration.graph import workflow_graph
+from apps.orchestration.dag import order_tasks
 from apps.core_api.config import settings
 from apps.runners.local import LocalDeterministicRunner
 from apps.runners.factory import build_runner
@@ -24,16 +25,13 @@ def process_once():
         graph_result = workflow_graph.invoke({"run_id": run.id, "repair_count": run.repair_count, "evidence_status": "pass"})
         emit(db, run.id, "orchestration.graph_completed", {"stage": graph_result.get("stage"), "mode": "deterministic"})
         store = ArtifactStore(settings.artifact_root)
-        tasks = list(db.scalars(select(Task).where(Task.run_id == run.id)))
-        completed_roles: set[str] = set()
-        while tasks:
-            ready = next((task for task in tasks if all(dep in completed_roles for dep in (task.depends_on or []))), None)
-            if ready is None:
-                emit(db, run.id, "task.graph_invalid", {"remaining": [task.role for task in tasks]})
-                for status in ["analyzing", "planning", "implementing"]:
-                    if run.status != status: transition(db, run, status)
-                transition(db, run, "failed"); db.commit(); return True
-            task = ready; tasks.remove(task)
+        try: tasks = order_tasks(list(db.scalars(select(Task).where(Task.run_id == run.id))))
+        except ValueError as exc:
+            emit(db, run.id, "task.graph_invalid", {"reason": str(exc)})
+            for status in ["analyzing", "planning", "implementing"]:
+                if run.status != status: transition(db, run, status)
+            transition(db, run, "failed"); db.commit(); return True
+        for task in tasks:
             task.status = "running"
             emit(db, run.id, "task.started", {"task_id": task.id, "role": task.role})
             role_cfg = (run.config_snapshot or {}).get("roles", {}).get(task.role, {"runner":"local-deterministic"})
@@ -62,7 +60,6 @@ def process_once():
             db.add(Artifact(run_id=run.id, type="role-handoff-fixture", relative_path=item["relative_path"], sha256=item["sha256"], size=item["size"], producer=task.role))
             task.status = "completed"
             emit(db, run.id, "task.completed", {"task_id": task.id, "role": task.role, "artifact": item["relative_path"], "mode": "fixture"})
-            completed_roles.add(task.role)
         evidence = run_profile("python-tests", Path.cwd())
         run.baseline_sha = run.baseline_sha or evidence.candidate_sha
         run.candidate_sha = evidence.candidate_sha
