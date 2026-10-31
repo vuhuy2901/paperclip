@@ -16,4 +16,5 @@
 - Clean install packaging đã được sửa bằng explicit setuptools discovery; `pip install -e .[dev]` thành công, `pytest` hiện đạt 20/20, hai Vite UI build thành công và Compose config hợp lệ.
 - Codex CLI đã được smoke-test thật qua wrapper read-only; TaskExecutor/worktree commit boundary yêu cầu file-scope có thay đổi thật trước khi nhận handoff.
 - Write-path model smoke đã tạo đúng một file trong worktree và commit thật `9348c332f30f5abb1c96cae6a51f104c7d9a5f28`; main branch không bị sửa.
+- Paperclip package adapter đã theo contract official: root metadata, `createServerAdapter`, `execute`, `testEnvironment`, runtime model/sandbox và defensive JSONL parsing; package `typecheck` đạt.
 - Chưa đạt: Paperclip server/contract end-to-end, Docker Compose image runtime (Docker daemon chưa có), full role-specific runner routing, and production model configuration/usage accounting for every role.
