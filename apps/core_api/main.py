@@ -114,7 +114,7 @@ def approval_decision(approval_id: str, body: Decision, db: Session = Depends(ge
         else: run.repair_count += 1; transition(db, run, "repairing")
     db.commit(); return approval
 
-ROLE_CONFIG = {r: {"id": r, "runner": "local-deterministic", "model": "configured-at-runtime", "timeout_seconds": 900, "tool_policy": []} for r in ["project-manager","architect","ui-ux-designer","backend-developer","frontend-developer","code-reviewer","tester","devops"]}
+ROLE_CONFIG = {r: {"id": r, "runner": "local-deterministic", "model": "configured-at-runtime", "timeout_seconds": 900, "sandbox": "workspace-write", "tool_policy": []} for r in ["project-manager","architect","ui-ux-designer","backend-developer","frontend-developer","code-reviewer","tester","devops"]}
 
 @app.get("/api/roles", dependencies=[Depends(auth)])
 def roles(): return list(ROLE_CONFIG.values())
@@ -123,6 +123,7 @@ def roles(): return list(ROLE_CONFIG.values())
 def update_role(role_id: str, body: RoleUpdate):
     if role_id not in ROLE_CONFIG: raise HTTPException(404, "role not found")
     if body.runner not in {"local-deterministic", "codex-cli", "xera", "reviewer", "devops"}: raise HTTPException(422, "unsupported runner")
+    if body.sandbox not in {"read-only", "workspace-write"}: raise HTTPException(422, "unsupported sandbox")
     ROLE_CONFIG[role_id] = {"id": role_id, **body.model_dump()}; return ROLE_CONFIG[role_id]
 
 @app.post("/api/integrations/paperclip/wake", dependencies=[Depends(auth)])

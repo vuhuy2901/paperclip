@@ -29,6 +29,7 @@ class RoleUpdate(BaseModel):
     runner: str
     model: str
     timeout_seconds: int = 900
+    sandbox: str = "workspace-write"
     tool_policy: list[str] = []
 
 class TaskResult(BaseModel):
