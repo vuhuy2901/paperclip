@@ -15,4 +15,5 @@
 - Alembic migration path, bounded infrastructure retry policy và A/B/C evaluation harness với 5 fixed checks đã được thêm; evaluation lưu raw output, không bịa chi phí/token hay superiority.
 - Clean install packaging đã được sửa bằng explicit setuptools discovery; `pip install -e .[dev]` thành công, `pytest` hiện đạt 20/20, hai Vite UI build thành công và Compose config hợp lệ.
 - Codex CLI đã được smoke-test thật qua wrapper read-only; TaskExecutor/worktree commit boundary yêu cầu file-scope có thay đổi thật trước khi nhận handoff.
-- Chưa đạt: Paperclip server/contract end-to-end, model thật, Docker Compose image runtime (Docker daemon chưa có), approval UI action wiring đầy đủ và các role runners thật.
+- Write-path model smoke đã tạo đúng một file trong worktree và commit thật `9348c332f30f5abb1c96cae6a51f104c7d9a5f28`; main branch không bị sửa.
+- Chưa đạt: Paperclip server/contract end-to-end, Docker Compose image runtime (Docker daemon chưa có), full role-specific runner routing, and production model configuration/usage accounting for every role.
