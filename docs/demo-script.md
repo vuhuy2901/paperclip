@@ -6,4 +6,6 @@
 4. Run the worker or inspect its event stream with `GET /api/runs/{id}/events`.
 5. Verify duplicate submission with the same idempotency key returns the same run.
 
-The VIP → shipping fee → cancellation business demo is not yet implemented; it is tracked as the next product slice.
+6. Start the storefront API and UI, then compare `regular-demo` and `vip-demo` pricing.
+7. Create an order with `SAVE10` as VIP and verify the VIP unit price is used once, not stacked with the promo.
+8. Create a national-shipping order, fetch it again, cancel it, and verify the stored total and price snapshot do not change.

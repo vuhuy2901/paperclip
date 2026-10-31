@@ -2,7 +2,7 @@ services:
   core-api:
     build: .
     environment:
-      DATABASE_URL: sqlite:////app/data/core.db
+      DATABASE_URL: postgresql+psycopg://core:core@postgres:5432/core
       SERVICE_TOKEN: dev-service-token
     ports: ["8000:8000"]
     volumes: ["core-data:/app/data"]
@@ -11,15 +11,18 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    depends_on:
+      postgres: {condition: service_healthy}
   worker:
     build: .
     command: ["python", "-m", "apps.worker.main"]
     environment:
-      DATABASE_URL: sqlite:////app/data/core.db
+      DATABASE_URL: postgresql+psycopg://core:core@postgres:5432/core
       SERVICE_TOKEN: dev-service-token
     volumes: ["core-data:/app/data"]
     depends_on:
       core-api: {condition: service_healthy}
+      postgres: {condition: service_healthy}
   review-ui:
     build: ./apps/review-ui
     ports: ["8080:80"]
@@ -34,5 +37,35 @@ services:
     ports: ["8090:8090"]
     depends_on:
       core-api: {condition: service_healthy}
+  storefront-api:
+    build:
+      context: .
+      dockerfile: templates/storefront/backend/Dockerfile
+    ports: ["8200:8200"]
+    environment:
+      STOREFRONT_DATABASE_URL: postgresql+psycopg://storefront:storefront@postgres:5432/storefront
+    depends_on:
+      postgres: {condition: service_healthy}
+  storefront-ui:
+    build: ./templates/storefront/frontend
+    ports: ["8201:80"]
+    depends_on:
+      storefront-api: {condition: service_started}
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: core
+      POSTGRES_PASSWORD: core
+      POSTGRES_DB: core
+    ports: ["5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/20-storefront.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U core -d core"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 volumes:
   core-data:
+  postgres-data:

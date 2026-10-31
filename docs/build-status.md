@@ -7,4 +7,6 @@
 - Đã kiểm tra `docker compose config`; Docker image build chưa chạy được vì Docker Desktop engine chưa hoạt động/có mặt trên máy (`dockerDesktopLinuxEngine` pipe không tồn tại).
 - Trusted verification runner đã có profile allowlist, timeout, candidate SHA binding và manifest hash; test harness phát hiện và đã loại vòng đệ quy.
 - Paperclip adapter boundary và review UI đã có build artifact; review UI build production thành công, có empty/loading/error-shaped flow và nút approval/request changes nối theo run boundary.
-- Chưa đạt: Paperclip server/contract đã xác minh end-to-end, LangGraph graph thực thi, model thật, storefront, Docker Compose image runtime (Docker daemon chưa có), approval UI action wiring đầy đủ và các role runners thật.
+- Storefront demo backend/frontend đã có seed tái lập, tier pricing, promo non-stacking, shipping rules, immutable order snapshot, cancellation guard và regression tests; storefront UI build production thành công.
+- LangGraph graph thật đã được thêm vào worker path; workspace path/artifact hash/preview manager boundaries đã có tests.
+- Chưa đạt: Paperclip server/contract end-to-end, model thật, Docker Compose image runtime (Docker daemon chưa có), approval UI action wiring đầy đủ và các role runners thật.
