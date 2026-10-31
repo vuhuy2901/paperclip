@@ -11,4 +11,5 @@
 - LangGraph graph thật đã được thêm vào worker path; workspace path/artifact hash/preview manager boundaries đã có tests.
 - CLI smoke run đã thực thi submit → queued run → worker → `awaiting_acceptance`; lệnh tài liệu đã được sửa để hỗ trợ `--name` và `--change` đúng như README.
 - Worker hiện tạo role-handoff artifacts, trusted test evidence, candidate SHA và chỉ tạo approval khi PreviewManager trả `ready`; smoke run khi Docker engine thiếu đã bị gate đúng thành `failed`.
+- Paperclip wake hiện tạo run thật qua Core API và chống trùng bằng idempotency; event stream SSE có cursor route riêng; Codex CLI runner wrapper đã có structured result/timeout/error classification.
 - Chưa đạt: Paperclip server/contract end-to-end, model thật, Docker Compose image runtime (Docker daemon chưa có), approval UI action wiring đầy đủ và các role runners thật.

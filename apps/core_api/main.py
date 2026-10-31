@@ -47,7 +47,7 @@ def create_run(change_id: str, body: RunCreate, db: Session = Depends(get_db)):
     if not c: raise HTTPException(404, "change not found")
     existing = db.scalar(select(WorkflowRun).where(WorkflowRun.change_id == change_id, WorkflowRun.idempotency_key == body.idempotency_key))
     if existing: return existing
-    run = WorkflowRun(change_id=change_id, idempotency_key=body.idempotency_key, config_snapshot={"runner":"local-deterministic","max_repairs":3})
+    run = WorkflowRun(change_id=change_id, idempotency_key=body.idempotency_key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles": ROLE_CONFIG})
     db.add(run); db.flush(); seed_tasks(db, run, c.text); emit(db, run.id, "run.queued", {"change_id": change_id}); db.commit(); db.refresh(run); return run
 
 @app.get("/api/runs/{run_id}", dependencies=[Depends(auth)])
@@ -59,6 +59,14 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
 @app.get("/api/runs/{run_id}/events", dependencies=[Depends(auth)])
 def get_events(run_id: str, after: int = Query(0), db: Session = Depends(get_db)):
     return list(db.scalars(select(Event).where(Event.run_id == run_id, Event.sequence > after).order_by(Event.sequence)))
+
+@app.get("/api/runs/{run_id}/events/stream", dependencies=[Depends(auth)])
+def stream_events(run_id: str, after: int = Query(0), db: Session = Depends(get_db)):
+    events = list(db.scalars(select(Event).where(Event.run_id == run_id, Event.sequence > after).order_by(Event.sequence)))
+    def generate():
+        for event in events:
+            yield f"id: {event.sequence}\ndata: {json.dumps({'sequence': event.sequence, 'type': event.type, 'payload': event.payload}, default=str)}\n\n"
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"cache-control":"no-cache", "x-run-id":run_id})
 
 @app.post("/api/runs/{run_id}/cancel", dependencies=[Depends(auth)])
 def cancel_run(run_id: str, db: Session = Depends(get_db)):
@@ -118,4 +126,13 @@ def update_role(role_id: str, body: RoleUpdate):
     ROLE_CONFIG[role_id] = {"id": role_id, **body.model_dump()}; return ROLE_CONFIG[role_id]
 
 @app.post("/api/integrations/paperclip/wake", dependencies=[Depends(auth)])
-def paperclip_wake(payload: dict, db: Session = Depends(get_db)): return {"accepted": True, "deduplicated": bool(payload.get("idempotency_key")), "payload": payload}
+def paperclip_wake(payload: dict, db: Session = Depends(get_db)):
+    change_id, key = payload.get("change_id"), payload.get("idempotency_key")
+    if not change_id or not key: raise HTTPException(422, "change_id and idempotency_key are required")
+    change = db.get(ChangeRequest, change_id)
+    if not change: raise HTTPException(404, "change not found")
+    existing = db.scalar(select(WorkflowRun).where(WorkflowRun.change_id == change_id, WorkflowRun.idempotency_key == key))
+    if existing: return {"accepted": True, "deduplicated": True, "run_id": existing.id}
+    run = WorkflowRun(change_id=change_id, idempotency_key=key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles":ROLE_CONFIG})
+    db.add(run); db.flush(); seed_tasks(db, run, change.text); emit(db, run.id, "paperclip.wake.accepted", {"change_id": change_id, "key": key}); db.commit()
+    return {"accepted": True, "deduplicated": False, "run_id": run.id}

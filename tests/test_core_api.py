@@ -31,3 +31,12 @@ def test_role_update_and_feedback():
     assert role.status_code == 200 and role.json()["runner"] == "xera"
     feedback = client.post(f"/api/runs/{r['id']}/feedback", headers=H, json={"text":"Needs clearer error state","version":"candidate-1","route":"/acceptance"})
     assert feedback.status_code == 200
+
+def test_paperclip_wake_creates_only_one_run():
+    p = client.post("/api/projects", headers=H, json={"name":"paperclip-demo"}).json()
+    c = client.post(f"/api/projects/{p['id']}/changes", headers=H, json={"text":"Wake me once"}).json()
+    payload = {"change_id": c["id"], "idempotency_key": "paperclip-1"}
+    first = client.post("/api/integrations/paperclip/wake", headers=H, json=payload).json()
+    second = client.post("/api/integrations/paperclip/wake", headers=H, json=payload).json()
+    assert first["deduplicated"] is False
+    assert second == {"accepted": True, "deduplicated": True, "run_id": first["run_id"]}
