@@ -1,10 +1,13 @@
 from pathlib import Path
 from fastapi import FastAPI, Depends, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
+import json
+import time
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from .db import Base, engine, get_db
-from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task
-from .schemas import ProjectCreate, ChangeCreate, RunCreate, Decision, Feedback
+from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment
+from .schemas import ProjectCreate, ChangeCreate, RunCreate, Decision, Feedback, RoleUpdate
 from .service import emit, seed_tasks, transition
 
 Path("data").mkdir(exist_ok=True)
@@ -67,8 +70,48 @@ def cancel_run(run_id: str, db: Session = Depends(get_db)):
 @app.get("/api/runs/{run_id}/artifacts", dependencies=[Depends(auth)])
 def artifacts(run_id: str, db: Session = Depends(get_db)): return list(db.scalars(select(Artifact).where(Artifact.run_id == run_id)))
 
+@app.get("/api/artifacts/{artifact_id}", dependencies=[Depends(auth)])
+def artifact(artifact_id: str, db: Session = Depends(get_db)):
+    item = db.get(Artifact, artifact_id)
+    if not item: raise HTTPException(404, "artifact not found")
+    return item
+
+@app.get("/api/runs/{run_id}/preview", dependencies=[Depends(auth)])
+def preview(run_id: str, db: Session = Depends(get_db)):
+    deployment = db.scalar(select(Deployment).where(Deployment.run_id == run_id).order_by(Deployment.id.desc()))
+    return {"baseline": None, "candidate": deployment.url if deployment else None, "status": deployment.status if deployment else "not_deployed", "deployment": deployment}
+
+@app.post("/api/runs/{run_id}/feedback", dependencies=[Depends(auth)])
+def feedback(run_id: str, body: Feedback, db: Session = Depends(get_db)):
+    if not db.get(WorkflowRun, run_id): raise HTTPException(404, "run not found")
+    record = FeedbackRecord(run_id=run_id, **body.model_dump()); db.add(record); emit(db, run_id, "po.feedback", body.model_dump()); db.commit(); db.refresh(record); return record
+
+@app.post("/api/approvals/{approval_id}/decision", dependencies=[Depends(auth)])
+def approval_decision(approval_id: str, body: Decision, db: Session = Depends(get_db)):
+    approval = db.get(Approval, approval_id)
+    if not approval: raise HTTPException(404, "approval not found")
+    if approval.artifact_version != body.artifact_version: raise HTTPException(409, "approval artifact version is stale")
+    if body.decision not in {"approve", "reject", "request_changes"}: raise HTTPException(422, "invalid decision")
+    approval.status = {"approve":"approved", "reject":"rejected", "request_changes":"changes_requested"}[body.decision]
+    approval.actor = "po"; approval.reason = body.reason
+    emit(db, approval.run_id, "po.decision", {"approval_id": approval.id, "decision": body.decision, "artifact_version": body.artifact_version})
+    run = db.get(WorkflowRun, approval.run_id)
+    if body.decision == "approve" and run.status == "awaiting_acceptance": transition(db, run, "accepted")
+    if body.decision == "request_changes" and run.status == "awaiting_acceptance":
+        if run.repair_count >= 3: transition(db, run, "rejected")
+        else: run.repair_count += 1; transition(db, run, "repairing")
+    db.commit(); return approval
+
+ROLE_CONFIG = {r: {"id": r, "runner": "local-deterministic", "model": "configured-at-runtime", "timeout_seconds": 900, "tool_policy": []} for r in ["project-manager","architect","ui-ux-designer","backend-developer","frontend-developer","code-reviewer","tester","devops"]}
+
 @app.get("/api/roles", dependencies=[Depends(auth)])
-def roles(): return [{"id": r, "runner": "local-deterministic", "model": "configured-at-runtime"} for r in ["project-manager","architect","ui-ux-designer","backend-developer","frontend-developer","code-reviewer","tester","devops"]]
+def roles(): return list(ROLE_CONFIG.values())
+
+@app.put("/api/roles/{role_id}", dependencies=[Depends(auth)])
+def update_role(role_id: str, body: RoleUpdate):
+    if role_id not in ROLE_CONFIG: raise HTTPException(404, "role not found")
+    if body.runner not in {"local-deterministic", "codex-cli", "xera", "reviewer", "devops"}: raise HTTPException(422, "unsupported runner")
+    ROLE_CONFIG[role_id] = {"id": role_id, **body.model_dump()}; return ROLE_CONFIG[role_id]
 
 @app.post("/api/integrations/paperclip/wake", dependencies=[Depends(auth)])
 def paperclip_wake(payload: dict, db: Session = Depends(get_db)): return {"accepted": True, "deduplicated": bool(payload.get("idempotency_key")), "payload": payload}

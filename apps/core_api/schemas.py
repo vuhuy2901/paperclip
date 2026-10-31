@@ -25,6 +25,12 @@ class Feedback(BaseModel):
     route: str | None = None
     acceptance_id: str | None = None
 
+class RoleUpdate(BaseModel):
+    runner: str
+    model: str
+    timeout_seconds: int = 900
+    tool_policy: list[str] = []
+
 class TaskResult(BaseModel):
     schema_version: str = "1"
     task_id: str

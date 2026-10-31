@@ -69,3 +69,36 @@ class Artifact(Base):
     size: Mapped[int] = mapped_column(Integer)
     producer: Mapped[str] = mapped_column(String(100))
     commit_sha: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+class Approval(Base):
+    __tablename__ = "approvals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"))
+    kind: Mapped[str] = mapped_column(String(40), default="candidate")
+    artifact_version: Mapped[str] = mapped_column(String(100))
+    candidate_sha: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending")
+    actor: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class FeedbackRecord(Base):
+    __tablename__ = "feedback"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"))
+    text: Mapped[str] = mapped_column(Text)
+    version: Mapped[str] = mapped_column(String(100))
+    route: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    acceptance_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class Deployment(Base):
+    __tablename__ = "deployments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"))
+    commit_sha: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    image_digest: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending")
+    health_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    smoke_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
