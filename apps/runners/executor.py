@@ -16,8 +16,8 @@ class ExecutionHandoff:
 class TaskExecutor:
     def __init__(self, runner: CodexCliRunner, workspace: WorkspaceManager): self.runner, self.workspace = runner, workspace
 
-    def execute(self, task_id: str, prompt: str, worktree: str | Path, file_scope: list[str], commit_message: str) -> ExecutionHandoff:
-        result = self.runner.run(prompt, worktree)
+    def execute(self, task_id: str, prompt: str, worktree: str | Path, file_scope: list[str], commit_message: str, model: str | None = None) -> ExecutionHandoff:
+        result = self.runner.run(prompt, worktree, model=model)
         if result.status != "completed": return ExecutionHandoff(result.status, task_id, None, [], result.summary, result.failure_category)
         status = __import__("subprocess").run(["git", "status", "--porcelain", "--", *file_scope], cwd=worktree, text=True, capture_output=True).stdout
         changed = [line[3:] for line in status.splitlines() if len(line) > 3]

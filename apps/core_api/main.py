@@ -6,7 +6,7 @@ import time
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from .db import Base, engine, get_db
-from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment, RoleConfig
+from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment, RoleConfig, RoleScope
 from .schemas import ProjectCreate, ChangeCreate, RunCreate, Decision, Feedback, RoleUpdate
 from .service import emit, seed_tasks, transition
 from .roles import ensure_roles, snapshot
@@ -125,7 +125,10 @@ def update_role(role_id: str, body: RoleUpdate, db: Session = Depends(get_db)):
     if role_id not in configs: raise HTTPException(404, "role not found")
     if body.runner not in {"local-deterministic", "codex-cli", "xera", "reviewer", "devops"}: raise HTTPException(422, "unsupported runner")
     if body.sandbox not in {"read-only", "workspace-write"}: raise HTTPException(422, "unsupported sandbox")
-    config = db.get(RoleConfig, role_id); config.runner = body.runner; config.model = body.model; config.timeout_seconds = body.timeout_seconds; config.sandbox = body.sandbox; config.tool_policy = body.tool_policy; db.commit(); db.refresh(config)
+    for path in body.file_scope:
+        if path.startswith("/") or ".." in path.replace("\\", "/").split("/"): raise HTTPException(422, "file_scope must stay relative")
+    config = db.get(RoleConfig, role_id); config.runner = body.runner; config.model = body.model; config.timeout_seconds = body.timeout_seconds; config.sandbox = body.sandbox; config.tool_policy = body.tool_policy
+    scope = db.get(RoleScope, role_id); scope.file_scope = body.file_scope; db.commit(); db.refresh(config)
     return snapshot(db)[role_id]
 
 @app.post("/api/integrations/paperclip/wake", dependencies=[Depends(auth)])

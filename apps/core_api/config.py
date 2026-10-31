@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     service_token: str = "dev-service-token"
     artifact_root: str = "./data/artifacts"
     max_repairs: int = 3
+    workspace_root: str = "./data/worktrees"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

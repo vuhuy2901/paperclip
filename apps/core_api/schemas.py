@@ -31,6 +31,7 @@ class RoleUpdate(BaseModel):
     timeout_seconds: int = 900
     sandbox: str = "workspace-write"
     tool_policy: list[str] = []
+    file_scope: list[str] = []
 
 class TaskResult(BaseModel):
     schema_version: str = "1"

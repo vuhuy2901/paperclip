@@ -3,11 +3,15 @@ import json
 from pathlib import Path
 from sqlalchemy import select
 from apps.core_api.db import SessionLocal, Base, engine
-from apps.core_api.models import WorkflowRun, Approval, Deployment, Task, Artifact
+from apps.core_api.models import WorkflowRun, Approval, Deployment, Task, Artifact, ChangeRequest, Project
 from apps.core_api.service import transition, emit
 from apps.orchestration.graph import workflow_graph
 from apps.core_api.config import settings
 from apps.runners.local import LocalDeterministicRunner
+from apps.runners.factory import build_runner
+from apps.runners.codex import CodexCliRunner
+from apps.runners.executor import TaskExecutor
+from apps.workspace.git import WorkspaceManager
 from apps.verification.runner import run_profile
 from apps.verification.artifacts import ArtifactStore
 from apps.preview.manager import PreviewManager
@@ -19,17 +23,46 @@ def process_once():
         if not run: return False
         graph_result = workflow_graph.invoke({"run_id": run.id, "repair_count": run.repair_count, "evidence_status": "pass"})
         emit(db, run.id, "orchestration.graph_completed", {"stage": graph_result.get("stage"), "mode": "deterministic"})
-        runner = LocalDeterministicRunner()
         store = ArtifactStore(settings.artifact_root)
-        for task in db.scalars(select(Task).where(Task.run_id == run.id).order_by(Task.role)):
+        tasks = list(db.scalars(select(Task).where(Task.run_id == run.id)))
+        completed_roles: set[str] = set()
+        while tasks:
+            ready = next((task for task in tasks if all(dep in completed_roles for dep in (task.depends_on or []))), None)
+            if ready is None:
+                emit(db, run.id, "task.graph_invalid", {"remaining": [task.role for task in tasks]})
+                for status in ["analyzing", "planning", "implementing"]:
+                    if run.status != status: transition(db, run, status)
+                transition(db, run, "failed"); db.commit(); return True
+            task = ready; tasks.remove(task)
             task.status = "running"
             emit(db, run.id, "task.started", {"task_id": task.id, "role": task.role})
-            result = runner.run(task.role, task.goal)
-            payload = json.dumps({"schema_version": "1", "task_id": task.id, "status": result.status, "summary": result.summary, "mode": "fixture", "structured": result.structured}, indent=2).encode()
+            role_cfg = (run.config_snapshot or {}).get("roles", {}).get(task.role, {"runner":"local-deterministic"})
+            if role_cfg.get("runner") == "codex-cli":
+                change = db.get(ChangeRequest, run.change_id); project = db.get(Project, change.project_id) if change else None
+                scope = role_cfg.get("file_scope", [])
+                if not project or not project.repo or not scope:
+                    task.status = "failed"; emit(db, run.id, "task.failed", {"task_id": task.id, "reason": "codex-cli requires project.repo and non-empty role file_scope"})
+                    for status in ["analyzing", "planning", "implementing"]:
+                        if run.status != status: transition(db, run, status)
+                    transition(db, run, "failed"); db.commit(); return True
+                manager = WorkspaceManager(settings.workspace_root)
+                worktree = manager.create_worktree(project.repo, project.id, run.id, task.id, run.baseline_sha or "HEAD")
+                handoff = TaskExecutor(CodexCliRunner(timeout_seconds=int(role_cfg.get("timeout_seconds", 900)), sandbox=role_cfg.get("sandbox", "workspace-write")), manager).execute(task.id, task.goal, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
+                payload_obj = {"schema_version":"1", "task_id":task.id, "status":handoff.status, "summary":handoff.runner_summary, "result_commit":handoff.result_commit, "files_changed":handoff.files_changed, "mode":"codex-cli", "failure_category":handoff.failure_category}
+                if handoff.status != "completed":
+                    task.status = "failed"; emit(db, run.id, "task.failed", payload_obj)
+                    for status in ["analyzing", "planning", "implementing"]:
+                        if run.status != status: transition(db, run, status)
+                    transition(db, run, "failed"); db.commit(); return True
+            else:
+                result = LocalDeterministicRunner().run(task.role, task.goal)
+                payload_obj = {"schema_version": "1", "task_id": task.id, "status": result.status, "summary": result.summary, "mode": "fixture", "structured": result.structured}
+            payload = json.dumps(payload_obj, indent=2).encode()
             item = store.put_bytes(run.id, f"role-handoffs/{task.role}.json", payload, task.role)
             db.add(Artifact(run_id=run.id, type="role-handoff-fixture", relative_path=item["relative_path"], sha256=item["sha256"], size=item["size"], producer=task.role))
             task.status = "completed"
             emit(db, run.id, "task.completed", {"task_id": task.id, "role": task.role, "artifact": item["relative_path"], "mode": "fixture"})
+            completed_roles.add(task.role)
         evidence = run_profile("python-tests", Path.cwd())
         run.baseline_sha = run.baseline_sha or evidence.candidate_sha
         run.candidate_sha = evidence.candidate_sha

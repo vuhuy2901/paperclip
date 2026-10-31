@@ -111,3 +111,8 @@ class RoleConfig(Base):
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
     sandbox: Mapped[str] = mapped_column(String(40), default="workspace-write")
     tool_policy: Mapped[list] = mapped_column(JSON, default=list)
+
+class RoleScope(Base):
+    __tablename__ = "role_scopes"
+    role_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    file_scope: Mapped[list] = mapped_column(JSON, default=list)
