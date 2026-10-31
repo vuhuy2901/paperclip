@@ -31,6 +31,8 @@ def test_role_update_and_feedback():
     assert role.status_code == 200 and role.json()["runner"] == "xera"
     feedback = client.post(f"/api/runs/{r['id']}/feedback", headers=H, json={"text":"Needs clearer error state","version":"candidate-1","route":"/acceptance"})
     assert feedback.status_code == 200
+    snapshot = client.post(f"/api/changes/{c['id']}/runs", headers=H, json={"idempotency_key":"role-snapshot"}).json()["config_snapshot"]
+    assert snapshot["roles"]["tester"]["runner"] == "xera"
 
 def test_paperclip_wake_creates_only_one_run():
     p = client.post("/api/projects", headers=H, json={"name":"paperclip-demo"}).json()

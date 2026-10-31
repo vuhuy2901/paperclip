@@ -18,4 +18,5 @@
 - Write-path model smoke đã tạo đúng một file trong worktree và commit thật `9348c332f30f5abb1c96cae6a51f104c7d9a5f28`; main branch không bị sửa.
 - Paperclip package adapter đã theo contract official: root metadata, `createServerAdapter`, `execute`, `testEnvironment`, runtime model/sandbox và defensive JSONL parsing; package `typecheck` đạt.
 - Role runner factory hiện từ chối runner lạ và chọn local/Codex theo config; sandbox cũng được validate, tránh silent downgrade.
+- Role configuration đã chuyển vào bảng metadata bền vững, seed đủ tám role và được chụp vào `config_snapshot` của từng run; test restart-equivalent persistence qua database pass.
 - Chưa đạt: Paperclip server/contract end-to-end, Docker Compose image runtime (Docker daemon chưa có), full role-specific runner routing, and production model configuration/usage accounting for every role.

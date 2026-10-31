@@ -6,9 +6,10 @@ import time
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from .db import Base, engine, get_db
-from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment
+from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment, RoleConfig
 from .schemas import ProjectCreate, ChangeCreate, RunCreate, Decision, Feedback, RoleUpdate
 from .service import emit, seed_tasks, transition
+from .roles import ensure_roles, snapshot
 
 Path("data").mkdir(exist_ok=True)
 Base.metadata.create_all(engine)
@@ -47,7 +48,7 @@ def create_run(change_id: str, body: RunCreate, db: Session = Depends(get_db)):
     if not c: raise HTTPException(404, "change not found")
     existing = db.scalar(select(WorkflowRun).where(WorkflowRun.change_id == change_id, WorkflowRun.idempotency_key == body.idempotency_key))
     if existing: return existing
-    run = WorkflowRun(change_id=change_id, idempotency_key=body.idempotency_key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles": ROLE_CONFIG})
+    run = WorkflowRun(change_id=change_id, idempotency_key=body.idempotency_key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles": snapshot(db)})
     db.add(run); db.flush(); seed_tasks(db, run, c.text); emit(db, run.id, "run.queued", {"change_id": change_id}); db.commit(); db.refresh(run); return run
 
 @app.get("/api/runs/{run_id}", dependencies=[Depends(auth)])
@@ -114,17 +115,18 @@ def approval_decision(approval_id: str, body: Decision, db: Session = Depends(ge
         else: run.repair_count += 1; transition(db, run, "repairing")
     db.commit(); return approval
 
-ROLE_CONFIG = {r: {"id": r, "runner": "local-deterministic", "model": "configured-at-runtime", "timeout_seconds": 900, "sandbox": "workspace-write", "tool_policy": []} for r in ["project-manager","architect","ui-ux-designer","backend-developer","frontend-developer","code-reviewer","tester","devops"]}
-
 @app.get("/api/roles", dependencies=[Depends(auth)])
-def roles(): return list(ROLE_CONFIG.values())
+def roles(db: Session = Depends(get_db)):
+    return list(snapshot(db).values())
 
 @app.put("/api/roles/{role_id}", dependencies=[Depends(auth)])
-def update_role(role_id: str, body: RoleUpdate):
-    if role_id not in ROLE_CONFIG: raise HTTPException(404, "role not found")
+def update_role(role_id: str, body: RoleUpdate, db: Session = Depends(get_db)):
+    configs = snapshot(db)
+    if role_id not in configs: raise HTTPException(404, "role not found")
     if body.runner not in {"local-deterministic", "codex-cli", "xera", "reviewer", "devops"}: raise HTTPException(422, "unsupported runner")
     if body.sandbox not in {"read-only", "workspace-write"}: raise HTTPException(422, "unsupported sandbox")
-    ROLE_CONFIG[role_id] = {"id": role_id, **body.model_dump()}; return ROLE_CONFIG[role_id]
+    config = db.get(RoleConfig, role_id); config.runner = body.runner; config.model = body.model; config.timeout_seconds = body.timeout_seconds; config.sandbox = body.sandbox; config.tool_policy = body.tool_policy; db.commit(); db.refresh(config)
+    return snapshot(db)[role_id]
 
 @app.post("/api/integrations/paperclip/wake", dependencies=[Depends(auth)])
 def paperclip_wake(payload: dict, db: Session = Depends(get_db)):
@@ -134,6 +136,6 @@ def paperclip_wake(payload: dict, db: Session = Depends(get_db)):
     if not change: raise HTTPException(404, "change not found")
     existing = db.scalar(select(WorkflowRun).where(WorkflowRun.change_id == change_id, WorkflowRun.idempotency_key == key))
     if existing: return {"accepted": True, "deduplicated": True, "run_id": existing.id}
-    run = WorkflowRun(change_id=change_id, idempotency_key=key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles":ROLE_CONFIG})
+    run = WorkflowRun(change_id=change_id, idempotency_key=key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles":snapshot(db)})
     db.add(run); db.flush(); seed_tasks(db, run, change.text); emit(db, run.id, "paperclip.wake.accepted", {"change_id": change_id, "key": key}); db.commit()
     return {"accepted": True, "deduplicated": False, "run_id": run.id}

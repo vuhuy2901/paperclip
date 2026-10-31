@@ -102,3 +102,12 @@ class Deployment(Base):
     status: Mapped[str] = mapped_column(String(40), default="pending")
     health_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
     smoke_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+
+class RoleConfig(Base):
+    __tablename__ = "role_configs"
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    runner: Mapped[str] = mapped_column(String(80), default="local-deterministic")
+    model: Mapped[str] = mapped_column(String(200), default="configured-at-runtime")
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
+    sandbox: Mapped[str] = mapped_column(String(40), default="workspace-write")
+    tool_policy: Mapped[list] = mapped_column(JSON, default=list)
