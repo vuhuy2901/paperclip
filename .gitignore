@@ -8,6 +8,8 @@ data/*.db
 data/artifacts/
 data/evals/
 data/worktrees/
+data/node24/
+data/node24.zip
 node_modules/
 dist/
 *.tsbuildinfo
