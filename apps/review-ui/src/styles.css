@@ -12,6 +12,7 @@ input { border: 1px solid #aeb9b0; border-radius: 8px; background: #fff; font: i
 input:focus { outline: 3px solid #b9d8ca; border-color: #237a52; }
 button { border: 0; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 700; padding: 13px 18px; transition: transform .15s ease, background .15s ease; }
 button:active { transform: translateY(1px); }
+button:disabled { cursor: not-allowed; opacity: .45; }
 .primary { color: #fff; background: #17633f; }.secondary { color: #17633f; background: #e1eee7; }
 .control button { color: #fff; background: #17212b; }
 .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1.4fr; }

@@ -81,6 +81,10 @@ def preview(run_id: str, db: Session = Depends(get_db)):
     deployment = db.scalar(select(Deployment).where(Deployment.run_id == run_id).order_by(Deployment.id.desc()))
     return {"baseline": None, "candidate": deployment.url if deployment else None, "status": deployment.status if deployment else "not_deployed", "deployment": deployment}
 
+@app.get("/api/runs/{run_id}/approvals", dependencies=[Depends(auth)])
+def approvals(run_id: str, db: Session = Depends(get_db)):
+    return list(db.scalars(select(Approval).where(Approval.run_id == run_id).order_by(Approval.created_at)))
+
 @app.post("/api/runs/{run_id}/feedback", dependencies=[Depends(auth)])
 def feedback(run_id: str, body: Feedback, db: Session = Depends(get_db)):
     if not db.get(WorkflowRun, run_id): raise HTTPException(404, "run not found")

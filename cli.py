@@ -8,7 +8,7 @@ client = TestClient(app)
 HEADERS = {"X-Service-Token": "dev-service-token"}
 
 @cli.command()
-def submit(name: str, change: str, repo: str = ""):
+def submit(name: str = typer.Option(..., "--name"), change: str = typer.Option(..., "--change"), repo: str = typer.Option("", "--repo")):
     p = client.post("/api/projects", headers=HEADERS, json={"name": name, "repo": repo or None}).json()
     c = client.post(f"/api/projects/{p['id']}/changes", headers=HEADERS, json={"text": change}).json()
     r = client.post(f"/api/changes/{c['id']}/runs", headers=HEADERS, json={"idempotency_key": f"cli-{c['id']}"}).json()
