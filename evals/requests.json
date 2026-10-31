@@ -1,0 +1,7 @@
+[
+  {"id":"vip-price","text":"VIP price must not stack with SAVE10","check":"tests/test_storefront.py::test_vip_price_does_not_stack_with_promo"},
+  {"id":"shipping","text":"National shipping remains separate from VIP price","check":"tests/test_storefront.py::test_shipping_keeps_vip_and_order_snapshot"},
+  {"id":"cancel","text":"Cancel does not mutate stored order total","check":"tests/test_storefront.py::test_cancel_does_not_reprice_existing_order"},
+  {"id":"idempotency","text":"Paperclip wake creates one run per key","check":"tests/test_core_api.py::test_paperclip_wake_creates_only_one_run"},
+  {"id":"evidence-gate","text":"Wrong candidate SHA is inconclusive","check":"tests/test_verification.py::test_wrong_candidate_is_inconclusive"}
+]
