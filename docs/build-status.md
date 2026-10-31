@@ -10,4 +10,5 @@
 - Storefront demo backend/frontend đã có seed tái lập, tier pricing, promo non-stacking, shipping rules, immutable order snapshot, cancellation guard và regression tests; storefront UI build production thành công.
 - LangGraph graph thật đã được thêm vào worker path; workspace path/artifact hash/preview manager boundaries đã có tests.
 - CLI smoke run đã thực thi submit → queued run → worker → `awaiting_acceptance`; lệnh tài liệu đã được sửa để hỗ trợ `--name` và `--change` đúng như README.
+- Worker hiện tạo role-handoff artifacts, trusted test evidence, candidate SHA và chỉ tạo approval khi PreviewManager trả `ready`; smoke run khi Docker engine thiếu đã bị gate đúng thành `failed`.
 - Chưa đạt: Paperclip server/contract end-to-end, model thật, Docker Compose image runtime (Docker daemon chưa có), approval UI action wiring đầy đủ và các role runners thật.
