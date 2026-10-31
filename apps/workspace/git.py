@@ -14,3 +14,13 @@ class WorkspaceManager:
         return target
 
     def validate_artifact_path(self, relative: str) -> Path: return safe_child(self.root, relative)
+
+    def commit(self, worktree: str | Path, message: str, allowed_paths: list[str]) -> str:
+        if not allowed_paths: raise ValueError("a commit requires an explicit file scope")
+        for relative in allowed_paths: safe_child(worktree, relative)
+        add = subprocess.run(["git", "add", "--", *allowed_paths], cwd=worktree, text=True, capture_output=True, timeout=30)
+        if add.returncode != 0: raise RuntimeError(add.stderr.strip() or "git add failed")
+        commit = subprocess.run(["git", "commit", "-m", message], cwd=worktree, text=True, capture_output=True, timeout=60)
+        if commit.returncode != 0: raise RuntimeError(commit.stderr.strip() or "git commit failed")
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, text=True, capture_output=True, timeout=10)
+        return sha.stdout.strip()

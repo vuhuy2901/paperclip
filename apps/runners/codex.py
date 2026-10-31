@@ -14,11 +14,11 @@ class CodexResult:
 class CodexCliRunner:
     name = "codex-cli"
 
-    def __init__(self, executable: str = "codex", timeout_seconds: int = 900):
-        self.executable, self.timeout_seconds = executable, timeout_seconds
+    def __init__(self, executable: str = "codex", timeout_seconds: int = 900, sandbox: str = "workspace-write"):
+        self.executable, self.timeout_seconds, self.sandbox = executable, timeout_seconds, sandbox
 
     def run(self, prompt: str, cwd: str | Path, model: str | None = None) -> CodexResult:
-        command = [self.executable, "exec", "--json", "--ephemeral", "-C", str(Path(cwd).resolve())]
+        command = [self.executable, "exec", "--json", "--ephemeral", "--sandbox", self.sandbox, "-C", str(Path(cwd).resolve())]
         if model: command.extend(["--model", model])
         command.append(prompt)
         try:
