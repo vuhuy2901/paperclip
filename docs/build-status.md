@@ -19,4 +19,5 @@
 - Paperclip package adapter đã theo contract official: root metadata, `createServerAdapter`, `execute`, `testEnvironment`, runtime model/sandbox và defensive JSONL parsing; package `typecheck` đạt.
 - Role runner factory hiện từ chối runner lạ và chọn local/Codex theo config; sandbox cũng được validate, tránh silent downgrade.
 - Role configuration đã chuyển vào bảng metadata bền vững, seed đủ tám role và được chụp vào `config_snapshot` của từng run; test restart-equivalent persistence qua database pass.
+- OpenAPI và TaskResult JSON Schema hiện được xuất từ FastAPI/Pydantic canonical source bằng `scripts/export_contracts.py`; không có schema frontend/adapter thứ hai.
 - Chưa đạt: Paperclip server/contract end-to-end, Docker Compose image runtime (Docker daemon chưa có), full role-specific runner routing, and production model configuration/usage accounting for every role.
