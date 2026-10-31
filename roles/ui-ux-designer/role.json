@@ -1,0 +1,1 @@
+{"id":"ui-ux-designer","tool_policy":["read-design","write-artifacts"],"required_artifacts":["design-system/MASTER.md","wireframe.html"],"output_schema":"TaskResult@1"}

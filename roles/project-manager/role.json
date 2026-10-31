@@ -1,0 +1,1 @@
+{"id":"project-manager","tool_policy":["read-repo-metadata","write-artifacts"],"required_artifacts":["prd.md","acceptance.json","task-graph.json"],"output_schema":"TaskResult@1"}

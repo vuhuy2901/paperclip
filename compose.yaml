@@ -1,0 +1,24 @@
+services:
+  core-api:
+    build: .
+    environment:
+      DATABASE_URL: sqlite:////app/data/core.db
+      SERVICE_TOKEN: dev-service-token
+    ports: ["8000:8000"]
+    volumes: ["core-data:/app/data"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  worker:
+    build: .
+    command: ["python", "-m", "apps.worker.main"]
+    environment:
+      DATABASE_URL: sqlite:////app/data/core.db
+      SERVICE_TOKEN: dev-service-token
+    volumes: ["core-data:/app/data"]
+    depends_on:
+      core-api: {condition: service_healthy}
+volumes:
+  core-data:

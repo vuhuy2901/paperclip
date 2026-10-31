@@ -1,0 +1,1 @@
+{"id":"devops","tool_policy":["read-candidate","write-deploy-config","use-preview-manager"],"required_artifacts":["deployment-report.json","smoke-report.json"],"output_schema":"Deployment@1"}

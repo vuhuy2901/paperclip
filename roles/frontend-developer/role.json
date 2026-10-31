@@ -1,0 +1,1 @@
+{"id":"frontend-developer","tool_policy":["read-write-frontend","run-tests"],"required_artifacts":["handoff.md","preview.png"],"output_schema":"TaskResult@1"}

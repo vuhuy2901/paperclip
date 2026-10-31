@@ -1,0 +1,1 @@
+{"id":"code-reviewer","tool_policy":["read-diff","read-tests","write-review"],"required_artifacts":["review.json"],"output_schema":"Review@1"}

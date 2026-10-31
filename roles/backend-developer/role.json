@@ -1,0 +1,1 @@
+{"id":"backend-developer","tool_policy":["read-write-backend","run-tests"],"required_artifacts":["handoff.md","test-report.json"],"output_schema":"TaskResult@1"}

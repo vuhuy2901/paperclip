@@ -1,0 +1,1 @@
+{"id":"tester","tool_policy":["read-candidate","write-tests","run-trusted-checks"],"required_artifacts":["junit.xml","bugs.json"],"output_schema":"Evidence@1"}

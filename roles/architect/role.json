@@ -1,0 +1,1 @@
+{"id":"architect","tool_policy":["read-repo","write-artifacts"],"required_artifacts":["architecture.md","impact-map.json","openapi.yaml"],"output_schema":"TaskResult@1"}
