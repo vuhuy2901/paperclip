@@ -20,5 +20,19 @@ services:
     volumes: ["core-data:/app/data"]
     depends_on:
       core-api: {condition: service_healthy}
+  review-ui:
+    build: ./apps/review-ui
+    ports: ["8080:80"]
+    depends_on:
+      core-api: {condition: service_healthy}
+  paperclip-adapter:
+    build: ./apps/paperclip-adapter
+    environment:
+      CORE_API_URL: http://core-api:8000
+      SERVICE_TOKEN: dev-service-token
+      PORT: 8090
+    ports: ["8090:8090"]
+    depends_on:
+      core-api: {condition: service_healthy}
 volumes:
   core-data:
