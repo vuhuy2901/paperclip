@@ -3,6 +3,7 @@ from fastapi import FastAPI, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 import json
 import time
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from .db import Base, engine, get_db
@@ -12,7 +13,19 @@ from .service import emit, seed_tasks, transition
 from .roles import ensure_roles, snapshot
 
 Path("data").mkdir(exist_ok=True)
-Base.metadata.create_all(engine)
+
+def initialize_database() -> None:
+    """Create the development schema, tolerating Compose DNS/startup races."""
+    for attempt in range(1, 16):
+        try:
+            Base.metadata.create_all(engine)
+            return
+        except OperationalError:
+            if attempt == 15:
+                raise
+            time.sleep(1)
+
+initialize_database()
 app = FastAPI(title="AI Software Company Core API", version="0.1.0")
 
 def auth(x_service_token: str | None = Header(default=None)):

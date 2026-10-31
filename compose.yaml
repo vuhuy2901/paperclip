@@ -4,7 +4,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://core:core@postgres:5432/core
       SERVICE_TOKEN: dev-service-token
-    ports: ["8000:8000"]
+    ports: ["8001:8000"]
     volumes: ["core-data:/app/data"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -19,7 +19,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://core:core@postgres:5432/core
       SERVICE_TOKEN: dev-service-token
-    volumes: ["core-data:/app/data"]
+      VERIFICATION_ROOT: /workspace
+    volumes: ["core-data:/app/data", ".:/workspace"]
     depends_on:
       core-api: {condition: service_healthy}
       postgres: {condition: service_healthy}
@@ -57,7 +58,6 @@ services:
       POSTGRES_USER: core
       POSTGRES_PASSWORD: core
       POSTGRES_DB: core
-    ports: ["5432:5432"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/20-storefront.sql:ro
@@ -69,3 +69,6 @@ services:
 volumes:
   core-data:
   postgres-data:
+networks:
+  default:
+    name: ai_company_default

@@ -1,5 +1,6 @@
 import time
 import json
+import os
 from pathlib import Path
 from sqlalchemy import select
 from apps.core_api.db import SessionLocal, Base, engine
@@ -60,17 +61,26 @@ def process_once():
             db.add(Artifact(run_id=run.id, type="role-handoff-fixture", relative_path=item["relative_path"], sha256=item["sha256"], size=item["size"], producer=task.role))
             task.status = "completed"
             emit(db, run.id, "task.completed", {"task_id": task.id, "role": task.role, "artifact": item["relative_path"], "mode": "fixture"})
-        evidence = run_profile("python-tests", Path.cwd())
+        verification_root = Path(os.getenv("VERIFICATION_ROOT", str(Path.cwd())))
+        evidence = run_profile("python-tests", verification_root)
         run.baseline_sha = run.baseline_sha or evidence.candidate_sha
         run.candidate_sha = evidence.candidate_sha
         evidence_path = store.put_bytes(run.id, "evidence/python-tests.json", json.dumps(evidence.__dict__, indent=2).encode(), "trusted-verification")
         db.add(Artifact(run_id=run.id, type="trusted-evidence", relative_path=evidence_path["relative_path"], sha256=evidence_path["sha256"], size=evidence_path["size"], producer="trusted-verification", commit_sha=evidence.candidate_sha))
         emit(db, run.id, "verification.completed", {"check_id": evidence.check_id, "status": evidence.status, "candidate_sha": evidence.candidate_sha, "report": evidence_path["relative_path"]})
         if evidence.status != "pass":
-            for status in ["analyzing", "planning", "implementing", "integrating", "verifying"]:
-                if run.status != status: transition(db, run, status)
-            if run.repair_count >= 3: transition(db, run, "blocked")
-            else: run.repair_count += 1; transition(db, run, "repairing")
+            if run.repair_count >= 3:
+                if run.status != "repairing":
+                    for status in ["analyzing", "planning", "implementing", "integrating", "verifying"]:
+                        if run.status != status: transition(db, run, status)
+                    transition(db, run, "repairing")
+                transition(db, run, "blocked")
+            elif run.status == "repairing":
+                run.repair_count += 1
+            else:
+                for status in ["analyzing", "planning", "implementing", "integrating", "verifying"]:
+                    if run.status != status: transition(db, run, status)
+                run.repair_count += 1; transition(db, run, "repairing")
             db.commit(); return True
         statuses = ["analyzing", "planning", "implementing", "integrating", "verifying", "deploying"]
         if run.status == "repairing":
