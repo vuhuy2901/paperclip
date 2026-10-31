@@ -10,6 +10,7 @@ data/evals/
 data/worktrees/
 data/node24/
 data/node24.zip
+data/node-v24.11.0-win-x64/
 node_modules/
 dist/
 *.tsbuildinfo
