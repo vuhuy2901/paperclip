@@ -8,3 +8,4 @@ data/*.db
 data/artifacts/
 node_modules/
 dist/
+*.tsbuildinfo
