@@ -12,6 +12,7 @@ class PreviewResult:
     url: str | None
     stdout: str
     stderr: str
+    image_digest: str | None = None
 
 class PreviewManager:
     """Docker control-plane boundary. No task runner receives the Docker socket."""
@@ -39,6 +40,6 @@ class RemotePreviewManager:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 body = json.loads(response.read().decode())
-            return PreviewResult(body["status"], body["compose_project"], body.get("url"), body.get("stdout", ""), body.get("stderr", ""))
+            return PreviewResult(body["status"], body["compose_project"], body.get("url"), body.get("stdout", ""), body.get("stderr", ""), body.get("image_digest"))
         except (HTTPError, URLError, TimeoutError, KeyError, json.JSONDecodeError) as exc:
             return PreviewResult("inconclusive", project, None, "", str(exc))

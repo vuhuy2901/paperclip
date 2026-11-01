@@ -71,6 +71,12 @@ def create_preview(body: PreviewRequest):
     if ps.returncode != 0 or not ps.stdout.strip():
         return {"status": "failed", "compose_project": body.project, "url": None, "stdout": result.stdout[-10000:], "stderr": ps.stderr[-10000:]}
     container_id = ps.stdout.strip().splitlines()[0]
+    image = subprocess.run(["docker", "compose", "-f", str(COMPOSE_FILE), "-p", body.project, "images", "-q", body.service], cwd=WORKSPACE, env=environment, text=True, capture_output=True, timeout=30)
+    image_id = image.stdout.strip().splitlines()[0] if image.stdout.strip() else None
+    digest = None
+    if image_id:
+        image_inspect = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image_id], text=True, capture_output=True, timeout=30)
+        digest = image_inspect.stdout.strip() or image_id
     environment = os.environ.copy()
     environment["COMPOSE_NETWORK_NAME"] = f"{body.project}_default"
     last_error = "container health is not ready"
@@ -78,7 +84,7 @@ def create_preview(body: PreviewRequest):
         inspect = subprocess.run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container_id], env=environment, text=True, capture_output=True, timeout=10)
         state = inspect.stdout.strip()
         if state == "healthy":
-            return {"status": "ready", "compose_project": body.project, "url": f"http://localhost:{host_port}", "stdout": result.stdout[-10000:], "stderr": result.stderr[-10000:]}
+            return {"status": "ready", "compose_project": body.project, "url": f"http://localhost:{host_port}", "image_digest": digest, "stdout": result.stdout[-10000:], "stderr": result.stderr[-10000:]}
         if state:
             last_error = f"container health state: {state}"
         time.sleep(1)

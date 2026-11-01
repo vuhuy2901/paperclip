@@ -2,7 +2,7 @@ services:
   core-api:
     build: .
     environment:
-      DATABASE_URL: postgresql+psycopg://core:core@postgres:5432/core
+      DATABASE_URL: postgresql+psycopg://core:core@core-postgres:5432/core
       SERVICE_TOKEN: dev-service-token
     ports: ["8001:8000"]
     volumes: ["core-data:/app/data"]
@@ -17,7 +17,7 @@ services:
     build: .
     command: ["python", "-m", "apps.worker.main"]
     environment:
-      DATABASE_URL: postgresql+psycopg://core:core@postgres:5432/core
+      DATABASE_URL: postgresql+psycopg://core:core@core-postgres:5432/core
       SERVICE_TOKEN: dev-service-token
       VERIFICATION_ROOT: /workspace
       PREVIEW_MANAGER_URL: http://preview-manager:8300
@@ -77,7 +77,7 @@ services:
       dockerfile: templates/storefront/backend/Dockerfile
     ports: ["8200:8200"]
     environment:
-      STOREFRONT_DATABASE_URL: postgresql+psycopg://storefront:storefront@postgres:5432/storefront
+      STOREFRONT_DATABASE_URL: postgresql+psycopg://storefront:storefront@core-postgres:5432/storefront
     depends_on:
       postgres: {condition: service_healthy}
   storefront-ui:
@@ -99,6 +99,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      default:
+        aliases:
+          - core-postgres
 volumes:
   core-data:
   postgres-data:

@@ -92,7 +92,7 @@ def process_once():
         preview_url = os.getenv("PREVIEW_MANAGER_URL")
         preview_manager = RemotePreviewManager(preview_url) if preview_url else PreviewManager("compose.yaml")
         preview = preview_manager.up(f"preview-{run.id[:8]}", "storefront-api", 8200)
-        db.add(Deployment(run_id=run.id, commit_sha=run.candidate_sha, status=preview.status, url=preview.url, health_evidence={"status": preview.status, "stderr": preview.stderr[-1000:]}, smoke_evidence={"status":"not_run"}))
+        db.add(Deployment(run_id=run.id, commit_sha=run.candidate_sha, image_digest=preview.image_digest, status=preview.status, url=preview.url, health_evidence={"status": preview.status, "stderr": preview.stderr[-1000:]}, smoke_evidence={"status":"not_run"}))
         if preview.status == "ready":
             transition(db, run, "awaiting_acceptance")
             db.add(Approval(run_id=run.id, kind="candidate", artifact_version=run.candidate_sha or run.id, candidate_sha=run.candidate_sha, status="pending"))
