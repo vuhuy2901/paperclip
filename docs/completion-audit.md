@@ -6,7 +6,7 @@ Audit date: 2026-11-01. Evidence is based on the current repository, Docker runt
 |---|---|---|
 | README/config run | `docker compose up -d --build`, all services healthy; `README.md`, `.env.example` | Pass |
 | Paperclip + eight roles + links | Paperclip `http://localhost:3100`, adapter `ai_company_external`, eight persisted identities; adapter execution returns Core run/events/artifact/evidence/preview/diff links | Partial: native Paperclip task/report back-sync still needs board/agent API credential |
-| Eight role assets/artifacts | `apps/roles/<role>/` contains prompt, skills, tool policy, output schema; 32 artifacts in acceptance run | Pass, with deterministic artifacts labelled fixture |
+| Eight role assets/artifacts | `apps/roles/<role>/` contains prompt, skills, tool policy, output schema; 32 artifacts in acceptance run. Real runners now must write staging handoffs; run `8250cfda-7556-4233-b14d-0d111df81ca0` proved timeout does not synthesize them. | Pass, with deterministic artifacts labelled fixture |
 | Real-model end-to-end change | Run `10380f59-5832-40db-9450-cd93e6112bd1`, Codex Gateway Backend execution, candidate preview, approval and promotion | Pass for one real model role |
 | Real failure routed/fixed | `scripts/demo_repair.py` real pytest fail in isolated worktree, `Finding` route to Backend, second real pytest pass; worker repair routing is implemented | Pass for labelled repair fixture; model-caused product failure not claimed |
 | Wrong SHA/evidence gate | `tests/test_verification.py`, candidate SHA binding in worker and trusted runner | Pass |
