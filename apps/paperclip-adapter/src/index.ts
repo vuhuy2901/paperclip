@@ -11,6 +11,43 @@ Uses the Core API for workflow state and the Codex CLI for assigned worktree tas
 Model, timeout, sandbox and Core API URL are runtime configuration; secrets stay in environment variables.
 `;
 
+function skillSnapshot(context: any, desiredSkills: string[] = []) {
+  const config = context?.config ?? {};
+  const configured = Array.isArray(config.paperclipSkillSync?.desiredSkills)
+    ? config.paperclipSkillSync.desiredSkills.filter((value: unknown): value is string => typeof value === "string")
+    : desiredSkills;
+  const runtimeEntries = Array.isArray(config.paperclipRuntimeSkills)
+    ? config.paperclipRuntimeSkills
+        .filter((entry: any) => typeof entry?.key === "string")
+        .map((entry: any) => ({ key: entry.key, runtimeName: entry.runtimeName ?? entry.name ?? entry.key.split("/").at(-1) }))
+    : [];
+  const entries = [...new Map([
+    ...runtimeEntries,
+    ...configured.map((key: string) => ({ key, runtimeName: key.split("/").at(-1) ?? key })),
+  ].map((entry) => [entry.key, entry])).values()].map((entry) => ({
+    key: entry.key,
+    runtimeName: entry.runtimeName,
+    desired: configured.includes(entry.key),
+    managed: true,
+    state: configured.includes(entry.key) ? "configured" : "available",
+    origin: "company_managed",
+    originLabel: "AI Software Company",
+    detail: "Available to the assigned AI Software Company role.",
+  }));
+  return {
+    adapterType: type,
+    supported: true,
+    mode: "ephemeral",
+    desiredSkills: configured,
+    desiredSkillEntries: configured.map((key: string) => ({ key, versionId: null })),
+    entries,
+    warnings: [],
+  };
+}
+
+export async function listSkills(context: any) { return skillSnapshot(context); }
+export async function syncSkills(context: any, desiredSkills: string[]) { return skillSnapshot(context, desiredSkills); }
+
 function coreConfiguration() {
   return {
     url: (process.env.CORE_API_URL ?? "http://core-api:8000").replace(/\/$/, ""),
@@ -128,4 +165,4 @@ export async function execute(context: any) {
   }
 }
 
-export function createServerAdapter() { return { type, execute, testEnvironment, models, agentConfigurationDoc }; }
+export function createServerAdapter() { return { type, execute, testEnvironment, listSkills, syncSkills, models, agentConfigurationDoc }; }

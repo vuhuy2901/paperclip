@@ -17,4 +17,7 @@ if [ "${PAPERCLIP_DEPLOYMENT_MODE:-}" = "local_trusted" ]; then
   node /opt/paperclip/proxy.mjs &
 fi
 
-exec paperclipai run
+paperclipai run &
+PAPERCLIP_PID=$!
+node /opt/paperclip/sync-skills.mjs || echo "Paperclip role-skill sync did not complete; retry on next restart"
+wait "$PAPERCLIP_PID"
