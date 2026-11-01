@@ -13,3 +13,8 @@ def test_wrong_candidate_is_inconclusive():
     evidence = run_profile("python-import", ROOT, expected_sha="not-the-current-commit")
     assert evidence.status == "inconclusive"
     assert evidence.reason == "candidate SHA mismatch"
+
+def test_product_regression_profile_is_real():
+    evidence = run_profile("product-regression", ROOT)
+    assert evidence.status == "pass"
+    assert evidence.exit_code == 0

@@ -2,6 +2,8 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import os
+import tempfile
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -10,6 +12,7 @@ PROFILES = {
     # Keep the trusted product suite explicit. This prevents the verification harness
     # from recursively invoking itself when the repository test suite runs.
     "python-tests": ["python", "-m", "pytest", "-q", "tests/test_core_api.py"],
+    "product-regression": ["python", "-m", "pytest", "-q", "tests/test_core_api.py", "tests/test_storefront.py"],
     "python-import": ["python", "-c", "import apps.core_api.main"],
 }
 
@@ -39,7 +42,13 @@ def run_profile(profile: str, cwd: str | Path, expected_sha: str | None = None, 
     command = PROFILES[profile]
     started = time.monotonic()
     try:
-        result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=timeout)
+        # The product regression suite seeds a disposable storefront database so
+        # evidence never depends on a previous local run or on stock mutations.
+        run_env = os.environ.copy()
+        with tempfile.TemporaryDirectory(prefix="ai-company-regression-") as temp_dir:
+            if profile == "product-regression":
+                run_env["STOREFRONT_DATABASE_URL"] = f"sqlite:///{Path(temp_dir, 'storefront.db').as_posix()}"
+            result = subprocess.run(command, cwd=cwd, env=run_env, text=True, capture_output=True, timeout=timeout)
         status = "pass" if result.returncode == 0 else "fail"
         reason = None
         if status == "pass" and profile == "python-tests" and "passed" not in result.stdout:

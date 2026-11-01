@@ -44,7 +44,7 @@ def test_role_update_and_feedback():
     assert role.json()["file_scope"] == ["tests"]
     feedback = client.post(f"/api/runs/{r['id']}/feedback", headers=H, json={"text":"Needs clearer error state","version":"candidate-1","route":"/acceptance"})
     assert feedback.status_code == 200
-    snapshot = client.post(f"/api/changes/{c['id']}/runs", headers=H, json={"idempotency_key":"role-snapshot"}).json()["config_snapshot"]
+    snapshot = client.get(f"/api/runs/{r['id']}", headers=H).json()["run"]["config_snapshot"]
     assert snapshot["roles"]["tester"]["runner"] == "xera"
     assert snapshot["roles"]["tester"]["file_scope"] == ["tests"]
 
@@ -60,3 +60,25 @@ def test_paperclip_wake_creates_only_one_run():
 def test_role_file_scope_traversal_is_rejected():
     response = client.put("/api/roles/tester", headers=H, json={"runner":"codex-cli","model":"x","file_scope":["../secrets"]})
     assert response.status_code == 422
+
+def test_second_active_run_for_same_project_is_rejected():
+    p = client.post("/api/projects", headers=H, json={"name":"single-writer"}).json()
+    first_change = client.post(f"/api/projects/{p['id']}/changes", headers=H, json={"text":"first"}).json()
+    second_change = client.post(f"/api/projects/{p['id']}/changes", headers=H, json={"text":"second"}).json()
+    assert client.post(f"/api/changes/{first_change['id']}/runs", headers=H, json={"idempotency_key":"first"}).status_code == 200
+    response = client.post(f"/api/changes/{second_change['id']}/runs", headers=H, json={"idempotency_key":"second"})
+    assert response.status_code == 409
+
+def test_run_lease_can_be_claimed_heartbeated_and_released():
+    from apps.core_api.db import SessionLocal
+    from apps.core_api.models import WorkflowRun, RunLease
+    from apps.core_api.service import claim_run, heartbeat_run, release_run
+    p = client.post("/api/projects", headers=H, json={"name":"lease"}).json()
+    c = client.post(f"/api/projects/{p['id']}/changes", headers=H, json={"text":"lease"}).json()
+    run = client.post(f"/api/changes/{c['id']}/runs", headers=H, json={"idempotency_key":"lease"}).json()
+    with SessionLocal() as db:
+        assert claim_run(db, run["id"], "worker-a")
+        assert not claim_run(db, run["id"], "worker-b")
+        assert heartbeat_run(db, run["id"], "worker-a")
+        release_run(db, run["id"], "worker-a")
+        assert db.get(RunLease, run["id"]) is None

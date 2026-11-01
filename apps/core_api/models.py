@@ -39,6 +39,13 @@ class WorkflowRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
+class RunLease(Base):
+    __tablename__ = "run_leases"
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"), primary_key=True)
+    owner: Mapped[str] = mapped_column(String(200))
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
 class Task(Base):
     __tablename__ = "tasks"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

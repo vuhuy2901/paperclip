@@ -5,7 +5,7 @@ import json
 import time
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from .db import Base, engine, get_db
 from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment, RoleConfig, RoleScope
 from .schemas import ProjectCreate, ChangeCreate, RunCreate, Decision, Feedback, RoleUpdate
@@ -51,10 +51,20 @@ def get_project(project_id: str, db: Session = Depends(get_db)):
     if not p: raise HTTPException(404, "project not found")
     return p
 
+@app.get("/api/projects/{project_id}/changes", dependencies=[Depends(auth)])
+def project_changes(project_id: str, db: Session = Depends(get_db)):
+    if not db.get(Project, project_id): raise HTTPException(404, "project not found")
+    return list(db.scalars(select(ChangeRequest).where(ChangeRequest.project_id == project_id).order_by(ChangeRequest.created_at)))
+
 @app.post("/api/projects/{project_id}/changes", dependencies=[Depends(auth)])
 def create_change(project_id: str, body: ChangeCreate, db: Session = Depends(get_db)):
     if not db.get(Project, project_id): raise HTTPException(404, "project not found")
     c = ChangeRequest(project_id=project_id, **body.model_dump()); db.add(c); db.commit(); db.refresh(c); return c
+
+@app.get("/api/changes/{change_id}/runs", dependencies=[Depends(auth)])
+def change_runs(change_id: str, db: Session = Depends(get_db)):
+    if not db.get(ChangeRequest, change_id): raise HTTPException(404, "change not found")
+    return list(db.scalars(select(WorkflowRun).where(WorkflowRun.change_id == change_id).order_by(WorkflowRun.created_at)))
 
 @app.post("/api/changes/{change_id}/runs", dependencies=[Depends(auth)])
 def create_run(change_id: str, body: RunCreate, db: Session = Depends(get_db)):
@@ -62,6 +72,8 @@ def create_run(change_id: str, body: RunCreate, db: Session = Depends(get_db)):
     if not c: raise HTTPException(404, "change not found")
     existing = db.scalar(select(WorkflowRun).where(WorkflowRun.change_id == change_id, WorkflowRun.idempotency_key == body.idempotency_key))
     if existing: return existing
+    active = db.scalar(select(WorkflowRun).join(ChangeRequest, WorkflowRun.change_id == ChangeRequest.id).where(ChangeRequest.project_id == c.project_id, WorkflowRun.status.in_(["queued", "analyzing", "planning", "implementing", "integrating", "verifying", "deploying", "repairing", "cancelling"])))
+    if active: raise HTTPException(409, f"project already has active run {active.id}")
     run = WorkflowRun(change_id=change_id, idempotency_key=body.idempotency_key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles": snapshot(db)})
     db.add(run); db.flush(); seed_tasks(db, run, c.text); emit(db, run.id, "run.queued", {"change_id": change_id}); db.commit(); db.refresh(run); return run
 
@@ -114,8 +126,20 @@ def artifact_content(artifact_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/runs/{run_id}/preview", dependencies=[Depends(auth)])
 def preview(run_id: str, db: Session = Depends(get_db)):
-    deployment = db.scalar(select(Deployment).where(Deployment.run_id == run_id).order_by(Deployment.id.desc()))
-    return {"baseline": None, "candidate": deployment.url if deployment else None, "status": deployment.status if deployment else "not_deployed", "deployment": deployment}
+    run = db.get(WorkflowRun, run_id)
+    if not run: raise HTTPException(404, "run not found")
+    deployment = db.scalar(select(Deployment).where(Deployment.run_id == run_id, Deployment.commit_sha == run.candidate_sha).order_by(Deployment.id.desc())) if run.candidate_sha else None
+    if deployment is None:
+        deployments = list(db.scalars(select(Deployment).where(Deployment.run_id == run_id)))
+        deployment = deployments[-1] if deployments else None
+    change = db.get(ChangeRequest, run.change_id)
+    project = db.get(Project, change.project_id) if change else None
+    return {
+        "baseline": {"commit_sha": run.baseline_sha, "accepted_commit": project.accepted_commit if project else None} if run.baseline_sha else None,
+        "candidate": deployment.url if deployment else None,
+        "status": deployment.status if deployment else "not_deployed",
+        "deployment": deployment,
+    }
 
 @app.get("/api/runs/{run_id}/approvals", dependencies=[Depends(auth)])
 def approvals(run_id: str, db: Session = Depends(get_db)):
@@ -136,11 +160,27 @@ def approval_decision(approval_id: str, body: Decision, db: Session = Depends(ge
     approval.actor = "po"; approval.reason = body.reason
     emit(db, approval.run_id, "po.decision", {"approval_id": approval.id, "decision": body.decision, "artifact_version": body.artifact_version})
     run = db.get(WorkflowRun, approval.run_id)
-    if body.decision == "approve" and run.status == "awaiting_acceptance": transition(db, run, "accepted")
+    revision_id = None
+    if body.decision == "approve" and run.status == "awaiting_acceptance":
+        transition(db, run, "accepted")
+        change = db.get(ChangeRequest, run.change_id)
+        project = db.get(Project, change.project_id) if change else None
+        if project:
+            project.accepted_commit = approval.candidate_sha or run.candidate_sha
+            emit(db, run.id, "project.accepted_version_updated", {"project_id": project.id, "commit_sha": project.accepted_commit})
     if body.decision == "request_changes" and run.status == "awaiting_acceptance":
         if run.repair_count >= 3: transition(db, run, "rejected")
-        else: run.repair_count += 1; transition(db, run, "repairing")
-    db.commit(); return approval
+        else:
+            run.repair_count += 1
+            change = db.get(ChangeRequest, run.change_id)
+            if change:
+                revision = ChangeRequest(project_id=change.project_id, text=f"Revision for {change.id}: {change.text}\nPO feedback: {body.reason or 'changes requested'}", acceptance_version=change.acceptance_version + 1, parent_change_id=change.id)
+                db.add(revision); db.flush(); revision_id = revision.id
+                emit(db, run.id, "po.revision_created", {"change_id": revision.id, "parent_change_id": change.id, "reason": body.reason})
+            transition(db, run, "repairing")
+    db.commit();
+    result = {"approval": approval, "revision_change_id": revision_id}
+    return result
 
 @app.get("/api/roles", dependencies=[Depends(auth)])
 def roles(db: Session = Depends(get_db)):
@@ -166,6 +206,8 @@ def paperclip_wake(payload: dict, db: Session = Depends(get_db)):
     if not change: raise HTTPException(404, "change not found")
     existing = db.scalar(select(WorkflowRun).where(WorkflowRun.change_id == change_id, WorkflowRun.idempotency_key == key))
     if existing: return {"accepted": True, "deduplicated": True, "run_id": existing.id}
+    active = db.scalar(select(WorkflowRun).join(ChangeRequest, WorkflowRun.change_id == ChangeRequest.id).where(ChangeRequest.project_id == change.project_id, WorkflowRun.status.in_(["queued", "analyzing", "planning", "implementing", "integrating", "verifying", "deploying", "repairing", "cancelling"])))
+    if active: raise HTTPException(409, f"project already has active run {active.id}")
     run = WorkflowRun(change_id=change_id, idempotency_key=key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles":snapshot(db)})
     db.add(run); db.flush(); seed_tasks(db, run, change.text); emit(db, run.id, "paperclip.wake.accepted", {"change_id": change_id, "key": key}); db.commit()
     return {"accepted": True, "deduplicated": False, "run_id": run.id}

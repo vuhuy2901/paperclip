@@ -22,6 +22,8 @@ Storefront demo: `uvicorn templates.storefront.backend.main:app --port 8200` and
 
 Contract export: `python scripts/export_contracts.py`. PostgreSQL migration: `alembic upgrade head`. Evaluation: `python evals/run_eval.py`.
 
+Runtime pin chính: Python 3.13, LangGraph `0.6.11`, xxhash `4.0.2`; xem `pyproject.toml` để biết các dải tương thích còn lại.
+
 Compose exposes Core API at `http://localhost:8001` (container port `8000`), Paperclip at `http://localhost:3100`, review UI at `http://localhost:8080`, storefront API at `http://localhost:8200`, storefront UI at `http://localhost:8201`, adapter at `http://localhost:8090`, and the isolated preview manager at `http://localhost:8300`.
 
 Mặc định dùng SQLite cục bộ để development; production dùng `DATABASE_URL` PostgreSQL. Xem `docs/setup.md`.
