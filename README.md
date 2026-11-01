@@ -19,6 +19,8 @@ $env:CODEX_GATEWAY_TOKEN="dev-codex-gateway"
 python -m apps.codex_gateway.main
 ```
 
+Gateway chạy Codex non-interactive với stdin đóng, `--approve-for-me`, `--ignore-user-config` và mức suy luận mặc định `low`; có thể đổi bằng biến môi trường `CODEX_REASONING_EFFORT`.
+
 Sau đó cấu hình role Backend qua `PUT /api/roles/backend-developer` với runner `codex-gateway`, hoặc dùng cấu hình đã lưu trong demo.
 
 ```powershell
