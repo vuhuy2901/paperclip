@@ -48,6 +48,7 @@ def run_profile(profile: str, cwd: str | Path, expected_sha: str | None = None, 
         with tempfile.TemporaryDirectory(prefix="ai-company-regression-") as temp_dir:
             if profile == "product-regression":
                 run_env["STOREFRONT_DATABASE_URL"] = f"sqlite:///{Path(temp_dir, 'storefront.db').as_posix()}"
+                run_env["AI_COMPANY_TEST_DB"] = f"sqlite:///{Path(temp_dir, 'core.db').as_posix()}"
             result = subprocess.run(command, cwd=cwd, env=run_env, text=True, capture_output=True, timeout=timeout)
         status = "pass" if result.returncode == 0 else "fail"
         reason = None

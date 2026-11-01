@@ -1,5 +1,5 @@
 import os
-os.environ["DATABASE_URL"] = "sqlite:///./data/test.db"
+os.environ["DATABASE_URL"] = os.getenv("AI_COMPANY_TEST_DB", "sqlite:///./data/test.db")
 from fastapi.testclient import TestClient
 from apps.core_api.main import app
 
@@ -38,10 +38,10 @@ def test_workflow_transition_guard():
 def test_role_update_and_feedback():
     p = client.post("/api/projects", headers=H, json={"name":"feedback-demo"}).json()
     c = client.post(f"/api/projects/{p['id']}/changes", headers=H, json={"text":"Review candidate"}).json()
-    r = client.post(f"/api/changes/{c['id']}/runs", headers=H, json={"idempotency_key":"feedback"}).json()
     role = client.put("/api/roles/tester", headers=H, json={"runner":"xera","model":"xera-local","timeout_seconds":120,"tool_policy":[],"file_scope":["tests"]})
     assert role.status_code == 200 and role.json()["runner"] == "xera"
     assert role.json()["file_scope"] == ["tests"]
+    r = client.post(f"/api/changes/{c['id']}/runs", headers=H, json={"idempotency_key":"feedback"}).json()
     feedback = client.post(f"/api/runs/{r['id']}/feedback", headers=H, json={"text":"Needs clearer error state","version":"candidate-1","route":"/acceptance"})
     assert feedback.status_code == 200
     snapshot = client.get(f"/api/runs/{r['id']}", headers=H).json()["run"]["config_snapshot"]
