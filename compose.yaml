@@ -77,10 +77,14 @@ services:
     build:
       context: .
       dockerfile: infra/paperclip/Dockerfile
-    ports: ["3100:3100"]
+    ports: ["127.0.0.1:3100:3100"]
     environment:
       CORE_API_URL: http://core-api:8000
       SERVICE_TOKEN: dev-service-token
+      # Paperclip is local-only in the demo. Keep the board usable without
+      # an external organization account; never expose this mode beyond host.
+      PAPERCLIP_DEPLOYMENT_MODE: local_trusted
+      PAPERCLIP_BIND: loopback
     depends_on:
       core-api: {condition: service_healthy}
     volumes: ["paperclip-data:/home/node/.paperclip"]

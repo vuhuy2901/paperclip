@@ -13,4 +13,8 @@ else
   node /opt/paperclip/configure.mjs
 fi
 
+if [ "${PAPERCLIP_DEPLOYMENT_MODE:-}" = "local_trusted" ]; then
+  node /opt/paperclip/proxy.mjs &
+fi
+
 exec paperclipai run
