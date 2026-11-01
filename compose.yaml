@@ -38,6 +38,22 @@ services:
     ports: ["8090:8090"]
     depends_on:
       core-api: {condition: service_healthy}
+  paperclip:
+    build:
+      context: .
+      dockerfile: infra/paperclip/Dockerfile
+    ports: ["3100:3100"]
+    environment:
+      CORE_API_URL: http://core-api:8000
+      SERVICE_TOKEN: dev-service-token
+    depends_on:
+      core-api: {condition: service_healthy}
+    volumes: ["paperclip-data:/home/node/.paperclip"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/api/health').then(r=>{if(!r.ok) process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
   storefront-api:
     build:
       context: .
@@ -69,6 +85,7 @@ services:
 volumes:
   core-data:
   postgres-data:
+  paperclip-data:
 networks:
   default:
     name: ai_company_default
