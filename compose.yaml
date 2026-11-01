@@ -61,6 +61,9 @@ services:
       CORE_API_URL: http://core-api:8000
       CORE_PUBLIC_URL: ${CORE_PUBLIC_URL:-http://localhost:8001}
       SERVICE_TOKEN: dev-service-token
+      PAPERCLIP_API_URL: ${PAPERCLIP_API_URL:-http://paperclip:3100}
+      PAPERCLIP_API_KEY: ${PAPERCLIP_API_KEY:-}
+      PAPERCLIP_COMPANY_ID: ${PAPERCLIP_COMPANY_ID:-}
       PORT: 8090
     ports: ["8090:8090"]
     healthcheck:

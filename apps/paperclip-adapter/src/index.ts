@@ -26,6 +26,50 @@ function extractChangeId(context: any, prompt: string) {
   return match?.[1] ?? null;
 }
 
+function paperclipSyncConfig(context: any) {
+  return {
+    apiUrl: String(context?.paperclipApiUrl ?? process.env.PAPERCLIP_API_URL ?? "http://paperclip:3100").replace(/\/$/, ""),
+    apiKey: context?.paperclipApiKey ?? process.env.PAPERCLIP_API_KEY,
+    issueId: context?.issueId ?? context?.task?.issueId ?? context?.task?.id,
+  };
+}
+
+async function syncTerminalRun(context: any, runId: string, links: Record<string, string>) {
+  const sync = paperclipSyncConfig(context);
+  if (!sync.apiKey || !sync.issueId) return { status: "skipped", reason: "Paperclip API key or issue id is not configured" };
+  const core = coreConfiguration();
+  let snapshot: any = null;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      const response = await fetch(`${core.url}/api/runs/${runId}`, { headers: { "x-service-token": core.token } });
+      if (response.ok) {
+        snapshot = await response.json();
+        if (["awaiting_acceptance", "accepted", "rejected", "failed", "blocked", "cancelled"].includes(snapshot?.run?.status)) break;
+      }
+    } catch { /* keep polling; the Core API may be restarting */ }
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+  const status = String(snapshot?.run?.status ?? "unknown");
+  const body = [
+    `AI Software Company run ${runId} finished with status: ${status}.`,
+    `Core run: ${links.run}`,
+    `Artifacts: ${links.artifacts}`,
+    `Evidence: ${links.evidence}`,
+    `Preview: ${links.preview}`,
+    `Baseline/candidate diff: ${links.diff}`,
+  ].join("\n");
+  try {
+    const response = await fetch(`${sync.apiUrl}/api/issues/${encodeURIComponent(String(sync.issueId))}/comments`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${sync.apiKey}` },
+      body: JSON.stringify({ body, authorType: "agent", metadata: { version: "1", sourceChannel: "ai_company", sourceRunId: runId, sections: { status, links } } }),
+    });
+    return response.ok ? { status: "synced", issueId: sync.issueId, runStatus: status } : { status: "failed", httpStatus: response.status, runStatus: status };
+  } catch (error: any) {
+    return { status: "failed", error: String(error?.message ?? error).slice(0, 500), runStatus: status };
+  }
+}
+
 export async function testEnvironment() {
   const checks: Array<{ level: string; message: string }> = [];
   const core = coreConfiguration();
@@ -65,7 +109,9 @@ export async function execute(context: any) {
         preview: `${publicCore}/api/runs/${runId}/preview`,
         diff: `${publicCore}/api/runs/${runId}/diff`,
       };
-      return { status: "completed", events: [{ type: "core.run.accepted", payload: body }, { type: "core.run.links", payload: links }], runId, links, sessionParams: { lastRun: new Date().toISOString() } };
+      const sync = paperclipSyncConfig(context);
+      void syncTerminalRun(context, runId, links).then(result => console.log(JSON.stringify({ type: "paperclip.core.sync", runId, ...result })));
+      return { status: "completed", events: [{ type: "core.run.accepted", payload: body }, { type: "core.run.links", payload: links }, { type: "paperclip.core.sync.scheduled", payload: { issueId: sync.issueId ?? null, configured: Boolean(sync.apiKey && sync.issueId) } }], runId, links, sessionParams: { lastRun: new Date().toISOString() } };
     } catch (error: any) {
       return { status: "failed", failureCategory: "core_api", error: String(error?.message ?? error).slice(0, 2000) };
     }
