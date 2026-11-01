@@ -10,6 +10,11 @@ async function forward(path: string, method: string, body: unknown) {
 }
 
 const server = createServer(async (req, res) => {
+  if (req.method === "GET" && req.url === "/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", adapter: "ai_company_external" }));
+    return;
+  }
   if (req.method !== "POST" || req.url !== "/adapter/wake") { res.writeHead(404); res.end("not found"); return; }
   let raw = ""; for await (const chunk of req) raw += chunk;
   try {
