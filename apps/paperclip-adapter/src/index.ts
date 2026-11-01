@@ -54,7 +54,16 @@ export async function execute(context: any) {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) return { status: "failed", failureCategory: "core_api", error: JSON.stringify(body).slice(0, 2000) };
-      return { status: "completed", events: [{ type: "core.run.accepted", payload: body }], runId: body.run_id, sessionParams: { lastRun: new Date().toISOString() } };
+      const runId = String(body.run_id);
+      const links = {
+        run: `${core.url}/api/runs/${runId}`,
+        events: `${core.url}/api/runs/${runId}/events`,
+        artifacts: `${core.url}/api/runs/${runId}/artifacts`,
+        evidence: `${core.url}/api/runs/${runId}/evidence`,
+        preview: `${core.url}/api/runs/${runId}/preview`,
+        diff: `${core.url}/api/runs/${runId}/diff`,
+      };
+      return { status: "completed", events: [{ type: "core.run.accepted", payload: body }, { type: "core.run.links", payload: links }], runId, links, sessionParams: { lastRun: new Date().toISOString() } };
     } catch (error: any) {
       return { status: "failed", failureCategory: "core_api", error: String(error?.message ?? error).slice(0, 2000) };
     }

@@ -1,3 +1,3 @@
 # Paperclip adapter boundary
 
-The package exports Paperclip-compatible metadata and `createServerAdapter()` with `execute()` and `testEnvironment()` from `src/index.ts`. The local bridge server accepts Paperclip wake-ups at `POST /adapter/wake`, forwards them to the Core API with a service token, and suppresses duplicate idempotency keys. Company/project/role mapping is configured outside source code.
+The package exports Paperclip-compatible metadata and `createServerAdapter()` with `execute()` and `testEnvironment()` from `src/index.ts`. The local bridge server accepts Paperclip wake-ups at `POST /adapter/wake`, forwards them to the Core API with a service token, and suppresses duplicate idempotency keys. A successful wake response includes authenticated Core links for the run, event stream, artifacts, evidence, preview and baseline/candidate diff so the Paperclip task can retain the handoff boundary. Company/project/role mapping is configured outside source code.
