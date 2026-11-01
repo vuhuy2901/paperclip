@@ -21,12 +21,15 @@ class CodexCliRunner:
         self._cancel_requested = False
 
     def run(self, prompt: str, cwd: str | Path, model: str | None = None) -> CodexResult:
-        command = [self.executable, "exec", "--json", "--ephemeral"]
+        command = [self.executable, "exec", "--json", "--ephemeral", "--ignore-user-config"]
         if self.sandbox == "workspace-write":
             command.append("--approve-for-me")
         else:
             command.extend(["--sandbox", self.sandbox])
         command.extend(["-C", str(Path(cwd).resolve())])
+        reasoning_effort = os.getenv("CODEX_REASONING_EFFORT", "low")
+        if reasoning_effort:
+            command.extend(["-c", f"model_reasoning_effort={reasoning_effort}"])
         if model: command.extend(["--model", model])
         command.append(prompt)
         try:
