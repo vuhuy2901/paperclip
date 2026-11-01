@@ -9,3 +9,5 @@
 6. Start the storefront API and UI, then compare `regular-demo` and `vip-demo` pricing.
 7. Create an order with `SAVE10` as VIP and verify the VIP unit price is used once, not stacked with the promo.
 8. Create a national-shipping order, fetch it again, cancel it, and verify the stored total and price snapshot do not change.
+
+9. Run `python scripts/demo_repair.py` to demonstrate a labelled isolated cancellation defect: trusted tests fail, the routing evidence selects Backend, and the repaired worktree passes again. The main checkout is not modified.

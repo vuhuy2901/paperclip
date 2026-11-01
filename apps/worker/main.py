@@ -3,11 +3,12 @@ import json
 import os
 import socket
 import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy import select
 from apps.core_api.db import SessionLocal, Base, engine
-from apps.core_api.models import WorkflowRun, Approval, Deployment, Task, Artifact, ChangeRequest, Project, AgentRun, EvidenceRecord
+from apps.core_api.models import WorkflowRun, Approval, Deployment, Task, Artifact, ChangeRequest, Project, AgentRun, EvidenceRecord, Finding
 from apps.core_api.service import transition, emit, claim_run, heartbeat_run, release_run
 from apps.orchestration.graph import workflow_graph
 from apps.orchestration.dag import order_tasks
@@ -18,6 +19,7 @@ from apps.runners.codex import CodexCliRunner
 from apps.runners.executor import TaskExecutor
 from apps.workspace.git import WorkspaceManager
 from apps.verification.runner import run_profile
+from apps.verification.routing import route_failure
 from apps.verification.artifacts import ArtifactStore
 from apps.preview.manager import PreviewManager, RemotePreviewManager
 from apps.roles.catalog import render_artifact
@@ -42,7 +44,8 @@ def process_once():
         candidate_root = None
         workspace_manager = WorkspaceManager(settings.workspace_root)
         if project and project.repo:
-            base_ref = project.accepted_commit or workspace_manager.head(project.repo)
+            repair_base = (run.config_snapshot or {}).get("repair_base_sha") if run.status == "repairing" else None
+            base_ref = repair_base or project.accepted_commit or workspace_manager.head(project.repo)
             if run.baseline_sha is None:
                 run.baseline_sha = base_ref
             candidate_root = workspace_manager.create_candidate(project.repo, project.id, run.id, base_ref)
@@ -55,7 +58,10 @@ def process_once():
             for status in ["analyzing", "planning", "implementing"]:
                 if run.status != status: transition(db, run, status)
             transition(db, run, "failed"); db.commit(); return True
+        repair_owner = (run.config_snapshot or {}).get("repair_owner") if run.status == "repairing" else None
         for task in tasks:
+            if repair_owner and task.role != repair_owner:
+                continue
             db.refresh(run)
             if run.status == "cancelled":
                 emit(db, run.id, "run.cancelled", {"reason": "worker observed cancellation"}); db.commit(); return True
@@ -64,7 +70,7 @@ def process_once():
             emit(db, run.id, "task.started", {"task_id": task.id, "role": task.role})
             role_cfg = (run.config_snapshot or {}).get("roles", {}).get(task.role, {"runner":"local-deterministic"})
             agent_run = AgentRun(task_id=task.id, attempt=1, runner=role_cfg.get("runner", "local-deterministic"), model=role_cfg.get("model"), status="running", usage={"status": "unknown"})
-            db.add(agent_run); db.flush()
+            db.add(agent_run); db.flush(); db.commit()
             if role_cfg.get("runner") in {"codex-cli", "codex-gateway"}:
                 scope = role_cfg.get("file_scope", [])
                 if not project or not project.repo or not scope:
@@ -76,9 +82,33 @@ def process_once():
                 worktree_task_id = f"{task.id}-r{run.repair_count}"
                 worktree = manager.create_worktree(project.repo, project.id, run.id, worktree_task_id, run.baseline_sha or "HEAD")
                 configured_runner = build_runner(role_cfg)
-                handoff = TaskExecutor(configured_runner, manager).execute(task.id, task.goal, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
+                stop_monitor = threading.Event()
+                def monitor_cancellation():
+                    while not stop_monitor.wait(0.25):
+                        with SessionLocal() as poll_db:
+                            current = poll_db.get(WorkflowRun, run.id)
+                            if current and current.status in {"cancelled", "cancelling"}:
+                                cancel = getattr(configured_runner, "cancel", None)
+                                if cancel: cancel()
+                                return
+                monitor = threading.Thread(target=monitor_cancellation, daemon=True)
+                monitor.start()
+                repair_reason = (run.config_snapshot or {}).get("repair_reason")
+                task_prompt = task.goal if not repair_reason else f"{task.goal}\n\nRepair the trusted verification failure below; preserve all existing behavior and run the relevant regression tests:\n{repair_reason}"
+                try:
+                    handoff = TaskExecutor(configured_runner, manager).execute(task.id, task_prompt, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
+                finally:
+                    stop_monitor.set(); monitor.join(timeout=2)
                 payload_obj = {"schema_version":"1", "task_id":task.id, "status":handoff.status, "summary":handoff.runner_summary, "result_commit":handoff.result_commit, "files_changed":handoff.files_changed, "mode":role_cfg.get("runner"), "failure_category":handoff.failure_category}
                 if handoff.status != "completed":
+                    db.refresh(run)
+                    if run.status in {"cancelled", "cancelling"} or handoff.failure_category == "cancelled":
+                        task.status = "cancelled"
+                        agent_run.status = "cancelled"
+                        agent_run.failure_category = handoff.failure_category or "cancelled"
+                        agent_run.finished_at = datetime.now(timezone.utc)
+                        emit(db, run.id, "run.cancelled", {"reason": "worker cancelled active runner", "task_id": task.id})
+                        db.commit(); return True
                     agent_run.status = handoff.status; agent_run.failure_category = handoff.failure_category; agent_run.finished_at = datetime.now(timezone.utc)
                     task.status = "failed"; emit(db, run.id, "task.failed", payload_obj)
                     for status in ["analyzing", "planning", "implementing"]:
@@ -117,7 +147,8 @@ def process_once():
             task.status = "completed"
             emit(db, run.id, "task.completed", {"task_id": task.id, "role": task.role, "artifacts": produced, "mode": payload_obj.get("mode", "fixture")})
         verification_root = candidate_root or Path(os.getenv("VERIFICATION_ROOT", str(Path.cwd())))
-        evidence = run_profile("product-regression", verification_root)
+        expected_candidate_sha = workspace_manager.head(candidate_root) if candidate_root else None
+        evidence = run_profile("product-regression", verification_root, expected_sha=expected_candidate_sha)
         heartbeat_run(db, run.id, owner)
         run.candidate_sha = evidence.candidate_sha
         candidate_sha = evidence.candidate_sha
@@ -134,6 +165,10 @@ def process_once():
         db.add(EvidenceRecord(run_id=run.id, candidate_sha=evidence.candidate_sha, check_id=evidence.check_id, command=evidence.command, exit_code=evidence.exit_code, status=evidence.status, report_ref=evidence_path["relative_path"], payload=evidence.__dict__))
         emit(db, run.id, "verification.completed", {"check_id": evidence.check_id, "status": evidence.status, "candidate_sha": evidence.candidate_sha, "report": evidence_path["relative_path"]})
         if evidence.status != "pass":
+            route = route_failure(evidence.stdout, evidence.stderr)
+            run.config_snapshot = {**(run.config_snapshot or {}), "repair_owner": route["owner"], "repair_base_sha": evidence.candidate_sha, "repair_reason": route}
+            db.add(Finding(run_id=run.id, source="trusted-verification", severity="blocking", file=route.get("file"), line=route.get("line"), suggested_owner=route["owner"], reproduction=evidence.reason or evidence.stderr[-2000:], disposition=None))
+            emit(db, run.id, "repair.routed", route)
             if run.repair_count >= 3:
                 if run.status != "repairing":
                     for status in ["analyzing", "planning", "implementing", "integrating", "verifying"]:

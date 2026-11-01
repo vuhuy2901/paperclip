@@ -59,6 +59,7 @@ services:
     build: ./apps/paperclip-adapter
     environment:
       CORE_API_URL: http://core-api:8000
+      CORE_PUBLIC_URL: ${CORE_PUBLIC_URL:-http://localhost:8001}
       SERVICE_TOKEN: dev-service-token
       PORT: 8090
     ports: ["8090:8090"]

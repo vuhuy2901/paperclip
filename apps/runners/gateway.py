@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -27,7 +28,9 @@ class CodexGatewayRunner:
         self.url = (url or os.getenv("CODEX_GATEWAY_URL", "http://host.docker.internal:8400")).rstrip("/")
 
     def run(self, prompt: str, cwd: str | Path, model: str | None = None) -> GatewayResult:
-        payload = {"prompt": prompt, "cwd": str(Path(cwd).resolve()), "model": model, "sandbox": self.sandbox, "timeout_seconds": self.timeout_seconds}
+        request_id = str(uuid.uuid4())
+        self._request_id = request_id
+        payload = {"request_id": request_id, "prompt": prompt, "cwd": str(Path(cwd).resolve()), "model": model, "sandbox": self.sandbox, "timeout_seconds": self.timeout_seconds}
         request = urllib.request.Request(
             f"{self.url}/run",
             data=json.dumps(payload).encode(),
@@ -42,3 +45,19 @@ class CodexGatewayRunner:
             return GatewayResult("failed", f"Codex gateway HTTP {exc.code}", [], "gateway_http")
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             return GatewayResult("inconclusive", f"Codex gateway unavailable: {exc}", [], "gateway_unavailable")
+
+    def cancel(self) -> None:
+        request_id = getattr(self, "_request_id", None)
+        if not request_id:
+            return
+        payload = json.dumps({"request_id": request_id}).encode()
+        request = urllib.request.Request(
+            f"{self.url}/cancel",
+            data=payload,
+            headers={"content-type": "application/json", "x-gateway-token": os.getenv("CODEX_GATEWAY_TOKEN", "dev-codex-gateway")},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(request, timeout=5).read()
+        except (urllib.error.URLError, TimeoutError):
+            return

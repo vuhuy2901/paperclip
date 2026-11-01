@@ -4,6 +4,23 @@ Hệ thống triển khai theo mục 19 của đặc tả gồm API lõi, hàng 
 
 ## Chạy nhanh
 
+Chạy toàn bộ stack bằng Docker:
+
+```powershell
+docker compose up -d --build
+docker compose ps
+```
+
+Nếu dùng Codex CLI đã đăng nhập trên Windows, mở terminal host thứ hai trước khi tạo run:
+
+```powershell
+$env:CODEX_HOST_WORKSPACE_ROOT=(Get-Location).Path
+$env:CODEX_GATEWAY_TOKEN="dev-codex-gateway"
+python -m apps.codex_gateway.main
+```
+
+Sau đó cấu hình role Backend qua `PUT /api/roles/backend-developer` với runner `codex-gateway`, hoặc dùng cấu hình đã lưu trong demo.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1

@@ -1,3 +1,3 @@
 # Evaluation
 
-Run `python evals/run_eval.py`. The output is ignored runtime data under `data/evals/latest.json`. The harness covers five fixed requirements and preserves raw stdout/stderr, exit code and timestamp. A/B/C labels are intentionally not treated as evidence of superiority until real agent runs with comparable budgets are recorded.
+Run `python evals/run_eval.py`. The output is runtime data under `data/evals/latest.json`; the 2026-11-01 execution recorded 5/5 checks for A, B and C, with raw stdout/stderr, exit code and duration for all 15 checks. The checks are fixed and independent; the report does not fabricate model time, token usage or cost, so the identical A/B/C pass rates must not be interpreted as superiority. `python scripts/demo_repair.py` separately produces `data/evals/repair-demo.json`: an explicitly labelled isolated defect was caught by the real regression process, routed to `backend-developer`, and repaired with a second real pass.

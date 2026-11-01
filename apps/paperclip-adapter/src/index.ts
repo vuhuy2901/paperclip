@@ -14,6 +14,7 @@ Model, timeout, sandbox and Core API URL are runtime configuration; secrets stay
 function coreConfiguration() {
   return {
     url: (process.env.CORE_API_URL ?? "http://core-api:8000").replace(/\/$/, ""),
+    publicUrl: (process.env.CORE_PUBLIC_URL ?? "http://localhost:8001").replace(/\/$/, ""),
     token: process.env.SERVICE_TOKEN ?? "dev-service-token",
   };
 }
@@ -55,13 +56,14 @@ export async function execute(context: any) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) return { status: "failed", failureCategory: "core_api", error: JSON.stringify(body).slice(0, 2000) };
       const runId = String(body.run_id);
+      const publicCore = core.publicUrl;
       const links = {
-        run: `${core.url}/api/runs/${runId}`,
-        events: `${core.url}/api/runs/${runId}/events`,
-        artifacts: `${core.url}/api/runs/${runId}/artifacts`,
-        evidence: `${core.url}/api/runs/${runId}/evidence`,
-        preview: `${core.url}/api/runs/${runId}/preview`,
-        diff: `${core.url}/api/runs/${runId}/diff`,
+        run: `${publicCore}/api/runs/${runId}`,
+        events: `${publicCore}/api/runs/${runId}/events`,
+        artifacts: `${publicCore}/api/runs/${runId}/artifacts`,
+        evidence: `${publicCore}/api/runs/${runId}/evidence`,
+        preview: `${publicCore}/api/runs/${runId}/preview`,
+        diff: `${publicCore}/api/runs/${runId}/diff`,
       };
       return { status: "completed", events: [{ type: "core.run.accepted", payload: body }, { type: "core.run.links", payload: links }], runId, links, sessionParams: { lastRun: new Date().toISOString() } };
     } catch (error: any) {

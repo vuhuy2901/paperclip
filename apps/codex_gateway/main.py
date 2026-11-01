@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
+import time
+import uuid
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,6 +14,8 @@ from pathlib import Path
 HOST_ROOT = Path(os.getenv("CODEX_HOST_WORKSPACE_ROOT", Path.cwd())).resolve()
 TOKEN = os.getenv("CODEX_GATEWAY_TOKEN", "dev-codex-gateway")
 CODEX_BIN = os.getenv("CODEX_BIN", "codex")
+ACTIVE: dict[str, tuple[subprocess.Popen, threading.Event]] = {}
+ACTIVE_LOCK = threading.Lock()
 
 
 def map_path(raw: str) -> Path:
@@ -69,7 +74,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/run":
+        if self.path not in {"/run", "/cancel"}:
             self.send_json(404, {"error": "not found"})
             return
         if self.headers.get("x-gateway-token") != TOKEN:
@@ -77,6 +82,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             payload = json.loads(self.rfile.read(int(self.headers.get("content-length", "0"))))
+            if self.path == "/cancel":
+                request_id = str(payload["request_id"])
+                with ACTIVE_LOCK:
+                    active = ACTIVE.get(request_id)
+                if not active:
+                    self.send_json(200, {"status": "not_found", "request_id": request_id})
+                    return
+                process, cancel_event = active
+                cancel_event.set()
+                if process.poll() is None:
+                    process.terminate()
+                self.send_json(202, {"status": "cancelling", "request_id": request_id})
+                return
             cwd = map_path(str(payload["cwd"]))
             sandbox = str(payload.get("sandbox", "read-only"))
             if sandbox not in {"read-only", "workspace-write"}:
@@ -86,8 +104,30 @@ class Handler(BaseHTTPRequestHandler):
             if model and str(model) not in {"configured-at-runtime", "runtime-configured"}:
                 command.extend(["--model", str(model)])
             command.append(str(payload["prompt"]))
+            request_id = str(payload.get("request_id") or uuid.uuid4())
             with host_git_worktree(cwd):
-                completed = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=int(payload.get("timeout_seconds", 900)))
+                process = subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                cancel_event = threading.Event()
+                with ACTIVE_LOCK:
+                    ACTIVE[request_id] = (process, cancel_event)
+                timed_out = False
+                deadline = time.monotonic() + int(payload.get("timeout_seconds", 900))
+                while process.poll() is None:
+                    if time.monotonic() >= deadline:
+                        timed_out = True
+                        process.terminate()
+                        break
+                    time.sleep(0.1)
+                stdout, stderr = process.communicate()
+                with ACTIVE_LOCK:
+                    ACTIVE.pop(request_id, None)
+            if cancel_event.is_set():
+                self.send_json(200, {"status": "cancelled", "summary": "Codex CLI cancelled through host gateway", "events": [], "failure_category": "cancelled", "request_id": request_id})
+                return
+            if timed_out:
+                self.send_json(200, {"status": "inconclusive", "summary": "Codex CLI timed out", "events": [], "failure_category": "timeout", "request_id": request_id})
+                return
+            completed = type("Completed", (), {"stdout": stdout, "stderr": stderr, "returncode": process.returncode})()
             events = []
             for line in completed.stdout.splitlines():
                 try:
@@ -95,13 +135,11 @@ class Handler(BaseHTTPRequestHandler):
                 except json.JSONDecodeError:
                     continue
             if completed.returncode:
-                self.send_json(200, {"status": "failed", "summary": completed.stderr[-2000:] or "Codex CLI failed", "events": events, "failure_category": "subprocess"})
+                self.send_json(200, {"status": "failed", "summary": completed.stderr[-2000:] or "Codex CLI failed", "events": events, "failure_category": "subprocess", "request_id": request_id})
             else:
-                self.send_json(200, {"status": "completed", "summary": "Codex CLI completed through host gateway", "events": events})
-        except subprocess.TimeoutExpired:
-            self.send_json(200, {"status": "inconclusive", "summary": "Codex CLI timed out", "events": [], "failure_category": "timeout"})
+                self.send_json(200, {"status": "completed", "summary": "Codex CLI completed through host gateway", "events": events, "request_id": request_id})
         except FileNotFoundError:
-            self.send_json(200, {"status": "failed", "summary": "Codex CLI not found on gateway host", "events": [], "failure_category": "missing_tool"})
+            self.send_json(200, {"status": "failed", "summary": "Codex CLI not found on gateway host", "events": [], "failure_category": "missing_tool", "request_id": request_id})
         except (KeyError, ValueError, json.JSONDecodeError) as exc:
             self.send_json(400, {"error": str(exc)})
 

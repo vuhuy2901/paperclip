@@ -50,7 +50,7 @@ def create_preview(body: PreviewRequest):
     override = {
         "services": {
             body.service: {
-                "ports": [f"{host_port}:8200"],
+                "ports": [f"127.0.0.1:{host_port}:8200"],
                 "build": {"context": str(selected_workspace), "dockerfile": "templates/storefront/backend/Dockerfile"},
                 "environment": {"STOREFRONT_DATABASE_URL": "postgresql+psycopg://storefront:storefront@postgres:5432/storefront"},
             },
