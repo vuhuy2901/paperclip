@@ -1,6 +1,6 @@
 from pathlib import Path
 from fastapi import FastAPI, Depends, Header, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 import json
 import time
 from sqlalchemy.exc import OperationalError
@@ -9,6 +9,7 @@ from sqlalchemy import select
 from .db import Base, engine, get_db
 from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment, RoleConfig, RoleScope
 from .schemas import ProjectCreate, ChangeCreate, RunCreate, Decision, Feedback, RoleUpdate
+from .config import settings
 from .service import emit, seed_tasks, transition
 from .roles import ensure_roles, snapshot
 
@@ -97,6 +98,19 @@ def artifact(artifact_id: str, db: Session = Depends(get_db)):
     item = db.get(Artifact, artifact_id)
     if not item: raise HTTPException(404, "artifact not found")
     return item
+
+@app.get("/api/artifacts/{artifact_id}/content", dependencies=[Depends(auth)])
+def artifact_content(artifact_id: str, db: Session = Depends(get_db)):
+    item = db.get(Artifact, artifact_id)
+    if not item: raise HTTPException(404, "artifact not found")
+    root = Path(settings.artifact_root).resolve()
+    path = (root / item.relative_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        raise HTTPException(500, "artifact path is invalid")
+    if not path.is_file(): raise HTTPException(404, "artifact content not found")
+    return FileResponse(path, filename=Path(item.relative_path).name, media_type="application/octet-stream")
 
 @app.get("/api/runs/{run_id}/preview", dependencies=[Depends(auth)])
 def preview(run_id: str, db: Session = Depends(get_db)):
