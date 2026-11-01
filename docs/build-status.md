@@ -38,5 +38,6 @@
 - Eval thực tế `python evals/run_eval.py` đã ghi 5/5 cho mỗi A/B/C và lưu raw output/duration/exit code ở `data/evals/latest.json`; báo cáo không bịa token/chi phí và ghi rõ A/B/C dùng cùng fixed checks.
 - Restart/resume runtime `6ca8e179-312a-4f7b-8038-574a22548cfc`: run được enqueue khi worker đã stop, worker được start lại sau đó và run tiếp tục tới `awaiting_acceptance` với trusted candidate SHA `027e1158021145458e5e78eb548b4310f2434079`.
 - `docs/reuse-manifest.md` đã ghi provenance/license và phân biệt nguồn chỉ tham khảo với code thực sự import; `docs/limitations.md` liệt kê rõ các giới hạn còn lại.
+- `docs/completion-audit.md` là bảng đối chiếu từng DoD §18 với run/test/runtime evidence, trong đó đánh dấu rõ các mục partial thay vì suy diễn từ fixture.
 - Adapter package typecheck/build đã pass sau khi tách `CORE_API_URL` nội bộ khỏi `CORE_PUBLIC_URL`; execution context thật trả các link Paperclip-visible về `http://localhost:8001` thay vì hostname Docker nội bộ, đồng thời Core vẫn nhận wake qua network service.
 - Chưa đạt đầy đủ §18: model thật/usage accounting cho cả tám role, đồng bộ ngược đầy đủ task/report/preview về Paperclip, và merge tự động/conflict workflow cho nhiều Codex worktree commits; deterministic role outputs vẫn được dán nhãn fixture và không được trình bày như model execution.
