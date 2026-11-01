@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -107,27 +108,81 @@ async function syncTerminalRun(context: any, runId: string, links: Record<string
   }
 }
 
+let cachedCodexProbe: { at: number; result: { ok: boolean; detail: string } } | null = null;
+let pendingCodexProbe: Promise<{ ok: boolean; detail: string }> | null = null;
+
+async function codexProbe() {
+  if (cachedCodexProbe && Date.now() - cachedCodexProbe.at < 60_000) return cachedCodexProbe.result;
+  if (!pendingCodexProbe) pendingCodexProbe = (async () => {
+    try {
+      const gateway = (process.env.CODEX_GATEWAY_URL ?? "http://host.docker.internal:8400").replace(/\/$/, "");
+      const health = await fetch(`${gateway}/health`, { signal: AbortSignal.timeout(5_000) });
+      if (!health.ok) return { ok: false, detail: `Codex gateway health returned HTTP ${health.status}` };
+      const response = await fetch(`${gateway}/run`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-gateway-token": process.env.CODEX_GATEWAY_TOKEN ?? "dev-codex-gateway" },
+        body: JSON.stringify({ cwd: "/workspace", sandbox: "read-only", timeout_seconds: 90, prompt: "Reply with exactly READY and do not use tools." }),
+        signal: AbortSignal.timeout(100_000),
+      });
+      if (!response.ok) return { ok: false, detail: `Codex gateway probe returned HTTP ${response.status}` };
+      const body = await response.json() as { status?: string; summary?: string };
+      return { ok: body.status === "completed", detail: body.status === "completed" ? "Codex CLI completed an authenticated read-only probe" : String(body.summary ?? body.status ?? "unknown failure").slice(0, 300) };
+    } catch (error: any) {
+      return { ok: false, detail: `Codex gateway unavailable: ${String(error?.message ?? error).slice(0, 200)}` };
+    }
+  })().then((result) => {
+    cachedCodexProbe = { at: Date.now(), result };
+    return result;
+  }).finally(() => { pendingCodexProbe = null; });
+  return pendingCodexProbe;
+}
+
 export async function testEnvironment() {
-  const checks: Array<{ level: string; message: string }> = [];
+  const checks: Array<{ code: string; level: "info" | "error"; message: string }> = [];
   const core = coreConfiguration();
   try {
     const response = await fetch(`${core.url}/health`, { headers: { "x-service-token": core.token } });
-    checks.push({ level: response.ok ? "info" : "error", message: response.ok ? "Core API reachable" : `Core API returned HTTP ${response.status}` });
+    checks.push({ code: "core_api_health", level: response.ok ? "info" : "error", message: response.ok ? "Core API reachable" : `Core API returned HTTP ${response.status}` });
   } catch (error: any) {
-    checks.push({ level: "error", message: `Core API is unreachable: ${String(error?.message ?? error).slice(0, 300)}` });
+    checks.push({ code: "core_api_health", level: "error", message: `Core API is unreachable: ${String(error?.message ?? error).slice(0, 300)}` });
   }
-  try { const result = await execFileAsync(process.env.CODEX_BIN ?? "codex", ["--version"], { timeout: 10000 }); checks.push({ level: "info", message: `Optional Codex CLI available: ${result.stdout.trim()}` }); }
-  catch { checks.push({ level: "warn", message: "Optional Codex CLI is not available; Core runner will execute the task" }); }
-  return { checks };
+  const probe = await codexProbe();
+  checks.push({ code: probe.ok ? "codex_hello_probe_passed" : "codex_hello_probe_failed", level: probe.ok ? "info" : "error", message: probe.detail });
+  return { adapterType: type, status: checks.some((check) => check.level === "error") ? "fail" : "pass", checks, testedAt: new Date().toISOString() };
 }
 
-export async function execute(context: any) {
-  const prompt = String(context?.prompt ?? context?.task?.description ?? "");
-  if (!prompt) return { status: "failed", error: "missing task prompt", failureCategory: "invalid_input" };
+const roleDirectories: Record<string, string> = {
+  "Solution Architect": "architect", "Project Manager": "project-manager",
+  "Backend Engineer": "backend-developer", "Frontend Engineer": "frontend-developer",
+  "UI UX Designer": "ui-ux-designer", "QA Tester": "tester",
+  "Code Reviewer": "code-reviewer", "DevOps Engineer": "devops",
+};
+
+function executionResult(ok: boolean, summary: string, resultJson: Record<string, unknown> = {}) {
+  return { exitCode: ok ? 0 : 1, signal: null, timedOut: false, errorMessage: ok ? null : summary, summary, resultJson };
+}
+
+export async function execute(ctx: any) {
+  const context = ctx.context ?? {};
+  const wake = context.paperclipWake ?? {};
+  let prompt = String(context.prompt ?? context.task?.description ?? wake.prompt ?? wake.message ?? "");
+  const taskId = String(context.taskId ?? context.issueId ?? "");
+  if (!prompt && taskId) {
+    try {
+      const response = await fetch(`http://127.0.0.1:3101/api/issues/${encodeURIComponent(taskId)}`, {
+        headers: ctx.authToken ? { authorization: `Bearer ${ctx.authToken}` } : {},
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.ok) {
+        const issue = await response.json() as { title?: string; description?: string };
+        prompt = [issue.title, issue.description].filter(Boolean).join("\n\n");
+      }
+    } catch { /* Explicitly fail below if the task cannot be read. */ }
+  }
   const changeId = extractChangeId(context, prompt);
   if (changeId) {
     const core = coreConfiguration();
-    const idempotencyKey = String(context?.idempotencyKey ?? context?.task?.id ?? `paperclip-${changeId}`);
+    const idempotencyKey = String(context.idempotencyKey || taskId || `paperclip-${changeId}`);
     try {
       const response = await fetch(`${core.url}/api/integrations/paperclip/wake`, {
         method: "POST",
@@ -135,7 +190,7 @@ export async function execute(context: any) {
         body: JSON.stringify({ change_id: changeId, idempotency_key: idempotencyKey }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) return { status: "failed", failureCategory: "core_api", error: JSON.stringify(body).slice(0, 2000) };
+      if (!response.ok) return executionResult(false, `Core API wake returned HTTP ${response.status}`, { body });
       const runId = String(body.run_id);
       const publicCore = core.publicUrl;
       const links = {
@@ -146,22 +201,36 @@ export async function execute(context: any) {
         preview: `${publicCore}/api/runs/${runId}/preview`,
         diff: `${publicCore}/api/runs/${runId}/diff`,
       };
-      const sync = paperclipSyncConfig(context);
-      void syncTerminalRun(context, runId, links).then(result => console.log(JSON.stringify({ type: "paperclip.core.sync", runId, ...result })));
-      return { status: "completed", events: [{ type: "core.run.accepted", payload: body }, { type: "core.run.links", payload: links }, { type: "paperclip.core.sync.scheduled", payload: { issueId: sync.issueId ?? null, configured: Boolean(sync.apiKey && sync.issueId) } }], runId, links, sessionParams: { lastRun: new Date().toISOString() } };
+      const sync = paperclipSyncConfig({ ...context, paperclipApiKey: ctx.authToken ?? context.paperclipApiKey });
+      void syncTerminalRun({ ...context, paperclipApiKey: sync.apiKey, issueId: taskId }, runId, links).then(result => console.log(JSON.stringify({ type: "paperclip.core.sync", runId, ...result })));
+      await ctx.onLog?.("stdout", `Core run ${runId} accepted. Review: ${links.run}\n`);
+      return executionResult(true, `Core run ${runId} accepted`, { runId, links });
     } catch (error: any) {
-      return { status: "failed", failureCategory: "core_api", error: String(error?.message ?? error).slice(0, 2000) };
+      return executionResult(false, `Core API wake failed: ${String(error?.message ?? error).slice(0, 300)}`);
     }
   }
-  const args = ["exec", "--json", "--ephemeral", "--sandbox", String(context?.sandbox ?? "workspace-write")];
-  if (context?.model) args.push("--model", String(context.model));
-  args.push(prompt);
+  if (!prompt) return executionResult(false, `Paperclip task content unavailable for issue ${taskId || "unknown"}`);
   try {
-    const result = await execFileAsync(process.env.CODEX_BIN ?? "codex", args, { cwd: context?.cwd ?? process.cwd(), timeout: Number(context?.timeoutMs ?? 900000), maxBuffer: 10 * 1024 * 1024 });
-    const events = result.stdout.split(/\r?\n/).filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return { type: "unparsed", text: line.slice(0, 2000) }; } });
-    return { status: "completed", events, sessionParams: { lastRun: new Date().toISOString() }, usage: context?.usage ?? null };
+    const roleDir = roleDirectories[ctx.agent?.name];
+    const rolePrompt = roleDir ? await readFile(`/opt/role-assets/${roleDir}/prompt.md`, "utf8") : "";
+    const roleSkills = roleDir ? await readFile(`/opt/role-assets/${roleDir}/skills.md`, "utf8") : "";
+    const workPrompt = [rolePrompt, roleSkills, prompt, taskId ? `Paperclip issue ID: ${taskId}` : ""].filter(Boolean).join("\n\n");
+    const gateway = (process.env.CODEX_GATEWAY_URL ?? "http://host.docker.internal:8400").replace(/\/$/, "");
+    ctx.onDispatch?.();
+    const response = await fetch(`${gateway}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-gateway-token": process.env.CODEX_GATEWAY_TOKEN ?? "dev-codex-gateway" },
+      body: JSON.stringify({ cwd: "/workspace", sandbox: "workspace-write", timeout_seconds: Number(ctx.config?.timeoutSec ?? 900), model: ctx.config?.model, prompt: workPrompt }),
+      signal: ctx.signal,
+    });
+    if (!response.ok) return executionResult(false, `Codex gateway returned HTTP ${response.status}`);
+    const body = await response.json() as { status?: string; summary?: string; events?: Array<{ type?: string; item?: { type?: string; text?: string } }> };
+    const assistantText = body.events?.filter((event) => event.type === "item.completed" && event.item?.type === "agent_message").map((event) => event.item?.text ?? "").filter(Boolean).at(-1);
+    const summary = assistantText || body.summary || "Codex gateway returned no summary";
+    await ctx.onLog?.("stdout", `${summary}\n`);
+    return executionResult(body.status === "completed", summary.slice(0, 4000), { gatewayStatus: body.status, eventCount: body.events?.length ?? 0 });
   } catch (error: any) {
-    return { status: error?.killed ? "inconclusive" : "failed", failureCategory: error?.killed ? "timeout" : "subprocess", error: String(error?.message ?? error).slice(0, 2000) };
+    return executionResult(false, `Codex gateway failed: ${String(error?.message ?? error).slice(0, 300)}`);
   }
 }
 

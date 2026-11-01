@@ -85,6 +85,8 @@ services:
       # an external organization account; never expose this mode beyond host.
       PAPERCLIP_DEPLOYMENT_MODE: local_trusted
       PAPERCLIP_BIND: loopback
+      CODEX_GATEWAY_URL: ${CODEX_GATEWAY_URL:-http://host.docker.internal:8400}
+      CODEX_GATEWAY_TOKEN: ${CODEX_GATEWAY_TOKEN:-dev-codex-gateway}
     depends_on:
       core-api: {condition: service_healthy}
     volumes: ["paperclip-data:/home/node/.paperclip"]

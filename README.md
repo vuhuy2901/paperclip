@@ -11,17 +11,13 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Nếu dùng Codex CLI đã đăng nhập trên Windows, mở terminal host thứ hai trước khi tạo run:
+Nếu dùng Codex CLI đã đăng nhập trên Windows, bật gateway và cấu hình đủ tám role bằng một lệnh:
 
 ```powershell
-$env:CODEX_HOST_WORKSPACE_ROOT=(Get-Location).Path
-$env:CODEX_GATEWAY_TOKEN="dev-codex-gateway"
-python -m apps.codex_gateway.main
+python scripts/enable_codex_demo.py
 ```
 
-Gateway chạy Codex non-interactive với stdin đóng, `--approve-for-me`, `--ignore-user-config` và mức suy luận mặc định `low`; có thể đổi bằng biến môi trường `CODEX_REASONING_EFFORT`.
-
-Sau đó cấu hình role Backend qua `PUT /api/roles/backend-developer` với runner `codex-gateway`, hoặc dùng cấu hình đã lưu trong demo.
+Gateway chạy Codex non-interactive với stdin đóng, `--approve-for-me`, `--ignore-user-config` và mức suy luận mặc định `low`; có thể đổi bằng biến môi trường `CODEX_REASONING_EFFORT`. Lệnh dùng phiên đăng nhập ChatGPT của Codex CLI trên host và không cần sao chép API key vào Compose.
 
 ```powershell
 python -m venv .venv
@@ -43,7 +39,7 @@ Contract export: `python scripts/export_contracts.py`. PostgreSQL migration: `al
 
 Runtime pin chính: Python 3.13, LangGraph `0.6.11`, xxhash `4.0.2`; xem `pyproject.toml` để biết các dải tương thích còn lại.
 
-Mặc định Compose chạy `local-deterministic` để có thể khởi động offline. Để bật runner model thật, đặt `DEFAULT_RUNNER=codex-cli` và `DEFAULT_MODEL=<model>`; trên Windows có thể dùng `DEFAULT_RUNNER=codex-gateway DEFAULT_MODEL=configured-at-runtime` cùng `python -m apps.codex_gateway.main` trên host. Project phải có repo/file scope và credential phù hợp. Deterministic artifacts luôn được gắn nhãn fixture và không được dùng làm bằng chứng model thật.
+Mặc định Compose chạy `local-deterministic` để có thể khởi động offline. Để bật runner model thật, đặt `DEFAULT_RUNNER=codex-cli` và `DEFAULT_MODEL=<model>`; trên Windows dùng `python scripts/enable_codex_demo.py` sau khi Compose healthy. Project phải có repo/file scope và credential phù hợp. Deterministic artifacts luôn được gắn nhãn fixture và không được dùng làm bằng chứng model thật.
 
 Compose exposes Core API at `http://localhost:8001` (container port `8000`), Paperclip at `http://localhost:3100`, review UI at `http://localhost:8080`, storefront API at `http://localhost:8200`, storefront UI at `http://localhost:8201`, adapter at `http://localhost:8090`, and the isolated preview manager at `http://localhost:8300`. Paperclip is configured for local-only `local_trusted` demo access, so refresh `http://localhost:3100` without accepting an organization invite; it is intentionally bound to localhost and must not be exposed to a network.
 
