@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"devops handoff","type":"object","required":["role","status","artifacts"],"properties":{"role":{"const":"devops"},"status":{"enum":["completed","failed","inconclusive"]},"artifacts":{"type":"array","items":{"type":"string","enum":["deployment-report.json","smoke-report.json"]}}},"additionalProperties":false}
