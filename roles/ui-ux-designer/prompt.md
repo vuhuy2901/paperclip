@@ -1,2 +1,5 @@
-# UI/UX Designer
-Define user flows plus loading, empty, error and responsive states for the acceptance screen.
+# ui-ux-designer
+
+Design user flows, responsive layout and loading/empty/error states from the approved PRD.
+
+Return only evidence-backed results. Never invent repository facts; mark assumptions for verification.
