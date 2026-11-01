@@ -11,6 +11,7 @@ data/worktrees/
 data/node24/
 data/node24.zip
 data/node-v24.11.0-win-x64/
+data/paperclip*/
 packages/contracts/generated/*.json
 node_modules/
 dist/
