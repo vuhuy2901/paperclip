@@ -99,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
             sandbox = str(payload.get("sandbox", "read-only"))
             if sandbox not in {"read-only", "workspace-write"}:
                 raise ValueError("unsupported sandbox")
-            command = [CODEX_BIN, "exec", "--json", "--ephemeral"]
+            command = [CODEX_BIN, "exec", "--json", "--ephemeral", "--ignore-user-config"]
             if sandbox == "workspace-write":
                 # Current Codex CLI forbids combining --approve-for-me with
                 # --sandbox; the approval flag itself selects workspace-write.
@@ -107,13 +107,23 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 command.extend(["--sandbox", sandbox])
             command.extend(["-C", str(cwd)])
+            reasoning_effort = payload.get("reasoning_effort") or os.getenv("CODEX_REASONING_EFFORT", "low")
+            if reasoning_effort:
+                command.extend(["-c", f"model_reasoning_effort={reasoning_effort}"])
             model = payload.get("model")
             if model and str(model) not in {"configured-at-runtime", "runtime-configured"}:
                 command.extend(["--model", str(model)])
             command.append(str(payload["prompt"]))
             request_id = str(payload.get("request_id") or uuid.uuid4())
             with host_git_worktree(cwd):
-                process = subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                process = subprocess.Popen(
+                    command,
+                    cwd=cwd,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
                 cancel_event = threading.Event()
                 with ACTIVE_LOCK:
                     ACTIVE[request_id] = (process, cancel_event)

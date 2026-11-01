@@ -30,7 +30,7 @@ class CodexGatewayRunner:
     def run(self, prompt: str, cwd: str | Path, model: str | None = None) -> GatewayResult:
         request_id = str(uuid.uuid4())
         self._request_id = request_id
-        payload = {"request_id": request_id, "prompt": prompt, "cwd": str(Path(cwd).resolve()), "model": model, "sandbox": self.sandbox, "timeout_seconds": self.timeout_seconds}
+        payload = {"request_id": request_id, "prompt": prompt, "cwd": str(Path(cwd).resolve()), "model": model, "sandbox": self.sandbox, "timeout_seconds": self.timeout_seconds, "reasoning_effort": os.getenv("CODEX_REASONING_EFFORT", "low")}
         request = urllib.request.Request(
             f"{self.url}/run",
             data=json.dumps(payload).encode(),

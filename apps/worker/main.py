@@ -118,6 +118,19 @@ def process_once():
                     "Use repository evidence and do not invent facts. These files are part of the trusted handoff; do not only describe them in chat.\n"
                     + "\n".join(f"- {path}" for path in artifact_paths)
                 )
+                task_prompt += (
+                    "\n\nExecution limits: keep this task tightly scoped to the assigned role and file scope. "
+                    "Do not run broad repository-wide searches or long test suites. Inspect only the files needed "
+                    "to support the handoff, write the required artifacts as soon as you have sufficient evidence, "
+                    "then finish with a concise summary. Do not run git commit; the controller commits the scoped "
+                    "handoff after your process returns. Never wait for human input."
+                )
+                if task.role == "project-manager":
+                    task_prompt += (
+                        " For this PM handoff, do not inspect the repository and do not run shell commands: the "
+                        "change request text is the complete brief. Create exactly the three required handoff files "
+                        "and return immediately after writing them."
+                    )
                 try:
                     handoff = TaskExecutor(configured_runner, manager).execute(task.id, task_prompt, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
                 finally:
