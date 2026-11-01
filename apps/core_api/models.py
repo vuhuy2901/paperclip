@@ -51,6 +51,7 @@ class Task(Base):
 
 class Event(Base):
     __tablename__ = "events"
+    __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_event_run_sequence"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"))
     sequence: Mapped[int] = mapped_column(Integer)

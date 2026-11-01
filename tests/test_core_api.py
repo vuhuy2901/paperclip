@@ -16,6 +16,18 @@ def test_project_change_run_is_idempotent():
     assert a["id"] == b["id"]
     assert len(client.get(f"/api/runs/{a['id']}/events", headers=H).json()) == 1
 
+def test_event_sequences_are_monotonic_within_one_transaction():
+    from apps.core_api.db import SessionLocal
+    from apps.core_api.models import WorkflowRun, Event
+    from apps.core_api.service import emit
+    with SessionLocal() as db:
+        run = db.query(WorkflowRun).first()
+        emit(db, run.id, "test.one", {})
+        emit(db, run.id, "test.two", {})
+        db.commit()
+        sequences = [event.sequence for event in db.query(Event).filter(Event.run_id == run.id).order_by(Event.sequence)]
+    assert sequences == list(range(1, len(sequences) + 1))
+
 def test_invalid_auth(): assert client.get("/api/roles").status_code == 401
 
 def test_workflow_transition_guard():

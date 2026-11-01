@@ -16,7 +16,7 @@ from apps.runners.executor import TaskExecutor
 from apps.workspace.git import WorkspaceManager
 from apps.verification.runner import run_profile
 from apps.verification.artifacts import ArtifactStore
-from apps.preview.manager import PreviewManager
+from apps.preview.manager import PreviewManager, RemotePreviewManager
 
 def process_once():
     db = SessionLocal()
@@ -89,7 +89,9 @@ def process_once():
         for status in statuses:
             if run.status == status: continue
             transition(db, run, status)
-        preview = PreviewManager("compose.yaml").up(f"preview-{run.id[:8]}", "storefront-api", 8200)
+        preview_url = os.getenv("PREVIEW_MANAGER_URL")
+        preview_manager = RemotePreviewManager(preview_url) if preview_url else PreviewManager("compose.yaml")
+        preview = preview_manager.up(f"preview-{run.id[:8]}", "storefront-api", 8200)
         db.add(Deployment(run_id=run.id, commit_sha=run.candidate_sha, status=preview.status, url=preview.url, health_evidence={"status": preview.status, "stderr": preview.stderr[-1000:]}, smoke_evidence={"status":"not_run"}))
         if preview.status == "ready":
             transition(db, run, "awaiting_acceptance")

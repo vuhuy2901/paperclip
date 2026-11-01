@@ -5,6 +5,9 @@ from .state import can_transition
 
 def emit(db: Session, run_id: str, event_type: str, payload: dict):
     seq = db.scalar(select(func.max(Event.sequence)).where(Event.run_id == run_id)) or 0
+    # Multiple events are emitted before commit during one worker pass. Include
+    # pending ORM objects so sequence IDs remain strictly increasing in-memory.
+    seq += sum(1 for pending in db.new if isinstance(pending, Event) and pending.run_id == run_id)
     event = Event(run_id=run_id, sequence=seq + 1, type=event_type, payload=payload)
     db.add(event); return event
 

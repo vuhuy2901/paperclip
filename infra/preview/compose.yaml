@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: storefront
+      POSTGRES_PASSWORD: storefront
+      POSTGRES_DB: storefront
+    volumes:
+      - preview-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storefront -d storefront"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  storefront-api:
+    build:
+      context: /workspace
+      dockerfile: templates/storefront/backend/Dockerfile
+    environment:
+      STOREFRONT_DATABASE_URL: postgresql+psycopg://storefront:storefront@postgres:5432/storefront
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8200/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  preview-postgres-data:
+networks:
+  default:
+    name: ${COMPOSE_NETWORK_NAME:-ai_company_preview_default}
