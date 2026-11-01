@@ -24,6 +24,17 @@ from apps.verification.artifacts import ArtifactStore
 from apps.preview.manager import PreviewManager, RemotePreviewManager
 from apps.roles.catalog import render_artifact
 
+
+def _model_artifact(worktree: Path, role: str, relative_path: str) -> bytes | None:
+    """Read a role artifact written by a real runner; never synthesize one."""
+    root = (worktree / ".ai-company" / "handoffs" / role).resolve()
+    path = (root / relative_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path.read_bytes() if path.is_file() else None
+
 def process_once():
     db = SessionLocal()
     owner = f"{socket.gethostname()}:{os.getpid()}"
@@ -82,7 +93,11 @@ def process_once():
                     transition(db, run, "failed"); db.commit(); return True
                 manager = workspace_manager
                 worktree_task_id = f"{task.id}-r{run.repair_count}"
-                worktree = manager.create_worktree(project.repo, project.id, run.id, worktree_task_id, run.baseline_sha or "HEAD")
+                # Each writer/reviewer sees the current integrated candidate, not
+                # the original baseline. This preserves the DAG handoff contract
+                # while keeping every task in its own worktree.
+                task_base_sha = manager.head(candidate_root) if candidate_root else (run.baseline_sha or "HEAD")
+                worktree = manager.create_worktree(project.repo, project.id, run.id, worktree_task_id, task_base_sha)
                 configured_runner = build_runner(role_cfg)
                 stop_monitor = threading.Event()
                 def monitor_cancellation():
@@ -97,6 +112,12 @@ def process_once():
                 monitor.start()
                 repair_reason = (run.config_snapshot or {}).get("repair_reason")
                 task_prompt = task.goal if not repair_reason else f"{task.goal}\n\nRepair the trusted verification failure below; preserve all existing behavior and run the relevant regression tests:\n{repair_reason}"
+                artifact_paths = [f".ai-company/handoffs/{task.role}/{path}" for path in task.required_artifacts]
+                task_prompt = (
+                    f"{task_prompt}\n\nRole handoff contract: before finishing, write every required deliverable to the exact paths below. "
+                    "Use repository evidence and do not invent facts. These files are part of the trusted handoff; do not only describe them in chat.\n"
+                    + "\n".join(f"- {path}" for path in artifact_paths)
+                )
                 try:
                     handoff = TaskExecutor(configured_runner, manager).execute(task.id, task_prompt, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
                 finally:
@@ -153,7 +174,23 @@ def process_once():
             db.add(Artifact(run_id=run.id, type="role-handoff-manifest", relative_path=manifest["relative_path"], sha256=manifest["sha256"], size=manifest["size"], producer=task.role))
             produced = []
             for relative_path in task.required_artifacts:
-                item = store.put_bytes(run.id, f"role-handoffs/{task.role}/{relative_path}", render_artifact(task.role, task.goal, relative_path), task.role)
+                if role_cfg.get("runner") in {"codex-cli", "codex-gateway"}:
+                    if not candidate_root:
+                        task.status = "failed"
+                        emit(db, run.id, "task.failed", {"task_id": task.id, "reason": "real runner artifact requires a candidate worktree", "artifact": relative_path})
+                        transition(db, run, "failed")
+                        db.commit()
+                        return True
+                    content = _model_artifact(worktree, task.role, relative_path)
+                    if content is None:
+                        task.status = "failed"
+                        emit(db, run.id, "task.failed", {"task_id": task.id, "reason": "real runner completed without required handoff artifact", "artifact": relative_path, "mode": role_cfg.get("runner")})
+                        transition(db, run, "failed")
+                        db.commit()
+                        return True
+                else:
+                    content = render_artifact(task.role, task.goal, relative_path)
+                item = store.put_bytes(run.id, f"role-handoffs/{task.role}/{relative_path}", content, task.role)
                 db.add(Artifact(run_id=run.id, type=f"{task.role}-artifact", relative_path=item["relative_path"], sha256=item["sha256"], size=item["size"], producer=task.role))
                 produced.append(relative_path)
             expected = set(task.required_artifacts)
