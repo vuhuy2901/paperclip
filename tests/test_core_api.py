@@ -38,14 +38,14 @@ def test_workflow_transition_guard():
 def test_role_update_and_feedback():
     p = client.post("/api/projects", headers=H, json={"name":"feedback-demo"}).json()
     c = client.post(f"/api/projects/{p['id']}/changes", headers=H, json={"text":"Review candidate"}).json()
-    role = client.put("/api/roles/tester", headers=H, json={"runner":"xera","model":"xera-local","timeout_seconds":120,"tool_policy":[],"file_scope":["tests"]})
-    assert role.status_code == 200 and role.json()["runner"] == "xera"
+    role = client.put("/api/roles/tester", headers=H, json={"runner":"local-deterministic","model":"fixture","timeout_seconds":120,"tool_policy":[],"file_scope":["tests"]})
+    assert role.status_code == 200 and role.json()["runner"] == "local-deterministic"
     assert role.json()["file_scope"] == ["tests"]
     r = client.post(f"/api/changes/{c['id']}/runs", headers=H, json={"idempotency_key":"feedback"}).json()
     feedback = client.post(f"/api/runs/{r['id']}/feedback", headers=H, json={"text":"Needs clearer error state","version":"candidate-1","route":"/acceptance"})
     assert feedback.status_code == 200
     snapshot = client.get(f"/api/runs/{r['id']}", headers=H).json()["run"]["config_snapshot"]
-    assert snapshot["roles"]["tester"]["runner"] == "xera"
+    assert snapshot["roles"]["tester"]["runner"] == "local-deterministic"
     assert snapshot["roles"]["tester"]["file_scope"] == ["tests"]
 
 def test_paperclip_wake_creates_only_one_run():
@@ -59,6 +59,11 @@ def test_paperclip_wake_creates_only_one_run():
 
 def test_role_file_scope_traversal_is_rejected():
     response = client.put("/api/roles/tester", headers=H, json={"runner":"codex-cli","model":"x","file_scope":["../secrets"]})
+    assert response.status_code == 422
+
+
+def test_uninstalled_specialized_runner_is_rejected_without_fallback():
+    response = client.put("/api/roles/tester", headers=H, json={"runner":"xera","model":"xera-local","file_scope":["tests"]})
     assert response.status_code == 422
 
 def test_second_active_run_for_same_project_is_rejected():

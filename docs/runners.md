@@ -4,4 +4,6 @@
 
 `CodexGatewayRunner` is the development bridge for a worker container that cannot directly access the host's logged-in Codex CLI. It calls the token-protected host gateway at `CODEX_GATEWAY_URL`; the gateway maps only the shared workspace root, validates sandbox/timeout, runs the real `codex exec`, and returns structured JSONL events. It is opt-in via `DEFAULT_RUNNER=codex-gateway`; no silent fallback to deterministic fixture occurs.
 
+Only `local-deterministic`, `codex-cli` and `codex-gateway` are installed in this build. Core rejects `xera`, `reviewer` and `devops` runner names until a real wrapper is installed; it never stores an unsupported runner and silently executes a fixture instead.
+
 The Paperclip package under `apps/paperclip-adapter` follows the official external-adapter shape, is built into the Paperclip image, and is registered at runtime as `ai_company_external`. For contexts carrying a Core `change_id`, execution calls the authenticated Core wake API and returns the accepted `run_id`; repeated idempotency keys are deduplicated. The Compose deployment creates a real authenticated Paperclip server, one company, and eight role identities. A model/Codex provider is still required only when selecting the real model runner; the environment probe reports its absence without hiding the deterministic Core path.

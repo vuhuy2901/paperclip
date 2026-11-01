@@ -146,6 +146,9 @@ def process_once():
                 return True
             task.status = "completed"
             emit(db, run.id, "task.completed", {"task_id": task.id, "role": task.role, "artifacts": produced, "mode": payload_obj.get("mode", "fixture")})
+            # Commit each task boundary so API cancellation/restart observes the
+            # task and event before the next long-running role begins.
+            db.commit()
         verification_root = candidate_root or Path(os.getenv("VERIFICATION_ROOT", str(Path.cwd())))
         expected_candidate_sha = workspace_manager.head(candidate_root) if candidate_root else None
         evidence = run_profile("product-regression", verification_root, expected_sha=expected_candidate_sha)
