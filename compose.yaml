@@ -4,6 +4,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://core:core@core-postgres:5432/core
       SERVICE_TOKEN: dev-service-token
+      DEFAULT_RUNNER: ${DEFAULT_RUNNER:-local-deterministic}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-configured-at-runtime}
     ports: ["8001:8000"]
     volumes: ["core-data:/app/data"]
     healthcheck:
@@ -19,6 +21,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://core:core@core-postgres:5432/core
       SERVICE_TOKEN: dev-service-token
+      DEFAULT_RUNNER: ${DEFAULT_RUNNER:-local-deterministic}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-configured-at-runtime}
       VERIFICATION_ROOT: /workspace
       PREVIEW_MANAGER_URL: http://preview-manager:8300
     volumes: ["core-data:/app/data", ".:/workspace"]

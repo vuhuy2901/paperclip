@@ -3,6 +3,7 @@ from fastapi import FastAPI, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
 import json
 import time
+import subprocess
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
@@ -74,7 +75,7 @@ def create_run(change_id: str, body: RunCreate, db: Session = Depends(get_db)):
     if existing: return existing
     active = db.scalar(select(WorkflowRun).join(ChangeRequest, WorkflowRun.change_id == ChangeRequest.id).where(ChangeRequest.project_id == c.project_id, WorkflowRun.status.in_(["queued", "analyzing", "planning", "implementing", "integrating", "verifying", "deploying", "repairing", "cancelling"])))
     if active: raise HTTPException(409, f"project already has active run {active.id}")
-    run = WorkflowRun(change_id=change_id, idempotency_key=body.idempotency_key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles": snapshot(db)})
+    run = WorkflowRun(change_id=change_id, idempotency_key=body.idempotency_key, config_snapshot={"runner":settings.default_runner,"max_repairs":settings.max_repairs,"roles": snapshot(db)})
     db.add(run); db.flush(); seed_tasks(db, run, c.text); emit(db, run.id, "run.queued", {"change_id": change_id}); db.commit(); db.refresh(run); return run
 
 @app.get("/api/runs/{run_id}", dependencies=[Depends(auth)])
@@ -163,6 +164,51 @@ def preview(run_id: str, db: Session = Depends(get_db)):
         "deployment": deployment,
     }
 
+@app.get("/api/runs/{run_id}/diff", dependencies=[Depends(auth)])
+def candidate_diff(run_id: str, db: Session = Depends(get_db)):
+    """Return an explicit baseline/candidate comparison; never infer a diff from a URL."""
+    run = db.get(WorkflowRun, run_id)
+    if not run: raise HTTPException(404, "run not found")
+    change = db.get(ChangeRequest, run.change_id)
+    project = db.get(Project, change.project_id) if change else None
+    result = {"run_id": run_id, "baseline_sha": run.baseline_sha, "candidate_sha": run.candidate_sha, "available": False, "files": [], "stat": None, "reason": None}
+    if not run.baseline_sha or not run.candidate_sha:
+        result["reason"] = "baseline or candidate SHA is missing"
+        return result
+    if run.baseline_sha == run.candidate_sha:
+        result["reason"] = "baseline and candidate resolve to the same commit"
+        result["available"] = True
+        result["stat"] = {"files_changed": 0, "insertions": 0, "deletions": 0}
+        return result
+    if not project or not project.repo:
+        result["reason"] = "project repository is not configured"
+        return result
+    repo = Path(project.repo).resolve()
+    if not repo.is_dir():
+        result["reason"] = "project repository is unavailable"
+        return result
+    proc = subprocess.run(["git", "diff", "--name-status", run.baseline_sha, run.candidate_sha], cwd=repo, capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        result["reason"] = proc.stderr.strip()[-500:] or "git diff failed"
+        return result
+    result["available"] = True
+    result["files"] = [{"status": line.split("\t", 1)[0], "path": line.split("\t", 1)[1]} for line in proc.stdout.splitlines() if "\t" in line]
+    stat = subprocess.run(["git", "diff", "--shortstat", run.baseline_sha, run.candidate_sha], cwd=repo, capture_output=True, text=True, timeout=30)
+    result["stat"] = stat.stdout.strip()
+    return result
+
+@app.post("/api/runs/{run_id}/promote", dependencies=[Depends(auth)])
+def promote_candidate(run_id: str, db: Session = Depends(get_db)):
+    run = db.get(WorkflowRun, run_id)
+    if not run: raise HTTPException(404, "run not found")
+    if run.status != "accepted": raise HTTPException(409, "candidate must be approved before promotion")
+    deployment = db.scalar(select(Deployment).where(Deployment.run_id == run_id, Deployment.commit_sha == run.candidate_sha).order_by(Deployment.id.desc()))
+    if not deployment or deployment.status != "ready": raise HTTPException(409, "ready candidate deployment not found")
+    deployment.smoke_evidence = {**(deployment.smoke_evidence or {}), "promotion": {"status": "promoted", "candidate_sha": run.candidate_sha, "image_digest": deployment.image_digest}}
+    emit(db, run.id, "candidate.promoted", {"candidate_sha": run.candidate_sha, "image_digest": deployment.image_digest})
+    db.commit(); db.refresh(deployment)
+    return {"run_id": run_id, "status": "promoted", "deployment": deployment}
+
 @app.get("/api/runs/{run_id}/approvals", dependencies=[Depends(auth)])
 def approvals(run_id: str, db: Session = Depends(get_db)):
     return list(db.scalars(select(Approval).where(Approval.run_id == run_id).order_by(Approval.created_at)))
@@ -230,6 +276,6 @@ def paperclip_wake(payload: dict, db: Session = Depends(get_db)):
     if existing: return {"accepted": True, "deduplicated": True, "run_id": existing.id}
     active = db.scalar(select(WorkflowRun).join(ChangeRequest, WorkflowRun.change_id == ChangeRequest.id).where(ChangeRequest.project_id == change.project_id, WorkflowRun.status.in_(["queued", "analyzing", "planning", "implementing", "integrating", "verifying", "deploying", "repairing", "cancelling"])))
     if active: raise HTTPException(409, f"project already has active run {active.id}")
-    run = WorkflowRun(change_id=change_id, idempotency_key=key, config_snapshot={"runner":"local-deterministic","max_repairs":3,"roles":snapshot(db)})
+    run = WorkflowRun(change_id=change_id, idempotency_key=key, config_snapshot={"runner":settings.default_runner,"max_repairs":settings.max_repairs,"roles":snapshot(db)})
     db.add(run); db.flush(); seed_tasks(db, run, change.text); emit(db, run.id, "paperclip.wake.accepted", {"change_id": change_id, "key": key}); db.commit()
     return {"accepted": True, "deduplicated": False, "run_id": run.id}
