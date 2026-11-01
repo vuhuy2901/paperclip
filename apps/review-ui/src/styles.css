@@ -21,9 +21,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .hero strong { font-size: 32px; letter-spacing: -.04em; }
 .task { border-top: 1px solid #e4e8e4; display: flex; justify-content: space-between; padding: 13px 0; text-transform: capitalize; }
 .task b { color: #637268; font-size: 12px; font-weight: 600; }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }.split div { display: grid; gap: 8px; min-width: 0; }.split code, .artifact-list code { overflow-wrap: anywhere; color: #536057; font-size: 12px; }.split a { color: #17633f; font-weight: 700; overflow-wrap: anywhere; }.sublabel { display: block; margin-top: 22px; }.artifact-list { display: grid; gap: 8px; margin-top: 16px; max-height: 220px; overflow: auto; }.panel textarea { width: 100%; min-height: 90px; resize: vertical; border: 1px solid #aeb9b0; border-radius: 8px; padding: 12px; font: inherit; margin: 16px 0 12px; }
 .grid .panel:last-child { grid-column: 1 / -1; }
 .actions { display: flex; gap: 10px; margin-top: 20px; }
 .empty, .error { border: 1px dashed #aeb9b0; border-radius: 12px; display: grid; gap: 8px; padding: 40px; }
 .error { color: #8a2f2f; border-color: #cf9191; background: #fff7f7; }
-@media (max-width: 700px) { main { padding: 32px 16px 56px; } .control, .actions { align-items: stretch; flex-direction: column; } .grid { grid-template-columns: 1fr; } .grid .panel:last-child { grid-column: auto; } }
+@media (max-width: 700px) { main { padding: 32px 16px 56px; } .control, .actions { align-items: stretch; flex-direction: column; } .grid { grid-template-columns: 1fr; } .grid .panel:last-child { grid-column: auto; } .split { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
