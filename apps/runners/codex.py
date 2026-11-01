@@ -21,7 +21,12 @@ class CodexCliRunner:
         self._cancel_requested = False
 
     def run(self, prompt: str, cwd: str | Path, model: str | None = None) -> CodexResult:
-        command = [self.executable, "exec", "--json", "--ephemeral", "--sandbox", self.sandbox, "-C", str(Path(cwd).resolve())]
+        command = [self.executable, "exec", "--json", "--ephemeral"]
+        if self.sandbox == "workspace-write":
+            command.append("--approve-for-me")
+        else:
+            command.extend(["--sandbox", self.sandbox])
+        command.extend(["-C", str(Path(cwd).resolve())])
         if model: command.extend(["--model", model])
         command.append(prompt)
         try:

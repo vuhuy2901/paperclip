@@ -99,7 +99,14 @@ class Handler(BaseHTTPRequestHandler):
             sandbox = str(payload.get("sandbox", "read-only"))
             if sandbox not in {"read-only", "workspace-write"}:
                 raise ValueError("unsupported sandbox")
-            command = [CODEX_BIN, "exec", "--json", "--ephemeral", "--sandbox", sandbox, "-C", str(cwd)]
+            command = [CODEX_BIN, "exec", "--json", "--ephemeral"]
+            if sandbox == "workspace-write":
+                # Current Codex CLI forbids combining --approve-for-me with
+                # --sandbox; the approval flag itself selects workspace-write.
+                command.append("--approve-for-me")
+            else:
+                command.extend(["--sandbox", sandbox])
+            command.extend(["-C", str(cwd)])
             model = payload.get("model")
             if model and str(model) not in {"configured-at-runtime", "runtime-configured"}:
                 command.extend(["--model", str(model)])
