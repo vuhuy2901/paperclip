@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import json
+import os
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
@@ -21,7 +22,9 @@ class PreviewManager:
     def up(self, project: str, service: str, port: int) -> PreviewResult:
         command = ["docker", "compose", "-f", self.compose_file, "-p", project, "up", "-d", service]
         try:
-            result = subprocess.run(command, text=True, capture_output=True, timeout=180)
+            environment = os.environ.copy()
+            environment["COMPOSE_NETWORK_NAME"] = f"{project}_default"
+            result = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=180)
         except FileNotFoundError as exc:
             return PreviewResult("inconclusive", project, None, "", str(exc))
         status = "ready" if result.returncode == 0 else "failed"
