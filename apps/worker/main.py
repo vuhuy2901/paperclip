@@ -42,12 +42,14 @@ def process_once():
         change = db.get(ChangeRequest, run.change_id)
         project = db.get(Project, change.project_id) if change else None
         candidate_root = None
+        baseline_root = None
         workspace_manager = WorkspaceManager(settings.workspace_root)
         if project and project.repo:
             repair_base = (run.config_snapshot or {}).get("repair_base_sha") if run.status == "repairing" else None
             base_ref = repair_base or project.accepted_commit or workspace_manager.head(project.repo)
             if run.baseline_sha is None:
                 run.baseline_sha = base_ref
+            baseline_root = workspace_manager.create_worktree(project.repo, project.id, run.id, "baseline", base_ref)
             candidate_root = workspace_manager.create_candidate(project.repo, project.id, run.id, base_ref)
         if run.baseline_sha is None and project and project.accepted_commit:
             run.baseline_sha = project.accepted_commit
@@ -120,11 +122,28 @@ def process_once():
                         payload_obj["candidate_commit"] = candidate_sha
                 except RuntimeError as exc:
                     agent_run.status = "failed"; agent_run.failure_category = "merge_conflict"; agent_run.finished_at = datetime.now(timezone.utc)
-                    task.status = "failed"; payload_obj.update({"status": "failed", "failure_category": "merge_conflict", "summary": str(exc)})
+                    task.status = "queued"; payload_obj.update({"status": "failed", "failure_category": "merge_conflict", "summary": str(exc)})
+                    route = {
+                        "owner": "backend-developer",
+                        "reason": "Integration cherry-pick conflicted; the existing backend task is re-queued against the candidate base.",
+                        "task_id": task.id,
+                    }
+                    run.config_snapshot = {
+                        **(run.config_snapshot or {}),
+                        "repair_owner": route["owner"],
+                        "repair_base_sha": workspace_manager.head(candidate_root) if candidate_root else run.baseline_sha,
+                        "repair_reason": route,
+                    }
+                    db.add(Finding(run_id=run.id, source="integration", severity="blocking", suggested_owner=route["owner"], reproduction=str(exc), disposition=None))
                     emit(db, run.id, "task.failed", payload_obj)
-                    for status in ["analyzing", "planning", "implementing"]:
-                        if run.status != status: transition(db, run, status)
-                    transition(db, run, "failed"); db.commit(); return True
+                    emit(db, run.id, "merge_conflict.routed", route)
+                    if run.status != "repairing":
+                        transition(db, run, "repairing")
+                    if run.repair_count >= 3:
+                        transition(db, run, "blocked")
+                    else:
+                        run.repair_count += 1
+                    db.commit(); return True
             else:
                 result = LocalDeterministicRunner().run(task.role, task.goal)
                 payload_obj = {"schema_version": "1", "task_id": task.id, "status": result.status, "summary": result.summary, "mode": "fixture", "structured": result.structured}
@@ -199,6 +218,13 @@ def process_once():
         heartbeat_run(db, run.id, owner)
         preview_url = os.getenv("PREVIEW_MANAGER_URL")
         preview_manager = RemotePreviewManager(preview_url) if preview_url else PreviewManager("compose.yaml")
+        baseline_preview = None
+        if baseline_root:
+            try:
+                baseline_workspace = str(baseline_root.relative_to(Path("/workspace"))).replace("\\", "/")
+            except ValueError:
+                baseline_workspace = None
+            baseline_preview = preview_manager.up(f"baseline-{run.id[:8]}", "storefront-api", 8200, workspace=baseline_workspace)
         preview_workspace = None
         if candidate_root:
             try:
@@ -206,6 +232,23 @@ def process_once():
             except ValueError:
                 preview_workspace = None
         preview = preview_manager.up(f"preview-{run.id[:8]}", "storefront-api", 8200, workspace=preview_workspace)
+        run.config_snapshot = {
+            **(run.config_snapshot or {}),
+            "previews": {
+                "baseline": {
+                    "url": baseline_preview.url if baseline_preview else None,
+                    "status": baseline_preview.status if baseline_preview else "not_available",
+                    "commit_sha": run.baseline_sha,
+                    "image_digest": baseline_preview.image_digest if baseline_preview else None,
+                },
+                "candidate": {
+                    "url": preview.url,
+                    "status": preview.status,
+                    "commit_sha": candidate_sha,
+                    "image_digest": preview.image_digest,
+                },
+            },
+        }
         db.add(Deployment(run_id=run.id, commit_sha=candidate_sha, image_digest=preview.image_digest, status=preview.status, url=preview.url, health_evidence={"status": preview.status, "stderr": preview.stderr[-1000:]}, smoke_evidence={"status":"not_run", "reason":"preview-manager health gate is complete; browser/business smoke is PO-facing"}))
         evidence_record = db.scalar(select(EvidenceRecord).where(EvidenceRecord.run_id == run.id, EvidenceRecord.check_id == evidence.check_id).order_by(EvidenceRecord.id.desc()))
         if evidence_record:

@@ -158,7 +158,12 @@ def preview(run_id: str, db: Session = Depends(get_db)):
     change = db.get(ChangeRequest, run.change_id)
     project = db.get(Project, change.project_id) if change else None
     return {
-        "baseline": {"commit_sha": run.baseline_sha, "accepted_commit": project.accepted_commit if project else None} if run.baseline_sha else None,
+        "baseline": {
+            "commit_sha": run.baseline_sha,
+            "accepted_commit": project.accepted_commit if project else None,
+            "url": (run.config_snapshot or {}).get("previews", {}).get("baseline", {}).get("url"),
+            "status": (run.config_snapshot or {}).get("previews", {}).get("baseline", {}).get("status", "not_deployed"),
+        } if run.baseline_sha else None,
         "candidate": deployment.url if deployment else None,
         "status": deployment.status if deployment else "not_deployed",
         "deployment": deployment,
