@@ -56,6 +56,26 @@ class Task(Base):
     depends_on: Mapped[list] = mapped_column(JSON, default=list)
     required_artifacts: Mapped[list] = mapped_column(JSON, default=list)
 
+class TaskContract(Base):
+    __tablename__ = "task_contracts"
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
+    context_from: Mapped[list] = mapped_column(JSON, default=list)
+    file_scope: Mapped[list] = mapped_column(JSON, default=list)
+    acceptance_criteria_ids: Mapped[list] = mapped_column(JSON, default=list)
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    runner: Mapped[str] = mapped_column(String(80))
+    model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="running")
+    usage: Mapped[dict] = mapped_column(JSON, default=dict)
+    failure_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
 class Event(Base):
     __tablename__ = "events"
     __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_event_run_sequence"),)
@@ -77,6 +97,32 @@ class Artifact(Base):
     size: Mapped[int] = mapped_column(Integer)
     producer: Mapped[str] = mapped_column(String(100))
     commit_sha: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+class EvidenceRecord(Base):
+    __tablename__ = "evidence"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"))
+    candidate_sha: Mapped[str] = mapped_column(String(100))
+    check_id: Mapped[str] = mapped_column(String(100))
+    command: Mapped[list] = mapped_column(JSON, default=list)
+    image_digest: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(40))
+    report_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+class Finding(Base):
+    __tablename__ = "findings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"))
+    source: Mapped[str] = mapped_column(String(80))
+    severity: Mapped[str] = mapped_column(String(40))
+    file: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    line: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ac_refs: Mapped[list] = mapped_column(JSON, default=list)
+    reproduction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_owner: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    disposition: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 class Approval(Base):
     __tablename__ = "approvals"

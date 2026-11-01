@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import Session
-from .models import Event, WorkflowRun, Task, RunLease
+from .models import Event, WorkflowRun, Task, RunLease, TaskContract
 from .state import can_transition
 from apps.roles.catalog import required_artifacts
 
@@ -59,4 +59,6 @@ def seed_tasks(db: Session, run: WorkflowRun, change_text: str):
         ("ui-ux-designer", "Specify user flow and interaction states", ["project-manager"]),
     ]
     for role, goal, deps in tasks:
-        db.add(Task(run_id=run.id, role=role, goal=f"{goal}: {change_text}", depends_on=deps, required_artifacts=required_artifacts(role)))
+        task = Task(run_id=run.id, role=role, goal=f"{goal}: {change_text}", depends_on=deps, required_artifacts=required_artifacts(role))
+        db.add(task); db.flush()
+        db.add(TaskContract(task_id=task.id, context_from=deps, file_scope=[], acceptance_criteria_ids=[]))

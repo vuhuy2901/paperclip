@@ -2,10 +2,11 @@ import time
 import json
 import os
 import socket
+from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy import select
 from apps.core_api.db import SessionLocal, Base, engine
-from apps.core_api.models import WorkflowRun, Approval, Deployment, Task, Artifact, ChangeRequest, Project
+from apps.core_api.models import WorkflowRun, Approval, Deployment, Task, Artifact, ChangeRequest, Project, AgentRun, EvidenceRecord
 from apps.core_api.service import transition, emit, claim_run, heartbeat_run, release_run
 from apps.orchestration.graph import workflow_graph
 from apps.orchestration.dag import order_tasks
@@ -54,6 +55,8 @@ def process_once():
             task.status = "running"
             emit(db, run.id, "task.started", {"task_id": task.id, "role": task.role})
             role_cfg = (run.config_snapshot or {}).get("roles", {}).get(task.role, {"runner":"local-deterministic"})
+            agent_run = AgentRun(task_id=task.id, attempt=1, runner=role_cfg.get("runner", "local-deterministic"), model=role_cfg.get("model"), status="running", usage={"status": "unknown"})
+            db.add(agent_run); db.flush()
             if role_cfg.get("runner") == "codex-cli":
                 scope = role_cfg.get("file_scope", [])
                 if not project or not project.repo or not scope:
@@ -66,6 +69,7 @@ def process_once():
                 handoff = TaskExecutor(CodexCliRunner(timeout_seconds=int(role_cfg.get("timeout_seconds", 900)), sandbox=role_cfg.get("sandbox", "workspace-write")), manager).execute(task.id, task.goal, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
                 payload_obj = {"schema_version":"1", "task_id":task.id, "status":handoff.status, "summary":handoff.runner_summary, "result_commit":handoff.result_commit, "files_changed":handoff.files_changed, "mode":"codex-cli", "failure_category":handoff.failure_category}
                 if handoff.status != "completed":
+                    agent_run.status = handoff.status; agent_run.failure_category = handoff.failure_category; agent_run.finished_at = datetime.now(timezone.utc)
                     task.status = "failed"; emit(db, run.id, "task.failed", payload_obj)
                     for status in ["analyzing", "planning", "implementing"]:
                         if run.status != status: transition(db, run, status)
@@ -73,6 +77,7 @@ def process_once():
             else:
                 result = LocalDeterministicRunner().run(task.role, task.goal)
                 payload_obj = {"schema_version": "1", "task_id": task.id, "status": result.status, "summary": result.summary, "mode": "fixture", "structured": result.structured}
+            agent_run.status = payload_obj.get("status", "completed"); agent_run.finished_at = datetime.now(timezone.utc)
             payload = json.dumps(payload_obj, indent=2).encode()
             manifest = store.put_bytes(run.id, f"role-handoffs/{task.role}.json", payload, task.role)
             db.add(Artifact(run_id=run.id, type="role-handoff-manifest", relative_path=manifest["relative_path"], sha256=manifest["sha256"], size=manifest["size"], producer=task.role))
@@ -99,6 +104,7 @@ def process_once():
             artifact.commit_sha = evidence.candidate_sha
         evidence_path = store.put_bytes(run.id, f"evidence/{evidence.check_id}.json", json.dumps(evidence.__dict__, indent=2).encode(), "trusted-verification")
         db.add(Artifact(run_id=run.id, type="trusted-evidence", relative_path=evidence_path["relative_path"], sha256=evidence_path["sha256"], size=evidence_path["size"], producer="trusted-verification", commit_sha=evidence.candidate_sha))
+        db.add(EvidenceRecord(run_id=run.id, candidate_sha=evidence.candidate_sha, check_id=evidence.check_id, command=evidence.command, exit_code=evidence.exit_code, status=evidence.status, report_ref=evidence_path["relative_path"], payload=evidence.__dict__))
         emit(db, run.id, "verification.completed", {"check_id": evidence.check_id, "status": evidence.status, "candidate_sha": evidence.candidate_sha, "report": evidence_path["relative_path"]})
         if evidence.status != "pass":
             if run.repair_count >= 3:
@@ -130,6 +136,9 @@ def process_once():
         preview_manager = RemotePreviewManager(preview_url) if preview_url else PreviewManager("compose.yaml")
         preview = preview_manager.up(f"preview-{run.id[:8]}", "storefront-api", 8200)
         db.add(Deployment(run_id=run.id, commit_sha=candidate_sha, image_digest=preview.image_digest, status=preview.status, url=preview.url, health_evidence={"status": preview.status, "stderr": preview.stderr[-1000:]}, smoke_evidence={"status":"not_run", "reason":"preview-manager health gate is complete; browser/business smoke is PO-facing"}))
+        evidence_record = db.scalar(select(EvidenceRecord).where(EvidenceRecord.run_id == run.id, EvidenceRecord.check_id == evidence.check_id).order_by(EvidenceRecord.id.desc()))
+        if evidence_record:
+            evidence_record.image_digest = preview.image_digest
         if preview.status == "ready":
             transition(db, run, "awaiting_acceptance")
             db.add(Approval(run_id=run.id, kind="candidate", artifact_version=candidate_sha or run.id, candidate_sha=candidate_sha, status="pending"))

@@ -7,7 +7,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from .db import Base, engine, get_db
-from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment, RoleConfig, RoleScope
+from .models import Project, ChangeRequest, WorkflowRun, Event, Artifact, Task, Approval, FeedbackRecord, Deployment, RoleConfig, RoleScope, EvidenceRecord, Finding, AgentRun, TaskContract
 from .schemas import ProjectCreate, ChangeCreate, RunCreate, Decision, Feedback, RoleUpdate
 from .config import settings
 from .service import emit, seed_tasks, transition
@@ -104,6 +104,28 @@ def cancel_run(run_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/runs/{run_id}/artifacts", dependencies=[Depends(auth)])
 def artifacts(run_id: str, db: Session = Depends(get_db)): return list(db.scalars(select(Artifact).where(Artifact.run_id == run_id)))
+
+@app.get("/api/runs/{run_id}/evidence", dependencies=[Depends(auth)])
+def evidence(run_id: str, db: Session = Depends(get_db)):
+    if not db.get(WorkflowRun, run_id): raise HTTPException(404, "run not found")
+    return list(db.scalars(select(EvidenceRecord).where(EvidenceRecord.run_id == run_id)))
+
+@app.get("/api/runs/{run_id}/agent-runs", dependencies=[Depends(auth)])
+def agent_runs(run_id: str, db: Session = Depends(get_db)):
+    if not db.get(WorkflowRun, run_id): raise HTTPException(404, "run not found")
+    return list(db.scalars(select(AgentRun).join(Task, AgentRun.task_id == Task.id).where(Task.run_id == run_id).order_by(AgentRun.started_at)))
+
+@app.get("/api/tasks/{task_id}/contract", dependencies=[Depends(auth)])
+def task_contract(task_id: str, db: Session = Depends(get_db)):
+    if not db.get(Task, task_id): raise HTTPException(404, "task not found")
+    contract = db.get(TaskContract, task_id)
+    if not contract: raise HTTPException(404, "task contract not found")
+    return contract
+
+@app.get("/api/runs/{run_id}/findings", dependencies=[Depends(auth)])
+def findings(run_id: str, db: Session = Depends(get_db)):
+    if not db.get(WorkflowRun, run_id): raise HTTPException(404, "run not found")
+    return list(db.scalars(select(Finding).where(Finding.run_id == run_id)))
 
 @app.get("/api/artifacts/{artifact_id}", dependencies=[Depends(auth)])
 def artifact(artifact_id: str, db: Session = Depends(get_db)):
