@@ -18,6 +18,7 @@ class PreviewRequest(BaseModel):
     project: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{2,50}$")
     service: str = Field(default="storefront-api", pattern=r"^[a-z0-9][a-z0-9_-]{1,50}$")
     port: int = Field(default=8200, ge=1024, le=65535)
+    workspace: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_./-]+$")
 
 
 @app.get("/health")
@@ -35,13 +36,22 @@ def _preview_port(project: str, requested: int) -> int:
 
 @app.post("/previews")
 def create_preview(body: PreviewRequest):
-    if not COMPOSE_FILE.is_file():
+    selected_workspace = WORKSPACE
+    if body.workspace:
+        selected_workspace = (WORKSPACE / body.workspace).resolve()
+        try:
+            selected_workspace.relative_to(WORKSPACE)
+        except ValueError:
+            raise HTTPException(422, "workspace must stay inside PREVIEW_WORKSPACE")
+    selected_compose = selected_workspace / "infra" / "preview" / "compose.yaml"
+    if not selected_compose.is_file():
         raise HTTPException(500, "preview compose file is unavailable")
     host_port = _preview_port(body.project, body.port)
     override = {
         "services": {
             body.service: {
                 "ports": [f"{host_port}:8200"],
+                "build": {"context": str(selected_workspace), "dockerfile": "templates/storefront/backend/Dockerfile"},
                 "environment": {"STOREFRONT_DATABASE_URL": "postgresql+psycopg://storefront:storefront@postgres:5432/storefront"},
             },
             "postgres": {
@@ -53,11 +63,11 @@ def create_preview(body: PreviewRequest):
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", dir="/tmp", delete=False) as handle:
         json.dump(override, handle)
         override_path = Path(handle.name)
-    command = ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", str(override_path), "-p", body.project, "up", "-d", body.service]
+    command = ["docker", "compose", "-f", str(selected_compose), "-f", str(override_path), "-p", body.project, "up", "-d", body.service]
     try:
         environment = os.environ.copy()
         environment["COMPOSE_NETWORK_NAME"] = f"{body.project}_default"
-        result = subprocess.run(command, cwd=WORKSPACE, env=environment, text=True, capture_output=True, timeout=180)
+        result = subprocess.run(command, cwd=selected_workspace, env=environment, text=True, capture_output=True, timeout=180)
     except FileNotFoundError as exc:
         return {"status": "inconclusive", "compose_project": body.project, "url": None, "stdout": "", "stderr": str(exc)}
     finally:
@@ -67,11 +77,11 @@ def create_preview(body: PreviewRequest):
     # Confirm the service is running before advertising a preview URL.
     environment = os.environ.copy()
     environment["COMPOSE_NETWORK_NAME"] = f"{body.project}_default"
-    ps = subprocess.run(["docker", "compose", "-f", str(COMPOSE_FILE), "-p", body.project, "ps", "-q", body.service], cwd=WORKSPACE, env=environment, text=True, capture_output=True, timeout=30)
+    ps = subprocess.run(["docker", "compose", "-f", str(selected_compose), "-p", body.project, "ps", "-q", body.service], cwd=selected_workspace, env=environment, text=True, capture_output=True, timeout=30)
     if ps.returncode != 0 or not ps.stdout.strip():
         return {"status": "failed", "compose_project": body.project, "url": None, "stdout": result.stdout[-10000:], "stderr": ps.stderr[-10000:]}
     container_id = ps.stdout.strip().splitlines()[0]
-    image = subprocess.run(["docker", "compose", "-f", str(COMPOSE_FILE), "-p", body.project, "images", "-q", body.service], cwd=WORKSPACE, env=environment, text=True, capture_output=True, timeout=30)
+    image = subprocess.run(["docker", "compose", "-f", str(selected_compose), "-p", body.project, "images", "-q", body.service], cwd=selected_workspace, env=environment, text=True, capture_output=True, timeout=30)
     image_id = image.stdout.strip().splitlines()[0] if image.stdout.strip() else None
     digest = None
     if image_id:

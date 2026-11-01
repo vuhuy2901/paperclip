@@ -2,6 +2,7 @@ import time
 import json
 import os
 import socket
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy import select
@@ -38,6 +39,13 @@ def process_once():
         store = ArtifactStore(settings.artifact_root)
         change = db.get(ChangeRequest, run.change_id)
         project = db.get(Project, change.project_id) if change else None
+        candidate_root = None
+        workspace_manager = WorkspaceManager(settings.workspace_root)
+        if project and project.repo:
+            base_ref = project.accepted_commit or workspace_manager.head(project.repo)
+            if run.baseline_sha is None:
+                run.baseline_sha = base_ref
+            candidate_root = workspace_manager.create_candidate(project.repo, project.id, run.id, base_ref)
         if run.baseline_sha is None and project and project.accepted_commit:
             run.baseline_sha = project.accepted_commit
         db.flush()
@@ -57,20 +65,33 @@ def process_once():
             role_cfg = (run.config_snapshot or {}).get("roles", {}).get(task.role, {"runner":"local-deterministic"})
             agent_run = AgentRun(task_id=task.id, attempt=1, runner=role_cfg.get("runner", "local-deterministic"), model=role_cfg.get("model"), status="running", usage={"status": "unknown"})
             db.add(agent_run); db.flush()
-            if role_cfg.get("runner") == "codex-cli":
+            if role_cfg.get("runner") in {"codex-cli", "codex-gateway"}:
                 scope = role_cfg.get("file_scope", [])
                 if not project or not project.repo or not scope:
                     task.status = "failed"; emit(db, run.id, "task.failed", {"task_id": task.id, "reason": "codex-cli requires project.repo and non-empty role file_scope"})
                     for status in ["analyzing", "planning", "implementing"]:
                         if run.status != status: transition(db, run, status)
                     transition(db, run, "failed"); db.commit(); return True
-                manager = WorkspaceManager(settings.workspace_root)
-                worktree = manager.create_worktree(project.repo, project.id, run.id, task.id, run.baseline_sha or "HEAD")
-                handoff = TaskExecutor(CodexCliRunner(timeout_seconds=int(role_cfg.get("timeout_seconds", 900)), sandbox=role_cfg.get("sandbox", "workspace-write")), manager).execute(task.id, task.goal, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
-                payload_obj = {"schema_version":"1", "task_id":task.id, "status":handoff.status, "summary":handoff.runner_summary, "result_commit":handoff.result_commit, "files_changed":handoff.files_changed, "mode":"codex-cli", "failure_category":handoff.failure_category}
+                manager = workspace_manager
+                worktree_task_id = f"{task.id}-r{run.repair_count}"
+                worktree = manager.create_worktree(project.repo, project.id, run.id, worktree_task_id, run.baseline_sha or "HEAD")
+                configured_runner = build_runner(role_cfg)
+                handoff = TaskExecutor(configured_runner, manager).execute(task.id, task.goal, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
+                payload_obj = {"schema_version":"1", "task_id":task.id, "status":handoff.status, "summary":handoff.runner_summary, "result_commit":handoff.result_commit, "files_changed":handoff.files_changed, "mode":role_cfg.get("runner"), "failure_category":handoff.failure_category}
                 if handoff.status != "completed":
                     agent_run.status = handoff.status; agent_run.failure_category = handoff.failure_category; agent_run.finished_at = datetime.now(timezone.utc)
                     task.status = "failed"; emit(db, run.id, "task.failed", payload_obj)
+                    for status in ["analyzing", "planning", "implementing"]:
+                        if run.status != status: transition(db, run, status)
+                    transition(db, run, "failed"); db.commit(); return True
+                try:
+                    if candidate_root and handoff.result_commit:
+                        candidate_sha = manager.cherry_pick(candidate_root, handoff.result_commit)
+                        payload_obj["candidate_commit"] = candidate_sha
+                except RuntimeError as exc:
+                    agent_run.status = "failed"; agent_run.failure_category = "merge_conflict"; agent_run.finished_at = datetime.now(timezone.utc)
+                    task.status = "failed"; payload_obj.update({"status": "failed", "failure_category": "merge_conflict", "summary": str(exc)})
+                    emit(db, run.id, "task.failed", payload_obj)
                     for status in ["analyzing", "planning", "implementing"]:
                         if run.status != status: transition(db, run, status)
                     transition(db, run, "failed"); db.commit(); return True
@@ -95,11 +116,17 @@ def process_once():
                 return True
             task.status = "completed"
             emit(db, run.id, "task.completed", {"task_id": task.id, "role": task.role, "artifacts": produced, "mode": payload_obj.get("mode", "fixture")})
-        verification_root = Path(os.getenv("VERIFICATION_ROOT", str(Path.cwd())))
+        verification_root = candidate_root or Path(os.getenv("VERIFICATION_ROOT", str(Path.cwd())))
         evidence = run_profile("product-regression", verification_root)
         heartbeat_run(db, run.id, owner)
         run.candidate_sha = evidence.candidate_sha
         candidate_sha = evidence.candidate_sha
+        if candidate_root and run.baseline_sha and candidate_sha:
+            diff_proc = subprocess.run(["git", "diff", "--name-status", run.baseline_sha, candidate_sha], cwd=candidate_root, text=True, capture_output=True, timeout=30)
+            diff_files = [{"status": line.split("\t", 1)[0], "path": line.split("\t", 1)[1]} for line in diff_proc.stdout.splitlines() if "\t" in line]
+            diff_stat = subprocess.run(["git", "diff", "--shortstat", run.baseline_sha, candidate_sha], cwd=candidate_root, text=True, capture_output=True, timeout=30)
+            run.config_snapshot = {**(run.config_snapshot or {}), "candidate_diff": {"available": diff_proc.returncode == 0, "files": diff_files, "stat": diff_stat.stdout.strip() or None, "reason": None if diff_proc.returncode == 0 else diff_proc.stderr[-500:]}}
+            emit(db, run.id, "candidate.diff_recorded", {"baseline_sha": run.baseline_sha, "candidate_sha": candidate_sha, "files_changed": len(diff_files)})
         for artifact in db.scalars(select(Artifact).where(Artifact.run_id == run.id)):
             artifact.commit_sha = evidence.candidate_sha
         evidence_path = store.put_bytes(run.id, f"evidence/{evidence.check_id}.json", json.dumps(evidence.__dict__, indent=2).encode(), "trusted-verification")
@@ -134,7 +161,13 @@ def process_once():
         heartbeat_run(db, run.id, owner)
         preview_url = os.getenv("PREVIEW_MANAGER_URL")
         preview_manager = RemotePreviewManager(preview_url) if preview_url else PreviewManager("compose.yaml")
-        preview = preview_manager.up(f"preview-{run.id[:8]}", "storefront-api", 8200)
+        preview_workspace = None
+        if candidate_root:
+            try:
+                preview_workspace = str(candidate_root.relative_to(Path("/workspace"))).replace("\\", "/")
+            except ValueError:
+                preview_workspace = None
+        preview = preview_manager.up(f"preview-{run.id[:8]}", "storefront-api", 8200, workspace=preview_workspace)
         db.add(Deployment(run_id=run.id, commit_sha=candidate_sha, image_digest=preview.image_digest, status=preview.status, url=preview.url, health_evidence={"status": preview.status, "stderr": preview.stderr[-1000:]}, smoke_evidence={"status":"not_run", "reason":"preview-manager health gate is complete; browser/business smoke is PO-facing"}))
         evidence_record = db.scalar(select(EvidenceRecord).where(EvidenceRecord.run_id == run.id, EvidenceRecord.check_id == evidence.check_id).order_by(EvidenceRecord.id.desc()))
         if evidence_record:
@@ -147,6 +180,23 @@ def process_once():
             transition(db, run, "failed")
             emit(db, run.id, "run.deploy_failed", {"status": preview.status, "reason": preview.stderr[-1000:]})
         db.commit(); return True
+    except Exception as exc:
+        if claimed_run_id:
+            try:
+                db.rollback()
+                failed_run = db.get(WorkflowRun, claimed_run_id)
+                if failed_run and failed_run.status not in {"failed", "blocked", "cancelled", "accepted", "rejected"}:
+                    for status in ["analyzing", "planning", "implementing", "integrating", "verifying", "deploying", "repairing"]:
+                        if failed_run.status != status:
+                            try: transition(db, failed_run, status)
+                            except ValueError: pass
+                    if failed_run.status not in {"failed", "blocked", "cancelled", "accepted", "rejected"}:
+                        transition(db, failed_run, "failed")
+                    emit(db, failed_run.id, "run.failed", {"category": "worker_exception", "error": str(exc)[-2000:]})
+                    db.commit()
+            except Exception:
+                db.rollback()
+        return True
     finally:
         if claimed_run_id:
             release_run(db, claimed_run_id, owner)

@@ -19,7 +19,7 @@ class PreviewManager:
     """Docker control-plane boundary. No task runner receives the Docker socket."""
     def __init__(self, compose_file: str | Path): self.compose_file = str(Path(compose_file).resolve())
 
-    def up(self, project: str, service: str, port: int) -> PreviewResult:
+    def up(self, project: str, service: str, port: int, workspace: str | None = None) -> PreviewResult:
         command = ["docker", "compose", "-f", self.compose_file, "-p", project, "up", "-d", service]
         try:
             environment = os.environ.copy()
@@ -37,8 +37,8 @@ class RemotePreviewManager:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def up(self, project: str, service: str, port: int) -> PreviewResult:
-        payload = json.dumps({"project": project, "service": service, "port": port}).encode()
+    def up(self, project: str, service: str, port: int, workspace: str | None = None) -> PreviewResult:
+        payload = json.dumps({"project": project, "service": service, "port": port, "workspace": workspace}).encode()
         request = Request(f"{self.base_url}/previews", data=payload, headers={"content-type": "application/json"}, method="POST")
         try:
             with urlopen(request, timeout=self.timeout) as response:

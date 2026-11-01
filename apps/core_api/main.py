@@ -172,6 +172,9 @@ def candidate_diff(run_id: str, db: Session = Depends(get_db)):
     change = db.get(ChangeRequest, run.change_id)
     project = db.get(Project, change.project_id) if change else None
     result = {"run_id": run_id, "baseline_sha": run.baseline_sha, "candidate_sha": run.candidate_sha, "available": False, "files": [], "stat": None, "reason": None}
+    persisted = (run.config_snapshot or {}).get("candidate_diff")
+    if persisted is not None:
+        return {**result, **persisted}
     if not run.baseline_sha or not run.candidate_sha:
         result["reason"] = "baseline or candidate SHA is missing"
         return result
@@ -258,7 +261,7 @@ def roles(db: Session = Depends(get_db)):
 def update_role(role_id: str, body: RoleUpdate, db: Session = Depends(get_db)):
     configs = snapshot(db)
     if role_id not in configs: raise HTTPException(404, "role not found")
-    if body.runner not in {"local-deterministic", "codex-cli", "xera", "reviewer", "devops"}: raise HTTPException(422, "unsupported runner")
+    if body.runner not in {"local-deterministic", "codex-cli", "codex-gateway", "xera", "reviewer", "devops"}: raise HTTPException(422, "unsupported runner")
     if body.sandbox not in {"read-only", "workspace-write"}: raise HTTPException(422, "unsupported sandbox")
     for path in body.file_scope:
         if path.startswith("/") or ".." in path.replace("\\", "/").split("/"): raise HTTPException(422, "file_scope must stay relative")

@@ -6,8 +6,10 @@ services:
       SERVICE_TOKEN: dev-service-token
       DEFAULT_RUNNER: ${DEFAULT_RUNNER:-local-deterministic}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-configured-at-runtime}
+      CODEX_GATEWAY_URL: ${CODEX_GATEWAY_URL:-http://host.docker.internal:8400}
+      CODEX_GATEWAY_TOKEN: ${CODEX_GATEWAY_TOKEN:-dev-codex-gateway}
     ports: ["8001:8000"]
-    volumes: ["core-data:/app/data"]
+    volumes: ["core-data:/app/data", ".:/workspace:ro"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
@@ -25,6 +27,9 @@ services:
       DEFAULT_MODEL: ${DEFAULT_MODEL:-configured-at-runtime}
       VERIFICATION_ROOT: /workspace
       PREVIEW_MANAGER_URL: http://preview-manager:8300
+      WORKSPACE_ROOT: /workspace/data/worktrees
+      CODEX_GATEWAY_URL: ${CODEX_GATEWAY_URL:-http://host.docker.internal:8400}
+      CODEX_GATEWAY_TOKEN: ${CODEX_GATEWAY_TOKEN:-dev-codex-gateway}
     volumes: ["core-data:/app/data", ".:/workspace"]
     depends_on:
       core-api: {condition: service_healthy}
