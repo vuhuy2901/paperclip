@@ -230,6 +230,20 @@ export async function execute(ctx: any) {
     }
     issue = resolved.issue;
     taskId = issue.id;
+    // A company-scoped Run now cannot write to a task thread. Start a proper
+    // issue-scoped run so Paperclip owns attribution, locks and access checks.
+    if (!resolved.explicit) {
+      const scoped = await request(`/api/agents/${ctx.agent.id}/heartbeat/invoke`, {
+        method: "POST",
+        body: { payload: { issueId: taskId }, reason: "assigned_task_selected", idempotencyKey: `${ctx.runId}:${taskId}` },
+      });
+      if (!scoped.id) {
+        throw new Error(`Paperclip did not admit the task run (${scoped.status ?? "skipped"}). Open ${issue.identifier} and retry the issue as the operator; check task recovery and wake-on-demand settings.`);
+      }
+      const summary = `Selected ${issue.identifier}. Issue-scoped execution ${scoped.id ?? scoped.status ?? "queued"} scheduled.`;
+      await ctx.onLog?.("stdout", `${summary}\n`);
+      return executionResult(true, summary, { issueId: taskId, issueIdentifier: issue.identifier, scopedRunId: scoped.id ?? null, outcome: "scheduled", dispatched: false });
+    }
     prompt = await taskPrompt(issue, request);
     const issueChangeId = extractChangeId(context, [issue.title, issue.description].filter(Boolean).join("\n"));
     if (issueChangeId) return dispatchCoreRun(ctx, context, taskId, issueChangeId);
@@ -263,7 +277,10 @@ export async function execute(ctx: any) {
     const outcome = taskResult(summary);
     await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: `${ctx.agent.name}: ${body.status === "completed" ? outcome.status : "execution failed"}\n\n${outcome.report}` } });
     if (body.status === "completed" && outcome.status !== "in_progress") {
-      await request(`/api/issues/${taskId}`, { method: "PATCH", body: { status: outcome.status } });
+      const update = outcome.status === "blocked"
+        ? { status: "blocked", unblockDescriptor: { owner: "board", action: "Review the blocker report in this issue, supply the missing prerequisite, then move the task to Todo and retry." } }
+        : { status: outcome.status };
+      await request(`/api/issues/${taskId}`, { method: "PATCH", body: update });
     }
     return executionResult(body.status === "completed", outcome.report.slice(0, 4000), { issueId: taskId, issueIdentifier: issue.identifier, taskStatus: body.status === "completed" ? outcome.status : "in_progress", gatewayStatus: body.status, model: ctx.config?.model ?? null, eventCount: body.events?.length ?? 0 });
   } catch (error: any) {

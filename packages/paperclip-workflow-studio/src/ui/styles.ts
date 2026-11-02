@@ -34,4 +34,51 @@ export const studioStyles = `
 @media(max-width:640px){.wfs-list-header{align-items:stretch;flex-direction:column}.wfs-list-header-actions{width:100%}.wfs-list-header-actions .wfs-button{flex:1}.wfs-list-filters{grid-template-columns:1fr 120px}.wfs-list-filters>span{display:none}.wfs-workflow-table{grid-template-columns:1fr}.wfs-detail-toolbar .wfs-brand .wfs-title-wrap{display:none}.wfs-detail-toolbar{overflow-x:auto}.wfs-list-empty{align-items:flex-start;flex-wrap:wrap}.wfs-list-empty .wfs-button{margin-left:0}}
 @media(min-width:981px){.wfs-workflow-table-head,.wfs-workflow-table-row{grid-template-columns:minmax(260px,1fr) 100px 170px 280px}}
 @media(prefers-reduced-motion:reduce){.wfs-root *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+
+/* ONE-CLICK RUN WORKFLOW & AGENT CONTROL CENTER */
+.wfs-button-run{background:linear-gradient(135deg,#10b981 0%,#059669 100%)!important;color:#ffffff!important;border:1px solid #047857!important;font-weight:700!important;box-shadow:0 2px 10px rgba(16,185,129,0.35);transition:all .18s ease}
+.wfs-button-run:hover:not(:disabled){background:linear-gradient(135deg,#059669 0%,#047857 100%)!important;box-shadow:0 4px 16px rgba(16,185,129,0.48);transform:translateY(-1px)}
+.wfs-button-run *{color:#ffffff!important}
+.wfs-run-dialog{width:min(660px,calc(100vw - 32px));max-height:calc(100vh - 64px);display:flex;flex-direction:column}
+.wfs-run-dialog .wfs-modal-body{overflow-y:auto;max-height:calc(100vh - 210px);display:grid;gap:14px;padding:18px 22px}
+.wfs-dialog-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.wfs-preflight-card{border:1px solid var(--border);border-radius:10px;background:var(--wfs-panel);padding:12px;display:grid;gap:8px}
+.wfs-preflight-item{display:flex;align-items:flex-start;gap:8px;font-size:11px;padding:4px 0}
+.wfs-preflight-item.pass{color:#15803d}
+.wfs-preflight-item.warn{color:#a16207}
+.wfs-preflight-item.fail{color:#dc2626}
+.wfs-preflight-icon{flex:none;margin-top:2px}
+.wfs-preflight-text{display:grid;gap:1px}
+.wfs-preflight-text strong{font-size:11px}
+.wfs-preflight-text small{font-size:9.5px;color:var(--muted-foreground)}
+
+/* AGENT CONTROL CENTER */
+.wfs-control-center{width:min(1240px,100%);margin:0 auto;padding:18px 8px 36px;display:grid;gap:20px}
+.wfs-control-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:var(--card,var(--background));box-shadow:0 4px 16px color-mix(in srgb,var(--foreground) 4%,transparent)}
+.wfs-control-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.wfs-agents-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.wfs-agent-card{border:1px solid var(--border);border-radius:12px;background:var(--card,var(--background));padding:14px;display:grid;gap:10px;transition:border-color .15s ease,box-shadow .15s ease}
+.wfs-agent-card:hover{border-color:color-mix(in srgb,var(--wfs-accent) 45%,var(--border));box-shadow:0 6px 20px color-mix(in srgb,var(--foreground) 6%,transparent)}
+.wfs-agent-head{display:flex;align-items:center;gap:10px}
+.wfs-agent-avatar{width:36px;height:36px;border-radius:9px;background:var(--wfs-accent-soft);color:var(--wfs-accent);display:grid;place-items:center;font-weight:700;font-size:12px;flex:none}
+.wfs-agent-info{min-width:0;flex:1}
+.wfs-agent-info strong{display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wfs-agent-info span{display:block;font-size:10px;color:var(--muted-foreground);margin-top:2px}
+.wfs-agent-task{padding:8px 10px;border-radius:8px;background:var(--wfs-panel);border:1px solid var(--border);font-size:10.5px;display:grid;gap:3px}
+.wfs-agent-task span{font-size:9px;text-transform:uppercase;color:var(--muted-foreground);font-weight:700}
+.wfs-agent-task a{color:var(--wfs-accent);text-decoration:none;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wfs-agent-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:2px}
+
+/* WORKFLOW MONITOR CONTROLS & APPROVALS */
+.wfs-approval-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border-radius:10px;background:color-mix(in srgb,#8b5cf6 14%,var(--background));border:1px solid color-mix(in srgb,#8b5cf6 45%,var(--border));color:var(--foreground)}
+.wfs-approval-actions{display:flex;gap:8px;flex:none}
+.wfs-run-controls{display:flex;align-items:center;gap:6px}
+.wfs-logs-drawer{position:fixed;right:0;top:0;bottom:0;width:min(440px,92vw);z-index:1050;background:var(--background);border-left:1px solid var(--border);box-shadow:-12px 0 36px color-mix(in srgb,var(--foreground) 16%,transparent);display:grid;grid-template-rows:auto 1fr;overflow:hidden}
+.wfs-logs-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);background:var(--wfs-panel)}
+.wfs-logs-list{overflow-y:auto;padding:12px;display:grid;gap:8px}
+.wfs-log-entry{padding:8px 10px;border-radius:8px;background:var(--wfs-panel);border:1px solid var(--border);font-size:10.5px;display:grid;gap:3px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.wfs-log-time{font-size:9px;color:var(--muted-foreground)}
+.wfs-runs-table{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card,var(--background))}
+.wfs-node.waiting_approval{border-color:#8b5cf6;box-shadow:0 0 0 2px color-mix(in srgb,#8b5cf6 35%,transparent)}
+.wfs-node.completed{border-color:#22c55e}
 `;

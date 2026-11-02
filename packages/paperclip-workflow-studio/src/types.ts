@@ -125,6 +125,7 @@ export type BootstrapData = {
   agents: PaperclipAgent[];
   issues: PaperclipIssue[];
   workflows: WorkflowIndexEntry[];
+  runs?: WorkflowRunSummary[];
 };
 
 export type WorkflowData = {
@@ -148,4 +149,113 @@ export type ProjectWorkflowData = {
   agents: PaperclipAgent[];
   binding: ProjectWorkflowBinding | null;
   monitor: MonitorNode[];
+  activeRun?: WorkflowRunRecord | null;
+  recentRuns?: WorkflowRunSummary[];
+};
+
+export type WorkflowRunStatus =
+  | "pending"
+  | "running"
+  | "waiting_approval"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type NodeExecutionStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "waiting_approval"
+  | "done"
+  | "failed"
+  | "blocked"
+  | "skipped";
+
+export type WorkflowRunSettings = {
+  maxConcurrentAgents: number;
+  approvalMode: "require_approval" | "auto";
+  failurePolicy: "pause_and_report" | "fail_fast" | "continue_unrelated";
+  retryPolicy: "bounded" | "none" | "manual";
+  maxRetries?: number;
+};
+
+export type NodeExecutionState = {
+  nodeId: string;
+  kind: WorkflowNodeKind;
+  title: string;
+  status: NodeExecutionStatus;
+  issueId: string | null;
+  issueIdentifier: string | null;
+  agentId: string | null;
+  agentName: string | null;
+  agentRole: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  retryCount: number;
+  blockedByNodeIds: string[];
+};
+
+export type WorkflowRunHistoryEntry = {
+  id: string;
+  timestamp: string;
+  level: "info" | "warn" | "error" | "action" | "approval";
+  message: string;
+  nodeId?: string;
+  agentId?: string;
+  issueId?: string;
+};
+
+export type WorkflowRunRecord = {
+  id: string;
+  workflowId: string;
+  workflowVersion: number;
+  workflowName: string;
+  projectId: string;
+  projectName: string;
+  companyId: string;
+  initiatorUserId: string | null;
+  inputRequirement: string;
+  status: WorkflowRunStatus;
+  settings: WorkflowRunSettings;
+  startedAt: string;
+  finishedAt: string | null;
+  pausedAt: string | null;
+  nodeExecutionStates: Record<string, NodeExecutionState>;
+  relatedIssueIds: string[];
+  executionHistory: WorkflowRunHistoryEntry[];
+  workflowSnapshot: WorkflowDefinition;
+  currentStepTitle?: string;
+  totalTokens?: number;
+  updatedAt: string;
+};
+
+export type WorkflowRunSummary = {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  workflowVersion: number;
+  projectId: string;
+  projectName: string;
+  status: WorkflowRunStatus;
+  progress: number;
+  completedTasks: number;
+  totalTasks: number;
+  inputRequirement: string;
+  startedAt: string;
+  finishedAt: string | null;
+  currentStepTitle?: string;
+};
+
+export type PreflightCheckItem = {
+  key: string;
+  name: string;
+  status: "pass" | "warn" | "fail";
+  message: string;
+};
+
+export type PreflightCheckResult = {
+  ok: boolean;
+  checks: PreflightCheckItem[];
 };

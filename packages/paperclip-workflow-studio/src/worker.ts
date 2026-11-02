@@ -9,6 +9,10 @@ import type { Agent, Issue, Project } from "@paperclipai/shared";
 import type {
   BootstrapData,
   MonitorNode,
+  NodeExecutionState,
+  NodeExecutionStatus,
+  PreflightCheckItem,
+  PreflightCheckResult,
   ProjectWorkflowBinding,
   ProjectWorkflowData,
   ValidationIssue,
@@ -17,12 +21,18 @@ import type {
   WorkflowEdge,
   WorkflowIndexEntry,
   WorkflowNode,
-  WorkflowNodeData
+  WorkflowNodeData,
+  WorkflowRunHistoryEntry,
+  WorkflowRunRecord,
+  WorkflowRunSettings,
+  WorkflowRunStatus,
+  WorkflowRunSummary
 } from "./types.js";
 
 const INDEX_KEY = "workflow-index";
 const NAMESPACE = "workflow-studio";
 const PROJECT_BINDING_KEY = "project-workflow-binding";
+const RUNS_INDEX_KEY = "workflow-runs-index";
 
 function requiredString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${name} is required`);
@@ -87,7 +97,67 @@ async function persistProjectBinding(ctx: PluginContext, binding: ProjectWorkflo
   );
 }
 
-function validateGraph(workflow: WorkflowDefinition): ValidationResult {
+function runKey(runId: string): string {
+  return `workflow-run:${runId}`;
+}
+
+async function readRunsIndex(ctx: PluginContext, companyId: string): Promise<WorkflowRunSummary[]> {
+  const value = await ctx.state.get({ scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: RUNS_INDEX_KEY });
+  return Array.isArray(value) ? (value as WorkflowRunSummary[]) : [];
+}
+
+async function writeRunsIndex(ctx: PluginContext, companyId: string, index: WorkflowRunSummary[]): Promise<void> {
+  await ctx.state.set(
+    { scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: RUNS_INDEX_KEY },
+    index
+  );
+}
+
+async function readRun(ctx: PluginContext, companyId: string, runId: string): Promise<WorkflowRunRecord | null> {
+  const value = await ctx.state.get({
+    scopeKind: "company",
+    scopeId: companyId,
+    namespace: NAMESPACE,
+    stateKey: runKey(runId)
+  });
+  return value && typeof value === "object" ? (value as WorkflowRunRecord) : null;
+}
+
+function runSummary(run: WorkflowRunRecord): WorkflowRunSummary {
+  const totalTasks = Object.values(run.nodeExecutionStates).filter((s) => s.kind === "task" || s.kind === "approval").length;
+  const completedTasks = Object.values(run.nodeExecutionStates).filter((s) => (s.kind === "task" || s.kind === "approval") && s.status === "done").length;
+  const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : (run.status === "completed" ? 100 : 0);
+  return {
+    id: run.id,
+    workflowId: run.workflowId,
+    workflowName: run.workflowName,
+    workflowVersion: run.workflowVersion,
+    projectId: run.projectId,
+    projectName: run.projectName,
+    status: run.status,
+    progress,
+    completedTasks,
+    totalTasks,
+    inputRequirement: run.inputRequirement,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    currentStepTitle: run.currentStepTitle
+  };
+}
+
+async function persistRun(ctx: PluginContext, run: WorkflowRunRecord): Promise<void> {
+  await ctx.state.set(
+    { scopeKind: "company", scopeId: run.companyId, namespace: NAMESPACE, stateKey: runKey(run.id) },
+    run
+  );
+  const current = await readRunsIndex(ctx, run.companyId);
+  const next = [runSummary(run), ...current.filter((item) => item.id !== run.id)]
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+    .slice(0, 100);
+  await writeRunsIndex(ctx, run.companyId, next);
+}
+
+export function validateGraph(workflow: WorkflowDefinition): ValidationResult {
   const issues: ValidationIssue[] = [];
   const nodeIds = new Set<string>();
   for (const node of workflow.nodes) {
@@ -185,7 +255,7 @@ function templateNode(id: string, x: number, y: number, data: WorkflowNodeData):
   return { id, type: "workflowNode", position: { x, y }, data };
 }
 
-function createLifecycleTemplate(companyId: string, agents: Agent[]): WorkflowDefinition {
+export function createLifecycleTemplate(companyId: string, agents: Agent[]): WorkflowDefinition {
   const agent = (role: string) => matchAgent(agents, role);
   const now = new Date().toISOString();
   const nodes: WorkflowNode[] = [
@@ -412,22 +482,558 @@ async function publishWorkflow(
   return publishWorkflowInstance(ctx, companyId, current, expectedVersion, actionContext, (workflow) => persistWorkflow(ctx, workflow));
 }
 
+function asMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function checkPreflight(
+  ctx: PluginContext,
+  companyId: string,
+  projectId: string,
+  workflow: WorkflowDefinition
+): Promise<PreflightCheckResult> {
+  const checks: PreflightCheckItem[] = [];
+  const project = await ctx.projects.get(projectId, companyId);
+  const agents = await ctx.agents.list({ companyId, limit: 200, offset: 0 });
+  const agentMap = new Map(agents.map((a) => [a.id, a]));
+
+  if (!project) {
+    checks.push({ key: "project_workspace", name: "Project Workspace", status: "fail", message: "Project not found or inaccessible." });
+  } else {
+    checks.push({ key: "project_workspace", name: "Project Workspace", status: "pass", message: `Project "${project.name}" is ready.` });
+  }
+
+  const taskAndApprovalNodes = workflow.nodes.filter((n) => n.data.kind === "task" || n.data.kind === "approval");
+  const missingAgents = taskAndApprovalNodes.filter((n) => n.data.kind === "task" && !n.data.agentId);
+  if (missingAgents.length > 0) {
+    checks.push({
+      key: "agent_assignments",
+      name: "Agent Assignments",
+      status: "fail",
+      message: `${missingAgents.length} task node(s) have no AI agent assigned: ${missingAgents.map((n) => n.data.title).join(", ")}.`
+    });
+  } else {
+    checks.push({
+      key: "agent_assignments",
+      name: "Agent Assignments",
+      status: "pass",
+      message: `All ${taskAndApprovalNodes.length} workflow steps have valid assignees.`
+    });
+  }
+
+  const assignedAgentIds = [...new Set(taskAndApprovalNodes.map((n) => n.data.agentId).filter(Boolean))] as string[];
+  const unconfiguredAgents = assignedAgentIds.filter((id) => {
+    const ag = agentMap.get(id);
+    return !ag || ag.status === "terminated";
+  });
+  if (unconfiguredAgents.length > 0) {
+    checks.push({
+      key: "model_harness",
+      name: "Model / Harness",
+      status: "fail",
+      message: `${unconfiguredAgents.length} assigned agent(s) are inactive or terminated.`
+    });
+  } else {
+    checks.push({
+      key: "model_harness",
+      name: "Model / Harness",
+      status: "pass",
+      message: `All ${assignedAgentIds.length} assigned AI agents are active and configured with runtime models.`
+    });
+  }
+
+  const validation = validateGraph(workflow);
+  const cycleIssue = validation.issues.find((i) => i.code === "cycle");
+  if (cycleIssue) {
+    checks.push({ key: "cycle_check", name: "Graph Cycle Check", status: "fail", message: cycleIssue.message });
+  } else {
+    checks.push({ key: "cycle_check", name: "Graph Cycle Check", status: "pass", message: "Workflow DAG is strictly acyclic." });
+  }
+
+  const depErrors = validation.issues.filter((i) => i.level === "error" && i.code !== "cycle");
+  if (depErrors.length > 0) {
+    checks.push({ key: "dependencies", name: "Dependency Verification", status: "fail", message: depErrors.map((i) => i.message).join("; ") });
+  } else {
+    checks.push({ key: "dependencies", name: "Dependency Verification", status: "pass", message: `${workflow.edges.length} execution dependency edges verified.` });
+  }
+
+  const visualOnlyTasks = workflow.nodes.filter((n) => n.data.kind === "task" && n.data.executionPolicy === "visual-only");
+  if (visualOnlyTasks.length > 0) {
+    checks.push({
+      key: "unlinked_tasks",
+      name: "Executable Task Mapping",
+      status: "warn",
+      message: `${visualOnlyTasks.length} task(s) marked visual-only will be mapped to Paperclip execution.`
+    });
+  } else {
+    checks.push({
+      key: "unlinked_tasks",
+      name: "Executable Task Mapping",
+      status: "pass",
+      message: "All task nodes have valid execution semantics."
+    });
+  }
+
+  const approvalNodes = workflow.nodes.filter((n) => n.data.kind === "approval");
+  if (approvalNodes.length > 0) {
+    checks.push({
+      key: "approval_gates",
+      name: "Approval Gates",
+      status: "pass",
+      message: `${approvalNodes.length} human approval gate(s) configured (${approvalNodes.map((n) => n.data.title).join(", ")}).`
+    });
+  } else {
+    checks.push({
+      key: "approval_gates",
+      name: "Approval Gates",
+      status: "warn",
+      message: "No human approval gates in this workflow. Execution will proceed directly to completion."
+    });
+  }
+
+  const ok = !checks.some((c) => c.status === "fail");
+  return { ok, checks };
+}
+
+async function startProjectWorkflow(
+  ctx: PluginContext,
+  companyId: string,
+  projectId: string,
+  workflowId: string,
+  inputRequirement: string,
+  settings: WorkflowRunSettings,
+  actionContext: PluginPerformActionContext
+): Promise<{ run: WorkflowRunRecord }> {
+  if (!inputRequirement || !inputRequirement.trim()) {
+    throw new Error("Initial requirement from Product Owner is required to start workflow.");
+  }
+  const cleanReq = inputRequirement.trim();
+
+  const project = await ctx.projects.get(projectId, companyId);
+  if (!project) throw new Error("Project not found");
+
+  let workflow = await readWorkflow(ctx, companyId, workflowId);
+  if (!workflow) {
+    const binding = await readProjectBinding(ctx, projectId);
+    if (binding && binding.workflow.id === workflowId) {
+      workflow = binding.workflow;
+    }
+  }
+  if (!workflow) throw new Error("Workflow not found");
+
+  const preflight = await checkPreflight(ctx, companyId, projectId, workflow);
+  if (!preflight.ok) {
+    const failures = preflight.checks.filter((c) => c.status === "fail").map((c) => c.message).join("; ");
+    throw new Error(`Preflight check failed: ${failures}`);
+  }
+
+  const runs = await readRunsIndex(ctx, companyId);
+  const activeExisting = runs.find((r) => r.projectId === projectId && (r.status === "running" || r.status === "waiting_approval"));
+  if (activeExisting) {
+    throw new Error(`Project "${project.name}" already has an active workflow run (${activeExisting.id}). Pause or stop the active run before starting a new one.`);
+  }
+
+  if (workflow.status !== "published" || !workflow.publishedIssueIds?.length || workflow.projectId !== projectId) {
+    const instance: WorkflowDefinition = {
+      ...structuredClone(workflow),
+      projectId,
+      id: randomUUID()
+    };
+    const pubResult = await publishWorkflowInstance(
+      ctx,
+      companyId,
+      instance,
+      instance.version,
+      actionContext,
+      async (w) => {
+        await persistProjectBinding(ctx, {
+          projectId,
+          templateId: workflow!.id,
+          templateName: workflow!.name,
+          templateVersion: workflow!.version,
+          workflow: w,
+          attachedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+    );
+    workflow = pubResult.workflow;
+  }
+
+  const runId = `run_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+  const now = new Date().toISOString();
+  const maxConcurrent = Math.max(1, Math.min(8, Number(settings?.maxConcurrentAgents) || 2));
+  const runSettings: WorkflowRunSettings = {
+    maxConcurrentAgents: maxConcurrent,
+    approvalMode: settings?.approvalMode ?? "require_approval",
+    failurePolicy: settings?.failurePolicy ?? "pause_and_report",
+    retryPolicy: settings?.retryPolicy ?? "bounded",
+    maxRetries: Number(settings?.maxRetries) || 3
+  };
+
+  const incomingMap = new Map<string, string[]>();
+  for (const n of workflow.nodes) incomingMap.set(n.id, []);
+  for (const e of workflow.edges) incomingMap.get(e.target)?.push(e.source);
+
+  const nodeExecutionStates: Record<string, NodeExecutionState> = {};
+  for (const node of workflow.nodes) {
+    nodeExecutionStates[node.id] = {
+      nodeId: node.id,
+      kind: node.data.kind,
+      title: node.data.title,
+      status: node.data.kind === "start" ? "done" : "pending",
+      issueId: node.data.issueId ?? null,
+      issueIdentifier: node.data.issueIdentifier ?? null,
+      agentId: node.data.agentId ?? null,
+      agentName: node.data.agentName ?? null,
+      agentRole: node.data.agentRole ?? null,
+      startedAt: node.data.kind === "start" ? now : null,
+      finishedAt: node.data.kind === "start" ? now : null,
+      error: null,
+      retryCount: 0,
+      blockedByNodeIds: incomingMap.get(node.id) ?? []
+    };
+  }
+
+  const history: WorkflowRunHistoryEntry[] = [
+    {
+      id: randomUUID(),
+      timestamp: now,
+      level: "action",
+      message: `Workflow Run initialized by Product Owner for project "${project.name}". Requirement: "${cleanReq.slice(0, 80)}${cleanReq.length > 80 ? '...' : ''}"`
+    },
+    {
+      id: randomUUID(),
+      timestamp: now,
+      level: "info",
+      message: `Settings: Max Concurrent Agents: ${runSettings.maxConcurrentAgents}, Failure Policy: ${runSettings.failurePolicy}, Retry Policy: ${runSettings.retryPolicy}.`
+    }
+  ];
+
+  const relatedIssueIds: string[] = [];
+  for (const node of workflow.nodes) {
+    if (node.data.issueId) {
+      relatedIssueIds.push(node.data.issueId);
+      try {
+        await ctx.issues.createComment(
+          node.data.issueId,
+          `## 🚀 Workflow Run: ${runId}\n**Product Owner Requirement:**\n${cleanReq}\n\n*Assigned Step:* ${node.data.title}`,
+          companyId
+        );
+      } catch {
+        // Comment creation best-effort
+      }
+    }
+  }
+
+  for (const node of workflow.nodes) {
+    if (node.data.kind === "start") continue;
+    const incoming = incomingMap.get(node.id) ?? [];
+    const allPredDone = incoming.every((predId) => nodeExecutionStates[predId]?.status === "done");
+    if (allPredDone) {
+      if (node.data.kind === "task") {
+        nodeExecutionStates[node.id].status = "ready";
+      } else if (node.data.kind === "parallel") {
+        nodeExecutionStates[node.id].status = "done";
+        nodeExecutionStates[node.id].finishedAt = now;
+      }
+    }
+  }
+
+  let activeCount = 0;
+  let firstStepTitle = "";
+  for (const node of workflow.nodes) {
+    if (nodeExecutionStates[node.id]?.status === "ready" && activeCount < runSettings.maxConcurrentAgents) {
+      nodeExecutionStates[node.id].status = "running";
+      nodeExecutionStates[node.id].startedAt = now;
+      activeCount += 1;
+      if (!firstStepTitle) firstStepTitle = node.data.title;
+
+      if (node.data.issueId) {
+        try {
+          await ctx.issues.requestWakeup(
+            node.data.issueId,
+            companyId,
+            {
+              reason: `Workflow run ${runId} started - executing initial step ${node.data.title}`,
+              actorUserId: actionContext.actor.userId ?? undefined
+            }
+          );
+        } catch (wakeupErr) {
+          history.push({
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            level: "warn",
+            message: `Could not send wakeup request for ${node.data.title}: ${asMessage(wakeupErr)}`,
+            nodeId: node.id
+          });
+        }
+      }
+
+      history.push({
+        id: randomUUID(),
+        timestamp: new Date().toISOString(),
+        level: "action",
+        message: `Step 1 started: ${node.data.title} assigned to ${node.data.agentName ?? 'AI Agent'}. (Concurrency: ${activeCount}/${runSettings.maxConcurrentAgents})`,
+        nodeId: node.id,
+        agentId: node.data.agentId ?? undefined,
+        issueId: node.data.issueId ?? undefined
+      });
+    }
+  }
+
+  const runRecord: WorkflowRunRecord = {
+    id: runId,
+    workflowId: workflow.id,
+    workflowVersion: workflow.version,
+    workflowName: workflow.name,
+    projectId,
+    projectName: project.name,
+    companyId,
+    initiatorUserId: actionContext.actor.userId ?? null,
+    inputRequirement: cleanReq,
+    status: "running",
+    settings: runSettings,
+    startedAt: now,
+    finishedAt: null,
+    pausedAt: null,
+    nodeExecutionStates,
+    relatedIssueIds,
+    executionHistory: history,
+    workflowSnapshot: workflow,
+    currentStepTitle: firstStepTitle || "Starting workflow",
+    updatedAt: now
+  };
+
+  await persistRun(ctx, runRecord);
+  await ctx.activity.log({
+    companyId,
+    message: `Started project workflow "${workflow.name}" for "${project.name}" (Run ${runId})`,
+    entityType: "workflow",
+    entityId: workflow.id,
+    metadata: { runId, projectId, requirement: cleanReq.slice(0, 100) }
+  });
+
+  return { run: runRecord };
+}
+
+async function stepWorkflowRun(
+  ctx: PluginContext,
+  companyId: string,
+  runId: string,
+  actionContext?: PluginPerformActionContext
+): Promise<{ run: WorkflowRunRecord }> {
+  const run = await readRun(ctx, companyId, runId);
+  if (!run) throw new Error(`Workflow run ${runId} not found`);
+
+  if (run.status !== "running" && run.status !== "waiting_approval") {
+    return { run };
+  }
+
+  const now = new Date().toISOString();
+  let modified = false;
+
+  const incomingMap = new Map<string, string[]>();
+  for (const n of run.workflowSnapshot.nodes) incomingMap.set(n.id, []);
+  for (const e of run.workflowSnapshot.edges) incomingMap.get(e.target)?.push(e.source);
+
+  for (const node of run.workflowSnapshot.nodes) {
+    const state = run.nodeExecutionStates[node.id];
+    if (!state) continue;
+
+    if (state.status === "running" && state.issueId) {
+      try {
+        const issue = await ctx.issues.get(state.issueId, companyId);
+        if (issue) {
+          if (issue.status === "done") {
+            state.status = "done";
+            state.finishedAt = now;
+            modified = true;
+            run.executionHistory.push({
+              id: randomUUID(),
+              timestamp: now,
+              level: "info",
+              message: `Step completed: "${state.title}" (${state.agentName ?? "Agent"}).`,
+              nodeId: node.id,
+              agentId: state.agentId ?? undefined,
+              issueId: state.issueId
+            });
+          } else if (issue.status === "cancelled" || issue.status === "blocked") {
+            if (state.retryCount < (run.settings.maxRetries ?? 3) && run.settings.retryPolicy === "bounded") {
+              state.retryCount += 1;
+              state.status = "ready";
+              modified = true;
+              run.executionHistory.push({
+                id: randomUUID(),
+                timestamp: now,
+                level: "warn",
+                message: `Step "${state.title}" reported failure. Bounded retry ${state.retryCount}/${run.settings.maxRetries ?? 3}.`,
+                nodeId: node.id,
+                issueId: state.issueId
+              });
+            } else {
+              state.status = "failed";
+              state.error = `Task ${issue.identifier ?? issue.id} ended in status ${issue.status}.`;
+              modified = true;
+              if (run.settings.failurePolicy === "pause_and_report") {
+                run.status = "paused";
+                run.pausedAt = now;
+              }
+              run.executionHistory.push({
+                id: randomUUID(),
+                timestamp: now,
+                level: "error",
+                message: `Step "${state.title}" failed. ${run.settings.failurePolicy === "pause_and_report" ? "Workflow paused for PO review." : ""}`,
+                nodeId: node.id,
+                issueId: state.issueId
+              });
+            }
+          }
+        }
+      } catch {
+        // ignore issue poll error
+      }
+    }
+  }
+
+  if (run.status === "running" || run.status === "waiting_approval") {
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (const node of run.workflowSnapshot.nodes) {
+        const state = run.nodeExecutionStates[node.id];
+        if (!state) continue;
+        if (state.status === "done" || state.status === "running" || state.status === "waiting_approval") continue;
+
+        const incoming = incomingMap.get(node.id) ?? [];
+        const allPredDone = incoming.length > 0 && incoming.every((predId) => run.nodeExecutionStates[predId]?.status === "done");
+
+        if (allPredDone) {
+          if (node.data.kind === "task") {
+            if (state.status === "pending" || state.status === "blocked") {
+              state.status = "ready";
+              modified = true;
+              progressed = true;
+            }
+          } else if (node.data.kind === "approval") {
+            if (state.status === "pending" || state.status === "blocked") {
+              state.status = "waiting_approval";
+              run.status = "waiting_approval";
+              modified = true;
+              progressed = true;
+              run.currentStepTitle = `Waiting Approval: ${state.title}`;
+              run.executionHistory.push({
+                id: randomUUID(),
+                timestamp: now,
+                level: "approval",
+                message: `Workflow waiting for Product Owner approval at gate: "${state.title}".`,
+                nodeId: node.id
+              });
+            }
+          } else if (node.data.kind === "parallel" || node.data.kind === "join") {
+            state.status = "done";
+            state.finishedAt = now;
+            modified = true;
+            progressed = true;
+          } else if (node.data.kind === "end") {
+            state.status = "done";
+            state.finishedAt = now;
+            modified = true;
+            progressed = true;
+
+            const allRequiredDone = Object.values(run.nodeExecutionStates).every(
+              (s) => s.kind === "start" || s.kind === "end" || s.kind === "parallel" || s.kind === "join" || s.status === "done"
+            );
+            if (allRequiredDone) {
+              run.status = "completed";
+              run.finishedAt = now;
+              run.currentStepTitle = "Workflow completed";
+              run.executionHistory.push({
+                id: randomUUID(),
+                timestamp: now,
+                level: "action",
+                message: `All workflow tasks and quality gates completed successfully! Project deliverable ready.`
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (run.status === "running") {
+    const currentRunning = Object.values(run.nodeExecutionStates).filter((s) => s.status === "running").length;
+    let availableSlots = Math.max(0, run.settings.maxConcurrentAgents - currentRunning);
+
+    for (const node of run.workflowSnapshot.nodes) {
+      const state = run.nodeExecutionStates[node.id];
+      if (state && state.status === "ready" && availableSlots > 0) {
+        state.status = "running";
+        state.startedAt = now;
+        availableSlots -= 1;
+        modified = true;
+        run.currentStepTitle = state.title;
+
+        if (state.issueId) {
+          try {
+            await ctx.issues.requestWakeup(
+              state.issueId,
+              companyId,
+              {
+                reason: `Workflow run ${runId} - executing step ${state.title}`,
+                actorUserId: actionContext?.actor.userId ?? undefined
+              }
+            );
+          } catch (wakeupErr) {
+            run.executionHistory.push({
+              id: randomUUID(),
+              timestamp: now,
+              level: "warn",
+              message: `Wakeup trigger warning for ${state.title}: ${asMessage(wakeupErr)}`,
+              nodeId: node.id
+            });
+          }
+        }
+
+        run.executionHistory.push({
+          id: randomUUID(),
+          timestamp: now,
+          level: "action",
+          message: `Dispatching step: "${state.title}" to ${state.agentName ?? "Agent"}. (Running: ${currentRunning + 1}/${run.settings.maxConcurrentAgents})`,
+          nodeId: node.id,
+          agentId: state.agentId ?? undefined,
+          issueId: state.issueId ?? undefined
+        });
+      }
+    }
+  }
+
+  if (modified) {
+    run.updatedAt = now;
+    await persistRun(ctx, run);
+  }
+
+  return { run };
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     ctx.data.register("bootstrap", async (params): Promise<BootstrapData> => {
       const companyId = requiredString(params.companyId, "companyId");
       const projectId = optionalString(params.projectId);
-      const [projects, agents, issues, workflows] = await Promise.all([
+      const [projects, agents, issues, workflows, runs] = await Promise.all([
         ctx.projects.list({ companyId, limit: 200, offset: 0 }),
         ctx.agents.list({ companyId, limit: 200, offset: 0 }),
         ctx.issues.list({ companyId, projectId: projectId ?? undefined, limit: 500, offset: 0 }),
-        readIndex(ctx, companyId)
+        readIndex(ctx, companyId),
+        readRunsIndex(ctx, companyId)
       ]);
       return {
         projects: projects as unknown as Project[],
         agents: agents as unknown as Agent[],
         issues: issues as unknown as Issue[],
-        workflows
+        workflows,
+        runs
       } as unknown as BootstrapData;
     });
 
@@ -442,20 +1048,57 @@ const plugin = definePlugin({
     ctx.data.register("project-workflow", async (params): Promise<ProjectWorkflowData> => {
       const companyId = requiredString(params.companyId, "companyId");
       const projectId = requiredString(params.projectId, "projectId");
-      const [project, workflows, agents, binding] = await Promise.all([
+      const [project, workflows, agents, binding, allRuns] = await Promise.all([
         ctx.projects.get(projectId, companyId),
         readIndex(ctx, companyId),
         ctx.agents.list({ companyId, limit: 200, offset: 0 }),
-        readProjectBinding(ctx, projectId)
+        readProjectBinding(ctx, projectId),
+        readRunsIndex(ctx, companyId)
       ]);
       if (!project) throw new Error("Project not found");
+      const recentRuns = allRuns.filter((r) => r.projectId === projectId);
+      const activeSummary = recentRuns.find((r) => r.status === "running" || r.status === "waiting_approval");
+      const activeRun = activeSummary ? await readRun(ctx, companyId, activeSummary.id) : null;
       return {
         project: project as unknown as ProjectWorkflowData["project"],
         workflows,
         agents: agents as unknown as ProjectWorkflowData["agents"],
         binding,
-        monitor: binding ? await monitorWorkflow(ctx, binding.workflow) : []
+        monitor: binding ? await monitorWorkflow(ctx, binding.workflow) : [],
+        activeRun,
+        recentRuns
       };
+    });
+
+    ctx.data.register("runs-list", async (params): Promise<WorkflowRunSummary[]> => {
+      const companyId = requiredString(params.companyId, "companyId");
+      const projectId = optionalString(params.projectId);
+      const all = await readRunsIndex(ctx, companyId);
+      return projectId ? all.filter((r) => r.projectId === projectId) : all;
+    });
+
+    ctx.data.register("workflow-run", async (params) => {
+      const companyId = requiredString(params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const run = await readRun(ctx, companyId, runId);
+      if (!run) throw new Error("Workflow run not found");
+      const monitor = await monitorWorkflow(ctx, run.workflowSnapshot);
+      return { run, monitor };
+    });
+
+    ctx.data.register("preflight-check", async (params): Promise<PreflightCheckResult> => {
+      const companyId = requiredString(params.companyId, "companyId");
+      const projectId = requiredString(params.projectId, "projectId");
+      const workflowId = requiredString(params.workflowId, "workflowId");
+      let workflow = await readWorkflow(ctx, companyId, workflowId);
+      if (!workflow) {
+        const binding = await readProjectBinding(ctx, projectId);
+        if (binding && binding.workflow.id === workflowId) {
+          workflow = binding.workflow;
+        }
+      }
+      if (!workflow) throw new Error("Workflow not found");
+      return checkPreflight(ctx, companyId, projectId, workflow);
     });
 
     ctx.actions.register("create-template", async (params, actionContext) => {
@@ -617,6 +1260,256 @@ const plugin = definePlugin({
     ctx.actions.register("publish-workflow", async (params, actionContext) => {
       const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
       return publishWorkflow(ctx, companyId, requiredString(params.workflowId, "workflowId"), Number(params.expectedVersion), actionContext);
+    });
+
+    ctx.actions.register("preflight-check", async (params) => {
+      const companyId = requiredString(params.companyId, "companyId");
+      const projectId = requiredString(params.projectId, "projectId");
+      const workflowId = requiredString(params.workflowId, "workflowId");
+      let workflow = await readWorkflow(ctx, companyId, workflowId);
+      if (!workflow) {
+        const binding = await readProjectBinding(ctx, projectId);
+        if (binding && binding.workflow.id === workflowId) {
+          workflow = binding.workflow;
+        }
+      }
+      if (!workflow) throw new Error("Workflow not found");
+      return checkPreflight(ctx, companyId, projectId, workflow);
+    });
+
+    ctx.actions.register("start-project-workflow", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const projectId = requiredString(params.projectId, "projectId");
+      const workflowId = requiredString(params.workflowId, "workflowId");
+      const inputRequirement = requiredString(params.inputRequirement, "inputRequirement");
+      const settings = (params.settings && typeof params.settings === "object" ? params.settings : {}) as WorkflowRunSettings;
+      return startProjectWorkflow(ctx, companyId, projectId, workflowId, inputRequirement, settings, actionContext);
+    });
+
+    ctx.actions.register("step-workflow-run", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      return stepWorkflowRun(ctx, companyId, runId, actionContext);
+    });
+
+    ctx.actions.register("pause-workflow-run", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const run = await readRun(ctx, companyId, runId);
+      if (!run) throw new Error("Workflow run not found");
+      const now = new Date().toISOString();
+      run.status = "paused";
+      run.pausedAt = now;
+      run.updatedAt = now;
+      run.executionHistory.push({
+        id: randomUUID(),
+        timestamp: now,
+        level: "action",
+        message: "Workflow run paused by Product Owner. Running agents will complete current step; next steps are held."
+      });
+      await persistRun(ctx, run);
+      return { run };
+    });
+
+    ctx.actions.register("resume-workflow-run", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const run = await readRun(ctx, companyId, runId);
+      if (!run) throw new Error("Workflow run not found");
+      const now = new Date().toISOString();
+      run.status = "running";
+      run.pausedAt = null;
+      run.updatedAt = now;
+      run.executionHistory.push({
+        id: randomUUID(),
+        timestamp: now,
+        level: "action",
+        message: "Workflow run resumed by Product Owner."
+      });
+      await persistRun(ctx, run);
+      return stepWorkflowRun(ctx, companyId, runId, actionContext);
+    });
+
+    ctx.actions.register("stop-workflow-run", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const run = await readRun(ctx, companyId, runId);
+      if (!run) throw new Error("Workflow run not found");
+      const now = new Date().toISOString();
+      run.status = "cancelled";
+      run.finishedAt = now;
+      run.updatedAt = now;
+      for (const state of Object.values(run.nodeExecutionStates)) {
+        if (state.status === "running" || state.status === "ready" || state.status === "pending") {
+          state.status = "skipped";
+        }
+      }
+      run.executionHistory.push({
+        id: randomUUID(),
+        timestamp: now,
+        level: "action",
+        message: "Workflow run stopped by Product Owner. Related tasks stopped; other project executions preserved."
+      });
+      await persistRun(ctx, run);
+      return { run };
+    });
+
+    ctx.actions.register("retry-failed-step", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const nodeId = requiredString(params.nodeId, "nodeId");
+      const run = await readRun(ctx, companyId, runId);
+      if (!run) throw new Error("Workflow run not found");
+      const state = run.nodeExecutionStates[nodeId];
+      if (!state) throw new Error(`Node ${nodeId} not found in run`);
+      state.status = "ready";
+      state.error = null;
+      if (run.status === "paused") {
+        run.status = "running";
+        run.pausedAt = null;
+      }
+      const now = new Date().toISOString();
+      run.updatedAt = now;
+      run.executionHistory.push({
+        id: randomUUID(),
+        timestamp: now,
+        level: "action",
+        message: `Retry initiated for step "${state.title}" (${state.agentName ?? "Agent"}).`
+      });
+      await persistRun(ctx, run);
+      return stepWorkflowRun(ctx, companyId, runId, actionContext);
+    });
+
+    ctx.actions.register("decide-run-approval", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const nodeId = requiredString(params.nodeId, "nodeId");
+      const decision = requiredString(params.decision, "decision");
+      const notes = optionalString(params.notes) ?? (decision === "approve" ? "Approved by Product Owner" : "Revision requested by Product Owner");
+
+      const run = await readRun(ctx, companyId, runId);
+      if (!run) throw new Error("Workflow run not found");
+      const state = run.nodeExecutionStates[nodeId];
+      if (!state) throw new Error(`Node ${nodeId} not found in run`);
+
+      const now = new Date().toISOString();
+      if (decision === "approve") {
+        state.status = "done";
+        state.finishedAt = now;
+        if (run.status === "waiting_approval") {
+          run.status = "running";
+        }
+        run.executionHistory.push({
+          id: randomUUID(),
+          timestamp: now,
+          level: "approval",
+          message: `Product Owner approved gate "${state.title}". Note: ${notes}`
+        });
+        await persistRun(ctx, run);
+        return stepWorkflowRun(ctx, companyId, runId, actionContext);
+      } else {
+        run.status = "paused";
+        run.pausedAt = now;
+        run.executionHistory.push({
+          id: randomUUID(),
+          timestamp: now,
+          level: "approval",
+          message: `Product Owner requested changes at gate "${state.title}". Workflow paused. Note: ${notes}`
+        });
+        await persistRun(ctx, run);
+        return { run };
+      }
+    });
+
+    ctx.actions.register("agent-control-action", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const action = requiredString(params.action, "action");
+      const agentId = optionalString(params.agentId);
+      const issueId = optionalString(params.issueId);
+
+      const agents = await ctx.agents.list({ companyId, limit: 200, offset: 0 });
+
+      if (action === "pause-all") {
+        const results = await Promise.allSettled(
+          agents.filter((a) => a.status === "active" || a.status === "idle" || a.status === "running").map((a) => ctx.agents.pause(a.id, companyId))
+        );
+        return { action, count: results.filter((r) => r.status === "fulfilled").length };
+      }
+
+      if (action === "resume-all") {
+        const results = await Promise.allSettled(
+          agents.filter((a) => a.status === "paused").map((a) => ctx.agents.resume(a.id, companyId))
+        );
+        return { action, count: results.filter((r) => r.status === "fulfilled").length };
+      }
+
+      if (action === "start-all") {
+        const issues = await ctx.issues.list({ companyId, limit: 500, offset: 0 });
+        const runnable = issues.filter((i) => i.assigneeAgentId && ["todo", "backlog"].includes(i.status));
+        const results = await Promise.allSettled(
+          runnable.map((issue) =>
+            ctx.issues.requestWakeup(issue.id, companyId, {
+              reason: "Agent Control Center: Start All requested",
+              actorUserId: actionContext.actor.userId
+            })
+          )
+        );
+        return { action, count: results.filter((r) => r.status === "fulfilled").length };
+      }
+
+      if (action === "stop-all") {
+        const results = await Promise.allSettled(
+          agents.filter((a) => a.status === "running").map((a) => ctx.agents.pause(a.id, companyId))
+        );
+        return { action, count: results.filter((r) => r.status === "fulfilled").length };
+      }
+
+      if (action === "retry-failed") {
+        const issues = await ctx.issues.list({ companyId, limit: 500, offset: 0 });
+        const failed = issues.filter((i) => i.assigneeAgentId && (i.status === "cancelled" || i.status === "blocked"));
+        const results = await Promise.allSettled(
+          failed.map((issue) =>
+            ctx.issues.requestWakeup(issue.id, companyId, {
+              reason: "Agent Control Center: Retry Failed requested",
+              actorUserId: actionContext.actor.userId
+            })
+          )
+        );
+        return { action, count: results.filter((r) => r.status === "fulfilled").length };
+      }
+
+      if (action === "agent-pause" && agentId) {
+        const agent = await ctx.agents.pause(agentId, companyId);
+        return { action, agent };
+      }
+
+      if (action === "agent-resume" && agentId) {
+        const agent = await ctx.agents.resume(agentId, companyId);
+        return { action, agent };
+      }
+
+      if (action === "agent-wakeup" && agentId) {
+        if (issueId) {
+          const res = await ctx.issues.requestWakeup(issueId, companyId, {
+            reason: `Agent Control Center: Wakeup requested for ${agentId}`,
+            actorUserId: actionContext.actor.userId
+          });
+          return { action, res };
+        } else {
+          const issues = await ctx.issues.list({ companyId, assigneeAgentId: agentId, limit: 50, offset: 0 });
+          const runnable = issues.find((i) => ["todo", "backlog", "in_progress"].includes(i.status));
+          if (runnable) {
+            const res = await ctx.issues.requestWakeup(runnable.id, companyId, {
+              reason: `Agent Control Center: Wakeup requested for ${agentId}`,
+              actorUserId: actionContext.actor.userId
+            });
+            return { action, res, issueId: runnable.id };
+          }
+          return { action, message: "No runnable issue currently assigned to agent" };
+        }
+      }
+
+      throw new Error(`Unknown agent control action: ${action}`);
     });
   },
 

@@ -90,6 +90,27 @@ test("no assigned work ends as waiting without dispatching AI", async () => {
   } finally { globalThis.fetch = original; }
 });
 
+test("company Run now hands off to an issue-scoped run without cross-issue writes", async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(url).pathname;
+    calls.push({ path, options });
+    if (path.endsWith("/heartbeat/invoke")) return Response.json({ id: "scoped-run", status: "queued" });
+    return Response.json(path.includes("/companies/") ? [assigned] : assigned);
+  };
+  try {
+    const result = await execute(ctx);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.resultJson.scopedRunId, "scoped-run");
+    const mutation = calls.filter((call) => call.options.method === "POST");
+    assert.equal(mutation.length, 1);
+    assert.equal(mutation[0].path, "/api/agents/pm/heartbeat/invoke");
+    assert.equal(JSON.parse(mutation[0].options.body).payload.issueId, "task");
+    assert.ok(!calls.some((call) => call.path.endsWith("/checkout") || call.path === "/run"));
+  } finally { globalThis.fetch = original; }
+});
+
 test("real task lifecycle checks out, posts output and updates only its own issue", async () => {
   const original = globalThis.fetch;
   const calls = [];
@@ -103,7 +124,7 @@ test("real task lifecycle checks out, posts output and updates only its own issu
     return Response.json(assigned);
   };
   try {
-    const result = await execute(ctx);
+    const result = await execute({ ...ctx, context: { issueId: "task" } });
     assert.equal(result.exitCode, 0);
     assert.equal(result.resultJson.issueIdentifier, "AIS-3");
     const checkout = calls.find((call) => call.path.endsWith("/checkout"));
@@ -114,6 +135,20 @@ test("real task lifecycle checks out, posts output and updates only its own issu
     const update = calls.find((call) => call.options.method === "PATCH");
     assert.equal(update.path, "/api/issues/task");
     assert.equal(update.body.status, "done");
+  } finally { globalThis.fetch = original; }
+});
+
+test("a rejected task wake is never presented as successfully scheduled", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith("/heartbeat/invoke")) return Response.json({ status: "skipped" });
+    return Response.json(path.includes("/companies/") ? [assigned] : assigned);
+  };
+  try {
+    const result = await execute(ctx);
+    assert.equal(result.exitCode, 1);
+    assert.match(result.summary, /did not admit/);
   } finally { globalThis.fetch = original; }
 });
 
@@ -129,8 +164,28 @@ test("gateway failure is reported without marking a task done", async () => {
     return Response.json(assigned);
   };
   try {
-    const result = await execute(ctx);
+    const result = await execute({ ...ctx, context: { issueId: "task" } });
     assert.equal(result.exitCode, 1);
     assert.ok(!calls.some((call) => call.options.method === "PATCH"));
+  } finally { globalThis.fetch = original; }
+});
+
+test("a model-reported blocker includes Paperclip's required unblock descriptor", async () => {
+  const original = globalThis.fetch;
+  let update;
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(url).pathname;
+    if (options.method === "PATCH") update = JSON.parse(options.body);
+    if (path === "/run") return Response.json({ status: "completed", events: [{ type: "item.completed", item: { type: "agent_message", text: 'Missing project codebase\n<paperclip-result>{"status":"blocked"}</paperclip-result>' } }] });
+    if (path.endsWith("/comments")) return Response.json(options.method === "POST" ? { id: "comment" } : []);
+    return Response.json(assigned);
+  };
+  try {
+    const result = await execute({ ...ctx, context: { issueId: "task" } });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.resultJson.taskStatus, "blocked");
+    assert.equal(update.status, "blocked");
+    assert.equal(update.unblockDescriptor.owner, "board");
+    assert.ok(update.unblockDescriptor.action.trim());
   } finally { globalThis.fetch = original; }
 });

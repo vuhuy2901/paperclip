@@ -62,7 +62,12 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Trash2,
-  X
+  X,
+  Pause,
+  RotateCcw,
+  FileText,
+  ShieldAlert,
+  ExternalLink
 } from "lucide-react";
 import {
   useHostNavigation,
@@ -78,6 +83,7 @@ import type {
   BootstrapData,
   MonitorNode,
   PaperclipAgent,
+  PaperclipProject,
   ProjectWorkflowData,
   ValidationIssue,
   ValidationResult,
@@ -87,11 +93,17 @@ import type {
   WorkflowIndexEntry,
   WorkflowNode,
   WorkflowNodeData,
-  WorkflowNodeKind
+  WorkflowNodeKind,
+  WorkflowRunRecord,
+  WorkflowRunSummary,
+  WorkflowRunStatus,
+  PreflightCheckResult,
+  NodeExecutionState,
+  WorkflowRunSettings
 } from "../types.js";
 import { studioStyles } from "./styles.js";
 
-type StudioMode = "designer" | "monitor" | "templates";
+type StudioMode = "designer" | "monitor" | "templates" | "control-center";
 type FlowNode = Node<WorkflowNodeData, "workflowNode">;
 type FlowEdge = Edge<Record<string, never>, "smoothstep">;
 type DesignerContextMenu =
@@ -140,7 +152,17 @@ function nodeIcon(kind: WorkflowNodeKind): React.ReactNode {
 function WorkflowCardNode({ data, selected }: NodeProps<FlowNode>) {
   const avatarUrl = typeof data.avatarUrl === "string" ? data.avatarUrl : null;
   const isTask = data.kind === "task" || data.kind === "approval";
-  const stateClass = ["running", "in_progress"].includes(data.status) ? "running" : ["error", "failed"].includes(data.status) ? "error" : "";
+  const stateClass = ["running", "in_progress"].includes(data.status)
+    ? "running"
+    : ["error", "failed"].includes(data.status)
+    ? "error"
+    : data.status === "waiting_approval"
+    ? "waiting_approval"
+    : ["done", "completed"].includes(data.status)
+    ? "completed"
+    : data.status === "blocked"
+    ? "blocked"
+    : "";
   return (
     <div className={`wfs-node ${selected ? "selected" : ""} ${stateClass}`}>
       {data.kind !== "start" && <Handle className="wfs-handle target" type="target" position={Position.Left} />}
@@ -171,20 +193,28 @@ function WorkflowCardNode({ data, selected }: NodeProps<FlowNode>) {
 
 const nodeTypes = { workflowNode: WorkflowCardNode };
 
-function workflowToNodes(workflow: WorkflowDefinition, agents: PaperclipAgent[], monitor: MonitorNode[] = []): FlowNode[] {
+function workflowToNodes(
+  workflow: WorkflowDefinition,
+  agents: PaperclipAgent[],
+  monitor: MonitorNode[] = [],
+  runNodeStates?: Record<string, NodeExecutionState>
+): FlowNode[] {
   const byAgent = new Map(agents.map((agent) => [agent.id, agent]));
   const byNode = new Map(monitor.map((item) => [item.nodeId, item]));
   return workflow.nodes.map((node) => {
     const agent = node.data.agentId ? byAgent.get(node.data.agentId) : null;
     const live = byNode.get(node.id);
+    const runState = runNodeStates ? runNodeStates[node.id] : null;
+    const status = runState?.status ?? live?.issue?.status ?? node.data.status;
+    const issueIdentifier = runState?.issueIdentifier ?? live?.issue?.identifier ?? node.data.issueIdentifier;
     return {
       ...node,
       data: {
         ...node.data,
-        status: live?.issue?.status ?? node.data.status,
-        issueIdentifier: live?.issue?.identifier ?? node.data.issueIdentifier,
-        agentName: agent?.name ?? node.data.agentName,
-        agentRole: agent?.title ?? agent?.role ?? node.data.agentRole,
+        status,
+        issueIdentifier,
+        agentName: runState?.agentName ?? agent?.name ?? node.data.agentName,
+        agentRole: runState?.agentRole ?? agent?.title ?? agent?.role ?? node.data.agentRole,
         model: typeof agent?.adapterConfig?.model === "string" ? agent.adapterConfig.model : node.data.model,
         avatarUrl: agent?.avatarUrl ?? agent?.icon ?? null
       }
@@ -416,7 +446,8 @@ function DesignerCanvas({
   publishAction,
   refreshBootstrap,
   selectWorkflow,
-  switchMode
+  switchMode,
+  onOpenRunModal
 }: {
   bootstrap: BootstrapData;
   initial: WorkflowDefinition;
@@ -428,6 +459,7 @@ function DesignerCanvas({
   refreshBootstrap: () => void;
   selectWorkflow: (id: string) => void;
   switchMode: (mode: StudioMode) => void;
+  onOpenRunModal?: (workflowId?: string) => void;
 }) {
   const toast = usePluginToast();
   const navigation = useHostNavigation();
@@ -847,6 +879,32 @@ function DesignerCanvas({
         <button className="wfs-button" onClick={() => autoLayout()} title="Arrange nodes"><LayoutDashboard size={14} /><span>Auto layout</span></button>
         <button className="wfs-button wfs-icon-button" onClick={fitAll} title="Fit all"><Maximize2 size={14} /></button>
         <button className="wfs-button wfs-button-primary" onClick={() => void save()} disabled={busy || !dirty} title="Save workflow"><Save size={14} /><span>Save</span></button>
+        {workflow.status === "published" ? (
+          <button
+            className="wfs-button wfs-button-run"
+            onClick={() => onOpenRunModal ? onOpenRunModal(workflow.id) : undefined}
+            title="Run Project Workflow"
+          >
+            <Play size={14} />
+            <span>▶ Run Workflow</span>
+          </button>
+        ) : (
+          <button
+            className="wfs-button"
+            onClick={() => {
+              toast({
+                title: "Draft Workflow",
+                body: "Validate and publish this workflow before running it.",
+                tone: "warn"
+              });
+              void preparePublish();
+            }}
+            title="Validate & publish before running"
+          >
+            <Rocket size={14} />
+            <span>Publish to Run</span>
+          </button>
+        )}
         <div className="wfs-menu-anchor"><button className="wfs-button wfs-icon-button" onClick={() => setMoreOpen((value) => !value)} title="More actions"><MoreHorizontal size={15} /></button>{moreOpen && <div className="wfs-popover wfs-toolbar-popover">
           <button onClick={() => { void validate(); setMoreOpen(false); }}><Check size={14} /> Validate</button>
           <button onClick={() => { requestNavigation(() => void duplicateWorkflow(workflow.id), "the duplicated workflow"); setMoreOpen(false); }}><Copy size={14} /> Duplicate workflow</button>
@@ -906,42 +964,922 @@ function DesignerCanvas({
   </div>;
 }
 
-function MonitorCanvas({ bootstrap, data, refresh }: { bootstrap: BootstrapData; data: WorkflowData; refresh: () => void }) {
+function MonitorCanvas({
+  bootstrap,
+  data,
+  refresh,
+  companyId,
+  runId
+}: {
+  bootstrap: BootstrapData;
+  data: WorkflowData;
+  refresh: () => void;
+  companyId?: string;
+  runId?: string | null;
+}) {
   const navigation = useHostNavigation();
+  const toast = usePluginToast();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const nodes = useMemo(() => workflowToNodes(data.workflow, bootstrap.agents, data.monitor), [data.workflow, data.monitor, bootstrap.agents]);
-  const edges = useMemo(() => workflowToEdges(data.workflow.edges), [data.workflow.edges]);
-  const monitorByNode = useMemo(() => new Map(data.monitor.map((item) => [item.nodeId, item])), [data.monitor]);
-  const issues = data.monitor.flatMap((item) => item.issue ? [item.issue] : []);
-  const done = issues.filter((issue) => issue.status === "done").length;
-  const running = issues.filter((issue) => issue.status === "in_progress").length;
-  const blocked = issues.filter((issue) => issue.status === "blocked").length;
-  const progress = issues.length ? Math.round(done / issues.length * 100) : 0;
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [busyAction, setBusyAction] = useState(false);
+
+  const runParams = useMemo(() => (runId && companyId ? { companyId, runId } : undefined), [companyId, runId]);
+  const runData = usePluginData<{ run: WorkflowRunRecord; monitor: MonitorNode[] }>("workflow-run", runParams);
+
+  const stepAction = usePluginAction("step-workflow-run");
+  const pauseAction = usePluginAction("pause-workflow-run");
+  const resumeAction = usePluginAction("resume-workflow-run");
+  const stopAction = usePluginAction("stop-workflow-run");
+  const retryAction = usePluginAction("retry-failed-step");
+  const approvalAction = usePluginAction("decide-run-approval");
+
+  const run = runData.data?.run ?? null;
+  const currentWorkflow = run ? run.workflowSnapshot : data.workflow;
+  const currentMonitor = runData.data?.monitor ?? data.monitor;
+
+  const nodes = useMemo(
+    () => workflowToNodes(currentWorkflow, bootstrap.agents, currentMonitor, run?.nodeExecutionStates),
+    [currentWorkflow, bootstrap.agents, currentMonitor, run?.nodeExecutionStates]
+  );
+  const edges = useMemo(() => workflowToEdges(currentWorkflow.edges), [currentWorkflow.edges]);
+  const monitorByNode = useMemo(() => new Map(currentMonitor.map((item) => [item.nodeId, item])), [currentMonitor]);
+
+  // Elapsed time calculation
+  const [elapsed, setElapsed] = useState("00:00");
   useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 8000);
+    if (!run?.startedAt) return;
+    const calc = () => {
+      const start = new Date(run.startedAt).getTime();
+      const end = run.finishedAt ? new Date(run.finishedAt).getTime() : Date.now();
+      const diff = Math.max(0, Math.floor((end - start) / 1000));
+      const m = Math.floor(diff / 60);
+      const s = diff % 60;
+      setElapsed(`${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`);
+    };
+    calc();
+    if (!run.finishedAt) {
+      const timer = window.setInterval(calc, 1000);
+      return () => window.clearInterval(timer);
+    }
+  }, [run?.startedAt, run?.finishedAt]);
+
+  // Autonomous background runner: step workflow while running
+  useEffect(() => {
+    if (!run || !runId || !companyId) return;
+    if (run.status !== "running" && run.status !== "pending") return;
+    const interval = window.setInterval(async () => {
+      if (document.visibilityState === "visible") {
+        try {
+          await stepAction({ companyId, runId });
+          runData.refresh();
+        } catch {
+          // ignore transient poll error
+        }
+      }
+    }, 3500);
+    return () => window.clearInterval(interval);
+  }, [run?.status, runId, companyId, stepAction, runData.refresh]);
+
+  // Regular monitor refresh if not in run mode
+  useEffect(() => {
+    if (runId) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") refresh();
+    }, 8000);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [runId, refresh]);
+
+  // Metrics
+  const nodeStates = run ? Object.values(run.nodeExecutionStates) : [];
+  const running = run
+    ? nodeStates.filter((s) => s.status === "running").length
+    : data.monitor.filter((m) => m.issue?.status === "in_progress").length;
+  const done = run
+    ? nodeStates.filter((s) => s.status === "done").length
+    : data.monitor.filter((m) => m.issue?.status === "done").length;
+  const blocked = run
+    ? nodeStates.filter((s) => s.status === "blocked").length
+    : data.monitor.filter((m) => m.issue?.status === "blocked").length;
+  const failed = run
+    ? nodeStates.filter((s) => s.status === "failed").length
+    : data.monitor.filter((m) => m.issue?.status === "cancelled").length;
+  const total = run
+    ? nodeStates.filter((s) => s.kind === "task" || s.kind === "approval").length
+    : data.monitor.length;
+  const progress = total ? Math.round((done / total) * 100) : 0;
+
+  // Check waiting approval gate
+  const approvalGateNode = run ? nodeStates.find((s) => s.status === "waiting_approval") : null;
+
+  const handlePause = async () => {
+    if (!runId || !companyId) return;
+    setBusyAction(true);
+    try {
+      await pauseAction({ companyId, runId });
+      runData.refresh();
+      toast({ title: "Workflow Paused", body: "Next steps are held. Current executions will complete.", tone: "warn" });
+    } catch (e) {
+      toast({ title: "Pause failed", body: asMessage(e), tone: "error" });
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!runId || !companyId) return;
+    setBusyAction(true);
+    try {
+      await resumeAction({ companyId, runId });
+      runData.refresh();
+      toast({ title: "Workflow Resumed", body: "Execution resumed by Product Owner.", tone: "success" });
+    } catch (e) {
+      toast({ title: "Resume failed", body: asMessage(e), tone: "error" });
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleStop = async () => {
+    if (!runId || !companyId) return;
+    setBusyAction(true);
+    try {
+      await stopAction({ companyId, runId });
+      runData.refresh();
+      toast({ title: "Workflow Stopped", body: "Active run cancelled. Other projects and history preserved.", tone: "warn" });
+    } catch (e) {
+      toast({ title: "Stop failed", body: asMessage(e), tone: "error" });
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!runId || !companyId) return;
+    const failedNode = nodeStates.find((s) => s.status === "failed");
+    if (!failedNode) return;
+    setBusyAction(true);
+    try {
+      await retryAction({ companyId, runId, nodeId: failedNode.nodeId });
+      runData.refresh();
+      toast({ title: "Retry Initiated", body: `Step "${failedNode.title}" restarted.`, tone: "success" });
+    } catch (e) {
+      toast({ title: "Retry failed", body: asMessage(e), tone: "error" });
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleDecision = async (decision: "approve" | "reject") => {
+    if (!runId || !companyId || !approvalGateNode) return;
+    setBusyAction(true);
+    try {
+      await approvalAction({ companyId, runId, nodeId: approvalGateNode.nodeId, decision });
+      runData.refresh();
+      toast({
+        title: decision === "approve" ? "Approved by Product Owner" : "Changes Requested",
+        body: decision === "approve" ? "Next tasks unlocked and dispatched." : "Workflow paused for adjustments.",
+        tone: decision === "approve" ? "success" : "warn"
+      });
+    } catch (e) {
+      toast({ title: "Approval decision failed", body: asMessage(e), tone: "error" });
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
   const selected = nodes.find((node) => node.id === selectedNodeId) ?? null;
-  return <div className={`wfs-body ${selected ? "" : "inspector-closed"}`} style={{ gridTemplateColumns: selected ? "minmax(0,1fr) 306px" : "minmax(0,1fr) 0" }}>
-    <main className="wfs-canvas">
-      <div className="wfs-monitor-bar">
-        <div className="wfs-monitor-stat"><span>Progress</span><strong>{progress}%</strong></div><div className="wfs-progress"><span style={{ width: `${progress}%` }} /></div>
-        <div className="wfs-monitor-stat"><span>Running</span><strong>{running}</strong></div>
-        <div className="wfs-monitor-stat"><span>Blocked</span><strong>{blocked}</strong></div>
-        <div className="wfs-monitor-stat"><span>Completed</span><strong>{done}/{issues.length}</strong></div>
-        <div className="wfs-live"><span className="wfs-live-dot" /> Refreshes every 8 seconds</div>
-        <button className="wfs-button wfs-icon-button" onClick={refresh} title="Refresh now"><RefreshCw size={14} /></button>
-      </div>
-      <ReactFlow<FlowNode, FlowEdge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} elementsSelectable onNodeClick={(_, node) => setSelectedNodeId(node.id)} onPaneClick={() => setSelectedNodeId(null)} defaultViewport={data.workflow.viewport} fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.18} maxZoom={1.8}>
-        <Background variant={BackgroundVariant.Dots} gap={18} size={1} /><Controls showInteractive={false} /><MiniMap pannable zoomable />
-      </ReactFlow>
-    </main>
-    {selected && <NodeInspector node={selected} bootstrap={bootstrap} monitor={monitorByNode.get(selected.id)} readOnly updateNode={() => undefined} close={() => setSelectedNodeId(null)} openIssue={(id) => navigation.navigate(`/issues/${id}`)} />}
-  </div>;
+
+  return (
+    <div className={`wfs-body ${selected ? "" : "inspector-closed"}`} style={{ gridTemplateColumns: selected ? "minmax(0,1fr) 306px" : "minmax(0,1fr) 0" }}>
+      <main className="wfs-canvas">
+        {/* Top Monitor Bar */}
+        <div className="wfs-monitor-bar" style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+          {run && (
+            <div className="wfs-monitor-stat">
+              <span>Run ID</span>
+              <strong style={{ fontFamily: "monospace", fontSize: 11 }}>{run.id}</strong>
+            </div>
+          )}
+          <div className="wfs-monitor-stat">
+            <span>Progress</span>
+            <strong>{progress}%</strong>
+          </div>
+          <div className="wfs-progress">
+            <span style={{ width: `${progress}%` }} />
+          </div>
+          <div className="wfs-monitor-stat">
+            <span>Running</span>
+            <strong>{running}</strong>
+          </div>
+          <div className="wfs-monitor-stat">
+            <span>Completed</span>
+            <strong>{done}/{total}</strong>
+          </div>
+          <div className="wfs-monitor-stat">
+            <span>Blocked</span>
+            <strong>{blocked}</strong>
+          </div>
+          {failed > 0 && (
+            <div className="wfs-monitor-stat" style={{ color: "#dc2626" }}>
+              <span>Failed</span>
+              <strong>{failed}</strong>
+            </div>
+          )}
+          {run && (
+            <div className="wfs-monitor-stat">
+              <span>Elapsed</span>
+              <strong>{elapsed}</strong>
+            </div>
+          )}
+
+          {/* Run Controls */}
+          {run && (
+            <div className="wfs-run-controls" style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              {run.status === "running" && (
+                <button className="wfs-button" disabled={busyAction} onClick={handlePause} title="Pause Workflow">
+                  <Pause size={13} /> Pause
+                </button>
+              )}
+              {run.status === "paused" && (
+                <button className="wfs-button wfs-button-primary" disabled={busyAction} onClick={handleResume} title="Resume Workflow">
+                  <Play size={13} /> Resume
+                </button>
+              )}
+              {!["completed", "cancelled"].includes(run.status) && (
+                <button className="wfs-button wfs-button-danger" disabled={busyAction} onClick={handleStop} title="Stop Workflow">
+                  <Square size={13} /> Stop
+                </button>
+              )}
+              {failed > 0 && (
+                <button className="wfs-button" disabled={busyAction} onClick={handleRetry} title="Retry Failed Step">
+                  <RotateCcw size={13} /> Retry Step
+                </button>
+              )}
+              <button className="wfs-button" onClick={() => setLogsOpen((v) => !v)} title="View Execution Logs">
+                <FileText size={13} /> Logs ({run.executionHistory.length})
+              </button>
+            </div>
+          )}
+
+          <button className="wfs-button wfs-icon-button" onClick={() => { if (runId && runParams) runData.refresh(); else refresh(); }} title="Refresh now">
+            <RefreshCw size={14} />
+          </button>
+        </div>
+
+        {/* PO Approval Gate Banner */}
+        {approvalGateNode && (
+          <div
+            className="wfs-approval-banner"
+            style={{
+              position: "absolute",
+              top: 74,
+              left: 16,
+              right: 16,
+              zIndex: 10,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.15)"
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <UserCheck size={20} color="#8b5cf6" />
+              <div>
+                <strong style={{ fontSize: 13 }}>Product Owner Approval Required</strong>
+                <p style={{ margin: "2px 0 0", fontSize: 11, color: "var(--muted-foreground)" }}>
+                  Step <strong>“{approvalGateNode.title}”</strong> requires your sign-off before downstream agents proceed.
+                </p>
+              </div>
+            </div>
+            <div className="wfs-approval-actions">
+              <button
+                className="wfs-button"
+                style={{ borderColor: "#dc2626", color: "#dc2626" }}
+                disabled={busyAction}
+                onClick={() => handleDecision("reject")}
+              >
+                <X size={13} /> Request Changes
+              </button>
+              <button
+                className="wfs-button wfs-button-primary"
+                style={{ background: "#10b981", borderColor: "#059669" }}
+                disabled={busyAction}
+                onClick={() => handleDecision("approve")}
+              >
+                <Check size={13} /> Approve & Continue
+              </button>
+            </div>
+          </div>
+        )}
+
+        <ReactFlow<FlowNode, FlowEdge>
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable
+          onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+          onPaneClick={() => setSelectedNodeId(null)}
+          defaultViewport={currentWorkflow.viewport}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          minZoom={0.18}
+          maxZoom={1.8}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+          <Controls showInteractive={false} />
+          <MiniMap pannable zoomable />
+        </ReactFlow>
+
+        {/* Slide-in Execution Logs Drawer */}
+        {logsOpen && run && (
+          <aside className="wfs-logs-drawer">
+            <div className="wfs-logs-head">
+              <div>
+                <strong>Execution Logs</strong>
+                <span style={{ fontSize: 10, color: "var(--muted-foreground)", display: "block" }}>
+                  Run ID: {run.id}
+                </span>
+              </div>
+              <button className="wfs-button wfs-icon-button" onClick={() => setLogsOpen(false)}>
+                <X size={14} />
+              </button>
+            </div>
+            <div className="wfs-logs-list">
+              {run.executionHistory.length === 0 ? (
+                <div style={{ padding: 16, color: "var(--muted-foreground)", fontSize: 11, textAlign: "center" }}>
+                  No execution logs recorded yet.
+                </div>
+              ) : (
+                [...run.executionHistory].reverse().map((entry) => (
+                  <div key={entry.id} className="wfs-log-entry">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span className={`wfs-badge wfs-badge-${entry.level}`} style={{ fontSize: 9 }}>
+                        {entry.level.toUpperCase()}
+                      </span>
+                      <time className="wfs-log-time">{new Date(entry.timestamp).toLocaleTimeString()}</time>
+                    </div>
+                    <div style={{ marginTop: 2, fontSize: 11, lineHeight: 1.4 }}>{entry.message}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </aside>
+        )}
+      </main>
+
+      {selected && (
+        <NodeInspector
+          node={selected}
+          bootstrap={bootstrap}
+          monitor={monitorByNode.get(selected.id)}
+          readOnly
+          updateNode={() => undefined}
+          close={() => setSelectedNodeId(null)}
+          openIssue={(id) => navigation.navigate(`/issues/${id}`)}
+        />
+      )}
+    </div>
+  );
 }
 
 function TemplatesPage({ exists, open }: { exists: boolean; open: () => Promise<void> }) {
   return <div className="wfs-template-page"><div className="wfs-page-heading"><h2>Workflow templates</h2><p>Reusable process definitions. Projects choose one of these templates from their own Workflow tab.</p></div><div className="wfs-template-card"><div className="wfs-template-top"><div><h3>AI Software Development Lifecycle</h3><p>Plan, design, build, review, test, deploy, and approve with the eight configured agents.</p></div><button className="wfs-button wfs-button-primary" onClick={() => void open()}>{exists ? <Settings2 size={14} /> : <Plus size={14} />} {exists ? "Open template" : "Create template"}</button></div><div className="wfs-template-flow"><span className="wfs-template-step">Plan</span><ChevronRight className="wfs-template-arrow" size={13} /><span className="wfs-template-step">Architecture</span><ChevronRight className="wfs-template-arrow" size={13} /><span className="wfs-template-step">Build</span><ChevronRight className="wfs-template-arrow" size={13} /><span className="wfs-template-step">Review</span><ChevronRight className="wfs-template-arrow" size={13} /><span className="wfs-template-step">Test</span><ChevronRight className="wfs-template-arrow" size={13} /><span className="wfs-template-step">Deploy</span></div></div></div>;
+}
+
+const AI_COMPANY_ROLES: Array<{
+  roleKey: string;
+  title: string;
+  matchPattern: RegExp;
+  description: string;
+}> = [
+  { roleKey: "pm", title: "Project Manager", matchPattern: /project manager|lead|pm/i, description: "Breaks down requirements, plans sprints, coordinates delivery" },
+  { roleKey: "architect", title: "Solution Architect", matchPattern: /architect|solution/i, description: "Designs technical architecture, APIs, schema, and system integration" },
+  { roleKey: "designer", title: "UI/UX Designer", matchPattern: /design|ui|ux/i, description: "Creates wireframes, design system tokens, and user flow specifications" },
+  { roleKey: "backend", title: "Backend Engineer", matchPattern: /backend|api|server/i, description: "Implements business logic, database migrations, and REST/GraphQL APIs" },
+  { roleKey: "frontend", title: "Frontend Engineer", matchPattern: /frontend|ui dev|web/i, description: "Builds responsive web interfaces, state management, and user interaction" },
+  { roleKey: "reviewer", title: "Code Reviewer", matchPattern: /review|quality|audit/i, description: "Performs static analysis, security checks, and code quality audits" },
+  { roleKey: "tester", title: "QA Tester", matchPattern: /qa|tester|test/i, description: "Writes unit/integration tests, verifies edge cases, and checks regression" },
+  { roleKey: "devops", title: "DevOps Engineer", matchPattern: /devops|infra|sre|ops/i, description: "Automates CI/CD, builds deployment artifacts, and monitors infrastructure" }
+];
+
+export function RunWorkflowModal({
+  isOpen,
+  onClose,
+  companyId,
+  projects,
+  workflows,
+  initialProjectId,
+  initialWorkflowId,
+  onRunStarted
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  companyId: string;
+  projects: PaperclipProject[];
+  workflows: WorkflowIndexEntry[];
+  initialProjectId?: string | null;
+  initialWorkflowId?: string | null;
+  onRunStarted: (run: WorkflowRunRecord) => void;
+}) {
+  const [projectId, setProjectId] = useState<string>(initialProjectId ?? projects[0]?.id ?? "");
+  const [workflowId, setWorkflowId] = useState<string>(
+    initialWorkflowId ?? workflows.find((w) => w.status === "published")?.id ?? workflows[0]?.id ?? ""
+  );
+  const [requirement, setRequirement] = useState("Xây dựng website bán hàng có đăng nhập, giỏ hàng, quản lý sản phẩm và đặt hàng.");
+  const [maxConcurrentAgents, setMaxConcurrentAgents] = useState(2);
+  const [approvalMode, setApprovalMode] = useState<"require_approval" | "auto">("require_approval");
+  const [failurePolicy, setFailurePolicy] = useState<"pause_and_report" | "fail_fast" | "continue_unrelated">("pause_and_report");
+  const [retryPolicy, setRetryPolicy] = useState<"bounded" | "none" | "manual">("bounded");
+
+  const [preflight, setPreflight] = useState<PreflightCheckResult | null>(null);
+  const [preflightLoading, setPreflightLoading] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const preflightAction = usePluginAction("preflight-check");
+  const startWorkflowAction = usePluginAction("start-project-workflow");
+  const toast = usePluginToast();
+
+  useEffect(() => {
+    if (initialProjectId) setProjectId(initialProjectId);
+  }, [initialProjectId]);
+
+  useEffect(() => {
+    if (initialWorkflowId) setWorkflowId(initialWorkflowId);
+  }, [initialWorkflowId]);
+
+  useEffect(() => {
+    if (!isOpen || !projectId || !workflowId) return;
+    let cancelled = false;
+    setPreflightLoading(true);
+    setErrorMsg(null);
+    preflightAction({ companyId, projectId, workflowId })
+      .then((res) => {
+        if (!cancelled) {
+          setPreflight(res as PreflightCheckResult);
+          setPreflightLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setErrorMsg(asMessage(err));
+          setPreflight(null);
+          setPreflightLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, companyId, projectId, workflowId, preflightAction]);
+
+  const canStart = !starting && !preflightLoading && preflight?.ok && projectId && workflowId && requirement.trim();
+
+  const handleStart = async () => {
+    if (!canStart) return;
+    setStarting(true);
+    try {
+      const response = (await startWorkflowAction({
+        companyId,
+        projectId,
+        workflowId,
+        inputRequirement: requirement.trim(),
+        settings: {
+          maxConcurrentAgents,
+          approvalMode,
+          failurePolicy,
+          retryPolicy
+        }
+      })) as { run: WorkflowRunRecord };
+      toast({
+        title: "Workflow Run Started",
+        body: `Run ID ${response.run.id} initiated. Ready task(s) dispatched to agents.`,
+        tone: "success",
+        ttlMs: 7000
+      });
+      onRunStarted(response.run);
+      onClose();
+    } catch (err) {
+      toast({ title: "Failed to start workflow", body: asMessage(err), tone: "error", ttlMs: 10000 });
+      setErrorMsg(asMessage(err));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="wfs-modal-backdrop" role="presentation" onClick={onClose}>
+      <div className="wfs-modal wfs-run-dialog" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <div className="wfs-modal-head">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Rocket size={18} color="#10b981" /> Run Project Workflow
+              </h3>
+              <p>Autonomous multi-agent orchestration for Paperclip AI Software Company.</p>
+            </div>
+            <button className="wfs-button wfs-icon-button" onClick={onClose}><X size={15} /></button>
+          </div>
+        </div>
+
+        <div className="wfs-modal-body">
+          <div className="wfs-dialog-grid">
+            <label className="wfs-field">
+              <span>Project</span>
+              <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="wfs-field">
+              <span>Workflow (Published Version)</span>
+              <select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)}>
+                {workflows.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name} (v{w.version}) {w.status === "published" ? "✓ Published" : "[Draft]"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label className="wfs-field">
+            <span>Initial Requirement (Product Owner Goal)</span>
+            <textarea
+              rows={3}
+              value={requirement}
+              onChange={(e) => setRequirement(e.target.value)}
+              placeholder="Nhập yêu cầu ban đầu cho dự án..."
+            />
+            <small style={{ fontSize: 10.5, color: "var(--muted-foreground)" }}>
+              Yêu cầu này sẽ được đưa vào Issue mở đầu và giao cho Project Manager lập kế hoạch.
+            </small>
+          </label>
+
+          <div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", display: "block", marginBottom: 6 }}>
+              Execution Settings
+            </span>
+            <div className="wfs-dialog-grid">
+              <label className="wfs-field">
+                <span>Max Concurrent Agents</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={maxConcurrentAgents}
+                  onChange={(e) => setMaxConcurrentAgents(Math.max(1, Math.min(8, parseInt(e.target.value) || 2)))}
+                />
+              </label>
+
+              <label className="wfs-field">
+                <span>Approval Mode</span>
+                <select value={approvalMode} onChange={(e) => setApprovalMode(e.target.value as any)}>
+                  <option value="require_approval">Require PO Approval (Recommended)</option>
+                  <option value="auto">Auto Approve</option>
+                </select>
+              </label>
+
+              <label className="wfs-field">
+                <span>Failure Policy</span>
+                <select value={failurePolicy} onChange={(e) => setFailurePolicy(e.target.value as any)}>
+                  <option value="pause_and_report">Pause and Report</option>
+                  <option value="continue_unrelated">Continue Other Branches</option>
+                  <option value="fail_fast">Fail Fast</option>
+                </select>
+              </label>
+
+              <label className="wfs-field">
+                <span>Retry Policy</span>
+                <select value={retryPolicy} onChange={(e) => setRetryPolicy(e.target.value as any)}>
+                  <option value="bounded">Bounded Retry (Max 2)</option>
+                  <option value="none">No Retry</option>
+                  <option value="manual">Manual Intervention</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase" }}>
+                Preflight Checks
+              </span>
+              {preflightLoading && <span style={{ fontSize: 10, color: "var(--muted-foreground)" }}><RefreshCw size={11} className="wfs-spin" /> Validating...</span>}
+            </div>
+
+            <div className="wfs-preflight-card">
+              {preflight ? (
+                preflight.checks.map((item) => (
+                  <div key={item.key} className={`wfs-preflight-item ${item.status}`}>
+                    <span className="wfs-preflight-icon">
+                      {item.status === "pass" ? <CheckCircle2 size={14} /> : item.status === "warn" ? <AlertCircle size={14} /> : <X size={14} />}
+                    </span>
+                    <div className="wfs-preflight-text">
+                      <strong>{item.name}</strong>
+                      <small>{item.message}</small>
+                    </div>
+                  </div>
+                ))
+              ) : preflightLoading ? (
+                <div style={{ padding: 12, textAlign: "center", fontSize: 11, color: "var(--muted-foreground)" }}>Running preflight validation...</div>
+              ) : (
+                <div style={{ padding: 12, textAlign: "center", fontSize: 11, color: "#dc2626" }}>
+                  {errorMsg ?? "Select a valid project and published workflow to run preflight checks."}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="wfs-modal-actions">
+          <button className="wfs-button" onClick={onClose} disabled={starting}>Cancel</button>
+          <button
+            className="wfs-button wfs-button-run"
+            disabled={!canStart}
+            onClick={handleStart}
+          >
+            {starting ? <RefreshCw size={14} className="wfs-spin" /> : <Play size={14} />}
+            {starting ? "Starting Workflow..." : "Start Workflow"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function AgentControlCenterView({
+  companyId,
+  bootstrap,
+  onOpenRunModal,
+  onOpenRunMonitor,
+  openWorkflow,
+  openTemplates,
+  openList,
+  refreshBootstrap
+}: {
+  companyId: string;
+  bootstrap: BootstrapData;
+  onOpenRunModal: () => void;
+  onOpenRunMonitor: (workflowId: string, runId: string) => void;
+  openWorkflow: (id: string) => void;
+  openTemplates: () => void;
+  openList: () => void;
+  refreshBootstrap: () => void;
+}) {
+  const toast = usePluginToast();
+  const navigation = useHostNavigation();
+  const [busy, setBusy] = useState(false);
+  const controlAction = usePluginAction("agent-control-action");
+
+  const runRuns = bootstrap.runs ?? [];
+
+  const handleGlobalAction = async (action: "start-all" | "stop-all" | "pause-all" | "resume-all" | "retry-failed") => {
+    setBusy(true);
+    try {
+      const res = (await controlAction({ companyId, action })) as { count?: number };
+      refreshBootstrap();
+      toast({
+        title: `Action: ${statusLabel(action)} executed`,
+        body: `Processed for ${res.count ?? 0} items across company.`,
+        tone: "success"
+      });
+    } catch (e) {
+      toast({ title: "Control action failed", body: asMessage(e), tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAgentControl = async (action: "agent-pause" | "agent-resume" | "agent-wakeup", agentId: string, issueId?: string) => {
+    setBusy(true);
+    try {
+      await controlAction({ companyId, action, agentId, issueId });
+      refreshBootstrap();
+      toast({
+        title: `Agent ${statusLabel(action)}`,
+        body: `Command sent to agent runtime.`,
+        tone: "success"
+      });
+    } catch (e) {
+      toast({ title: "Agent command failed", body: asMessage(e), tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="wfs-control-center">
+      <header className="wfs-list-header">
+        <div>
+          <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
+            <button className="wfs-tab" aria-selected="false" onClick={openList}>Workflows</button>
+            <button className="wfs-tab" aria-selected="true">Agent Control Center</button>
+            <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button>
+          </div>
+          <div className="wfs-list-eyebrow">AI Software Company Orchestration</div>
+          <h1>Agent Control Center</h1>
+          <p>
+            Autonomous multi-agent execution powered by Paperclip. Run structured project workflows or manage individual AI agents.
+          </p>
+        </div>
+      </header>
+
+      {/* Control Toolbar */}
+      <div className="wfs-control-toolbar">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            className="wfs-button wfs-button-run"
+            onClick={onOpenRunModal}
+            title="Launch an autonomous project workflow through the 8 AI agents"
+          >
+            <Play size={15} /> ▶ Run Project Workflow
+          </button>
+        </div>
+
+        <div className="wfs-control-actions">
+          <button className="wfs-button" disabled={busy} onClick={() => handleGlobalAction("start-all")} title="Start all runnable tasks">
+            <Play size={13} /> Start All
+          </button>
+          <button className="wfs-button" disabled={busy} onClick={() => handleGlobalAction("stop-all")} title="Stop running agents">
+            <Square size={13} /> Stop All
+          </button>
+          <button className="wfs-button" disabled={busy} onClick={() => handleGlobalAction("pause-all")} title="Pause running agents">
+            <Pause size={13} /> Pause All
+          </button>
+          <button className="wfs-button" disabled={busy} onClick={() => handleGlobalAction("resume-all")} title="Resume paused agents">
+            <Play size={13} /> Resume All
+          </button>
+          <button className="wfs-button" disabled={busy} onClick={() => handleGlobalAction("retry-failed")} title="Retry failed tasks">
+            <RotateCcw size={13} /> Retry Failed
+          </button>
+          <button className="wfs-button wfs-icon-button" onClick={refreshBootstrap} title="Refresh">
+            <RefreshCw size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Active Workflow Runs Section */}
+      {runRuns.length > 0 && (
+        <section style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0, fontSize: 14 }}>Active & Recent Workflow Runs</h3>
+            <span style={{ fontSize: 11, color: "var(--muted-foreground)" }}>{runRuns.length} run(s)</span>
+          </div>
+          <div className="wfs-runs-table">
+            <div className="wfs-workflow-table-head" role="row" style={{ gridTemplateColumns: "180px 180px 140px 1fr 140px auto" }}>
+              <span>Run ID</span>
+              <span>Project</span>
+              <span>Status</span>
+              <span>Progress</span>
+              <span>Started</span>
+              <span>Action</span>
+            </div>
+            {runRuns.map((r) => (
+              <div key={r.id} className="wfs-workflow-table-row" role="row" style={{ gridTemplateColumns: "180px 180px 140px 1fr 140px auto" }}>
+                <span style={{ fontFamily: "monospace", fontSize: 11 }}>{r.id}</span>
+                <strong>{r.projectName}</strong>
+                <span>
+                  <span className={`wfs-badge ${r.status === "completed" ? "wfs-badge-published" : "wfs-badge-draft"}`}>
+                    {statusLabel(r.status)}
+                  </span>
+                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div className="wfs-progress" style={{ width: 100 }}>
+                    <span style={{ width: `${r.progress}%` }} />
+                  </div>
+                  <span style={{ fontSize: 10 }}>{r.progress}% ({r.completedTasks}/{r.totalTasks})</span>
+                </div>
+                <time style={{ fontSize: 10 }}>{new Date(r.startedAt).toLocaleTimeString()}</time>
+                <button
+                  className="wfs-button wfs-button-primary"
+                  onClick={() => onOpenRunMonitor(r.workflowId, r.id)}
+                >
+                  <Activity size={12} /> Open Monitor
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* The 8 AI Agents Grid */}
+      <section style={{ display: "grid", gap: 10 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 14 }}>AI Software Company Team (8 Agents)</h3>
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted-foreground)" }}>
+            Autonomous agents mapped to the workflow lifecycle. Agents are woken up strictly according to the published DAG dependencies.
+          </p>
+        </div>
+
+        <div className="wfs-agents-grid">
+          {AI_COMPANY_ROLES.map((roleDef) => {
+            const agent = bootstrap.agents.find(
+              (a) =>
+                roleDef.matchPattern.test(a.name) ||
+                roleDef.matchPattern.test(a.role) ||
+                (a.title && roleDef.matchPattern.test(a.title))
+            );
+            const activeIssue = agent
+              ? bootstrap.issues.find(
+                  (i) => i.assigneeAgentId === agent.id && ["in_progress", "todo"].includes(i.status)
+                )
+              : null;
+            const modelName =
+              typeof agent?.adapterConfig?.model === "string"
+                ? agent.adapterConfig.model
+                : agent?.adapterType === "gemini"
+                ? "Gemini 1.5 Pro"
+                : agent?.adapterType === "codex"
+                ? "Codex"
+                : "Codex / Gemini Runtime";
+
+            return (
+              <div key={roleDef.roleKey} className="wfs-agent-card">
+                <div className="wfs-agent-head">
+                  <div className="wfs-agent-avatar">
+                    {initials(roleDef.title)}
+                  </div>
+                  <div className="wfs-agent-info">
+                    <strong>{agent?.name ?? roleDef.title}</strong>
+                    <span>{roleDef.title} • {modelName}</span>
+                  </div>
+                  <span
+                    className={`wfs-badge ${
+                      agent?.status === "running"
+                        ? "wfs-badge-published"
+                        : agent?.status === "paused"
+                        ? "wfs-badge-draft"
+                        : ""
+                    }`}
+                  >
+                    {agent ? statusLabel(agent.status) : "Unbound"}
+                  </span>
+                </div>
+
+                <div className="wfs-agent-task">
+                  <span>Current Task</span>
+                  {activeIssue ? (
+                    <a
+                      href={`#/issues/${activeIssue.id}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        navigation.navigate(`/issues/${activeIssue.id}`);
+                      }}
+                      title={activeIssue.title}
+                    >
+                      {activeIssue.identifier ? `[${activeIssue.identifier}] ` : ""}
+                      {activeIssue.title}
+                    </a>
+                  ) : (
+                    <span style={{ color: "var(--muted-foreground)", fontSize: 10, textTransform: "none" }}>
+                      Idle — Waiting for workflow step
+                    </span>
+                  )}
+                </div>
+
+                <div className="wfs-agent-actions">
+                  {agent && (
+                    <>
+                      <button
+                        className="wfs-button"
+                        disabled={busy}
+                        onClick={() => handleAgentControl("agent-wakeup", agent.id, activeIssue?.id)}
+                        title="Wakeup agent"
+                      >
+                        <Play size={12} /> Wakeup
+                      </button>
+                      {agent.status === "paused" ? (
+                        <button
+                          className="wfs-button"
+                          disabled={busy}
+                          onClick={() => handleAgentControl("agent-resume", agent.id)}
+                          title="Resume agent"
+                        >
+                          <Play size={12} /> Resume
+                        </button>
+                      ) : (
+                        <button
+                          className="wfs-button"
+                          disabled={busy}
+                          onClick={() => handleAgentControl("agent-pause", agent.id)}
+                          title="Pause agent"
+                        >
+                          <Pause size={12} /> Pause
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function WorkflowListPage({
@@ -952,7 +1890,9 @@ function WorkflowListPage({
   duplicateWorkflow,
   renameWorkflow,
   deleteWorkflow,
-  openTemplates
+  openTemplates,
+  openControlCenter,
+  onOpenRunModal
 }: {
   workflows: WorkflowIndexEntry[];
   busy: boolean;
@@ -962,6 +1902,8 @@ function WorkflowListPage({
   renameWorkflow: (workflow: WorkflowIndexEntry, name: string) => void;
   deleteWorkflow: (workflow: WorkflowIndexEntry) => void;
   openTemplates: () => void;
+  openControlCenter: () => void;
+  onOpenRunModal: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | "draft" | "published">("all");
@@ -974,8 +1916,23 @@ function WorkflowListPage({
   const beginRename = (workflow: WorkflowIndexEntry) => { setRenameTarget(workflow); setRenameValue(workflow.name); };
   return <div className="wfs-list-page">
     <header className="wfs-list-header">
-      <div><div className="wfs-list-eyebrow">Workflow Studio</div><h1>Workflows</h1><p>Reusable delivery graphs for Paperclip projects. Opening a workflow never starts an agent.</p></div>
-      <div className="wfs-list-header-actions"><button className="wfs-button" onClick={openTemplates}><Layers3 size={14} /> Templates</button><button className="wfs-button wfs-button-primary" disabled={busy} onClick={createWorkflow}><Plus size={14} /> Create workflow</button></div>
+      <div>
+        <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
+          <button className="wfs-tab" aria-selected="true">Workflows</button>
+          <button className="wfs-tab" aria-selected="false" onClick={openControlCenter}>Agent Control Center</button>
+          <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button>
+        </div>
+        <div className="wfs-list-eyebrow">Workflow Studio</div>
+        <h1>Workflows</h1>
+        <p>Reusable delivery graphs for Paperclip projects. Opening a workflow never starts an agent.</p>
+      </div>
+      <div className="wfs-list-header-actions">
+        <button className="wfs-button wfs-button-run" onClick={onOpenRunModal} title="Run Project Workflow">
+          <Play size={14} /> ▶ Run Project Workflow
+        </button>
+        <button className="wfs-button" onClick={openTemplates}><Layers3 size={14} /> Templates</button>
+        <button className="wfs-button wfs-button-primary" disabled={busy} onClick={createWorkflow}><Plus size={14} /> Create workflow</button>
+      </div>
     </header>
     <div className="wfs-list-filters">
       <label className="wfs-list-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search workflows" aria-label="Search workflows" /></label>
@@ -1011,14 +1968,37 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
   const publishAction = usePluginAction("publish-workflow");
   const toast = usePluginToast();
   const [busy, setBusy] = useState(false);
+  const [runModalOpen, setRunModalOpen] = useState(false);
+  const [runModalWorkflowId, setRunModalWorkflowId] = useState<string | null>(null);
+  const [runModalProjectId, setRunModalProjectId] = useState<string | null>(projectId);
   const routeParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const workflowId = routeParams.get("workflow");
   const routeView = routeParams.get("view");
-  const mode: StudioMode = routeView === "monitor" ? "monitor" : routeView === "templates" ? "templates" : "designer";
-  const workflowPath = useCallback((id: string, view: "designer" | "monitor" = "designer") => `/workflows?workflow=${encodeURIComponent(id)}&view=${view}`, []);
-  const openWorkflow = useCallback((id: string, view: "designer" | "monitor" = "designer") => navigation.navigate(workflowPath(id, view)), [navigation, workflowPath]);
+  const runId = routeParams.get("run");
+  const mode: StudioMode =
+    routeView === "monitor"
+      ? "monitor"
+      : routeView === "templates"
+      ? "templates"
+      : routeView === "control-center"
+      ? "control-center"
+      : "designer";
+  const workflowPath = useCallback(
+    (id: string, view: "designer" | "monitor" = "designer") => `/workflows?workflow=${encodeURIComponent(id)}&view=${view}`,
+    []
+  );
+  const openWorkflow = useCallback(
+    (id: string, view: "designer" | "monitor" = "designer") => navigation.navigate(workflowPath(id, view)),
+    [navigation, workflowPath]
+  );
   const openList = useCallback(() => navigation.navigate("/workflows"), [navigation]);
   const openTemplates = useCallback(() => navigation.navigate("/workflows?view=templates"), [navigation]);
+  const openControlCenter = useCallback(() => navigation.navigate("/workflows?view=control-center"), [navigation]);
+  const openRunMonitor = useCallback(
+    (wfId: string, rId: string) =>
+      navigation.navigate(`/workflows?workflow=${encodeURIComponent(wfId)}&view=monitor&run=${encodeURIComponent(rId)}`),
+    [navigation]
+  );
 
   const create = useCallback(async () => {
     try {
@@ -1080,36 +2060,173 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
     finally { setBusy(false); }
   };
 
-  if (!workflowId && mode !== "templates") return <div className="wfs-root wfs-list-root"><style>{reactFlowStyles + studioStyles}</style><WorkflowListPage workflows={bootstrap.workflows} busy={busy} createWorkflow={() => void createBlank()} openWorkflow={openWorkflow} duplicateWorkflow={(id) => void duplicateFromList(id)} renameWorkflow={(item, name) => void renameFromList(item, name)} deleteWorkflow={(item) => void deleteFromList(item)} openTemplates={openTemplates} /></div>;
-  return <div className="wfs-root"><style>{reactFlowStyles + studioStyles}</style>
-    {mode === "templates" ? <><div className="wfs-toolbar"><button className="wfs-button wfs-icon-button" onClick={openList} title="Back to workflows"><ArrowLeft size={14} /></button><div className="wfs-brand"><span className="wfs-brand-icon"><Layers3 size={16} /></span><div className="wfs-title-wrap"><div className="wfs-title">Workflow templates</div><div className="wfs-subtitle">Reusable starting points</div></div></div><div className="wfs-toolbar-spacer" /><button className="wfs-button" disabled={busy} onClick={() => void createBlank()}><Plus size={14} /> Create blank workflow</button></div><TemplatesPage exists={Boolean(lifecycleTemplate)} open={openLifecycleTemplate} /></> : workflowId ? <WorkflowLoader key={`${workflowId}-${mode}`} companyId={companyId} workflowId={workflowId} bootstrap={bootstrap} mode={mode} openList={openList} openTemplates={openTemplates} openMode={(view) => openWorkflow(workflowId, view)} openWorkflow={openWorkflow} saveAction={saveAction} validateAction={validateAction} duplicateAction={duplicateAction} deleteAction={deleteAction} publishAction={publishAction} refreshBootstrap={bootstrapData.refresh} /> : null}
-  </div>;
+  if (mode === "control-center") {
+    return (
+      <div className="wfs-root wfs-list-root">
+        <style>{reactFlowStyles + studioStyles}</style>
+        <AgentControlCenterView
+          companyId={companyId}
+          bootstrap={bootstrap}
+          onOpenRunModal={() => {
+            setRunModalWorkflowId(null);
+            setRunModalOpen(true);
+          }}
+          onOpenRunMonitor={openRunMonitor}
+          openWorkflow={openWorkflow}
+          openTemplates={openTemplates}
+          openList={openList}
+          refreshBootstrap={bootstrapData.refresh}
+        />
+        <RunWorkflowModal
+          isOpen={runModalOpen}
+          onClose={() => setRunModalOpen(false)}
+          companyId={companyId}
+          projects={bootstrap.projects}
+          workflows={bootstrap.workflows}
+          initialProjectId={runModalProjectId}
+          initialWorkflowId={runModalWorkflowId}
+          onRunStarted={(run) => {
+            bootstrapData.refresh();
+            openRunMonitor(run.workflowId, run.id);
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (!workflowId && mode !== "templates") {
+    return (
+      <div className="wfs-root wfs-list-root">
+        <style>{reactFlowStyles + studioStyles}</style>
+        <WorkflowListPage
+          workflows={bootstrap.workflows}
+          busy={busy}
+          createWorkflow={() => void createBlank()}
+          openWorkflow={openWorkflow}
+          duplicateWorkflow={(id) => void duplicateFromList(id)}
+          renameWorkflow={(item, name) => void renameFromList(item, name)}
+          deleteWorkflow={(item) => void deleteFromList(item)}
+          openTemplates={openTemplates}
+          openControlCenter={openControlCenter}
+          onOpenRunModal={() => {
+            setRunModalWorkflowId(null);
+            setRunModalOpen(true);
+          }}
+        />
+        <RunWorkflowModal
+          isOpen={runModalOpen}
+          onClose={() => setRunModalOpen(false)}
+          companyId={companyId}
+          projects={bootstrap.projects}
+          workflows={bootstrap.workflows}
+          initialProjectId={runModalProjectId}
+          initialWorkflowId={runModalWorkflowId}
+          onRunStarted={(run) => {
+            bootstrapData.refresh();
+            openRunMonitor(run.workflowId, run.id);
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="wfs-root">
+      <style>{reactFlowStyles + studioStyles}</style>
+      {mode === "templates" ? (
+        <>
+          <div className="wfs-toolbar">
+            <button className="wfs-button wfs-icon-button" onClick={openList} title="Back to workflows">
+              <ArrowLeft size={14} />
+            </button>
+            <div className="wfs-brand">
+              <span className="wfs-brand-icon">
+                <Layers3 size={16} />
+              </span>
+              <div className="wfs-title-wrap">
+                <div className="wfs-title">Workflow templates</div>
+                <div className="wfs-subtitle">Reusable starting points</div>
+              </div>
+            </div>
+            <div className="wfs-toolbar-spacer" />
+            <button className="wfs-button" disabled={busy} onClick={() => void createBlank()}>
+              <Plus size={14} /> Create blank workflow
+            </button>
+          </div>
+          <TemplatesPage exists={Boolean(lifecycleTemplate)} open={openLifecycleTemplate} />
+        </>
+      ) : workflowId ? (
+        <WorkflowLoader
+          key={`${workflowId}-${mode}-${runId ?? ""}`}
+          companyId={companyId}
+          workflowId={workflowId}
+          runId={runId}
+          bootstrap={bootstrap}
+          mode={mode}
+          openList={openList}
+          openTemplates={openTemplates}
+          openControlCenter={openControlCenter}
+          openMode={(view) => openWorkflow(workflowId, view)}
+          openWorkflow={openWorkflow}
+          onOpenRunModal={(wfId) => {
+            setRunModalWorkflowId(wfId ?? workflowId);
+            setRunModalOpen(true);
+          }}
+          saveAction={saveAction}
+          validateAction={validateAction}
+          duplicateAction={duplicateAction}
+          deleteAction={deleteAction}
+          publishAction={publishAction}
+          refreshBootstrap={bootstrapData.refresh}
+        />
+      ) : null}
+      <RunWorkflowModal
+        isOpen={runModalOpen}
+        onClose={() => setRunModalOpen(false)}
+        companyId={companyId}
+        projects={bootstrap.projects}
+        workflows={bootstrap.workflows}
+        initialProjectId={runModalProjectId}
+        initialWorkflowId={runModalWorkflowId}
+        onRunStarted={(run) => {
+          bootstrapData.refresh();
+          openRunMonitor(run.workflowId, run.id);
+        }}
+      />
+    </div>
+  );
 }
 
 function WorkflowLoader({
   companyId,
   workflowId,
+  runId,
   bootstrap,
   mode,
   openList,
   openTemplates,
+  openControlCenter,
   openMode,
   openWorkflow,
+  onOpenRunModal,
   saveAction,
   validateAction,
   duplicateAction,
   deleteAction,
   publishAction,
-  refreshBootstrap,
+  refreshBootstrap
 }: {
   companyId: string;
   workflowId: string;
+  runId?: string | null;
   bootstrap: BootstrapData;
   mode: StudioMode;
   openList: () => void;
   openTemplates: () => void;
+  openControlCenter: () => void;
   openMode: (mode: "designer" | "monitor") => void;
   openWorkflow: (id: string, mode?: "designer" | "monitor") => void;
+  onOpenRunModal: (workflowId?: string) => void;
   saveAction: (params?: Record<string, unknown>) => Promise<unknown>;
   validateAction: (params?: Record<string, unknown>) => Promise<unknown>;
   duplicateAction: (params?: Record<string, unknown>) => Promise<unknown>;
@@ -1122,8 +2239,65 @@ function WorkflowLoader({
   if (workflowData.loading) return <LoadingState />;
   if (workflowData.error) return <ErrorState message={workflowData.error.message} retry={workflowData.refresh} />;
   if (!workflowData.data) return <ErrorState message="Workflow data is unavailable." retry={workflowData.refresh} />;
-  if (mode === "monitor") return <><div className="wfs-toolbar wfs-detail-toolbar"><button className="wfs-button wfs-icon-button" onClick={openList} title="Back to workflows"><ArrowLeft size={14} /></button><div className="wfs-brand"><span className="wfs-brand-icon"><Workflow size={16} /></span><div className="wfs-title-wrap"><div className="wfs-title">{workflowData.data.workflow.name}</div><div className="wfs-subtitle">Live Paperclip status</div></div></div><div className="wfs-tabs" role="tablist"><button className="wfs-tab" aria-selected="false" onClick={() => openMode("designer")}>Designer</button><button className="wfs-tab" aria-selected="true">Monitor</button><button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button></div></div><MonitorCanvas bootstrap={bootstrap} data={workflowData.data} refresh={workflowData.refresh} /></>;
-  return <DesignerCanvas bootstrap={bootstrap} initial={workflowData.data.workflow} saveAction={saveAction} validateAction={validateAction} duplicateAction={duplicateAction} deleteAction={deleteAction} publishAction={publishAction} refreshBootstrap={() => { refreshBootstrap(); workflowData.refresh(); }} selectWorkflow={openWorkflow} switchMode={(next) => next === "templates" ? openTemplates() : openMode(next)} />;
+  if (mode === "monitor") {
+    return (
+      <>
+        <div className="wfs-toolbar wfs-detail-toolbar">
+          <button className="wfs-button wfs-icon-button" onClick={openList} title="Back to workflows">
+            <ArrowLeft size={14} />
+          </button>
+          <div className="wfs-brand">
+            <span className="wfs-brand-icon">
+              <Workflow size={16} />
+            </span>
+            <div className="wfs-title-wrap">
+              <div className="wfs-title">{workflowData.data.workflow.name}</div>
+              <div className="wfs-subtitle">{runId ? `Run Monitor: ${runId}` : "Live Paperclip status"}</div>
+            </div>
+          </div>
+          <div className="wfs-tabs" role="tablist">
+            <button className="wfs-tab" aria-selected="false" onClick={() => openMode("designer")}>
+              Designer
+            </button>
+            <button className="wfs-tab" aria-selected="true">
+              Monitor
+            </button>
+            <button className="wfs-tab" aria-selected="false" onClick={openControlCenter}>
+              Agent Control Center
+            </button>
+            <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>
+              Templates
+            </button>
+          </div>
+        </div>
+        <MonitorCanvas
+          bootstrap={bootstrap}
+          data={workflowData.data}
+          refresh={workflowData.refresh}
+          companyId={companyId}
+          runId={runId}
+        />
+      </>
+    );
+  }
+  return (
+    <DesignerCanvas
+      bootstrap={bootstrap}
+      initial={workflowData.data.workflow}
+      saveAction={saveAction}
+      validateAction={validateAction}
+      duplicateAction={duplicateAction}
+      deleteAction={deleteAction}
+      publishAction={publishAction}
+      refreshBootstrap={() => {
+        refreshBootstrap();
+        workflowData.refresh();
+      }}
+      selectWorkflow={openWorkflow}
+      switchMode={(next) => (next === "templates" ? openTemplates() : next === "control-center" ? openControlCenter() : openMode(next))}
+      onOpenRunModal={onOpenRunModal}
+    />
+  );
 }
 
 export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
@@ -1137,6 +2311,7 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
   const navigation = useHostNavigation();
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [runModalOpen, setRunModalOpen] = useState(false);
 
   useEffect(() => {
     const first = projectData.data?.binding?.templateId ?? projectData.data?.workflows[0]?.id ?? "";
@@ -1148,7 +2323,7 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
   if (projectData.error) return <div className="wfs-project-shell"><style>{studioStyles}</style><ErrorState message={projectData.error.message} retry={projectData.refresh} /></div>;
   if (!projectData.data) return <div className="wfs-project-shell"><style>{studioStyles}</style><ErrorState message="Project workflow data is unavailable." /></div>;
 
-  const { project, workflows, binding, monitor } = projectData.data;
+  const { project, workflows, binding, monitor, activeRun } = projectData.data;
   const issueNodes = binding?.workflow.nodes.filter((node) => node.data.kind === "task" || node.data.kind === "approval") ?? [];
   const assignedAgents = [...new Map(issueNodes.filter((node) => node.data.agentId).map((node) => [node.data.agentId!, node.data.agentName ?? "Agent"])).values()];
   const completed = monitor.filter((item) => item.issue?.status === "done").length;
@@ -1177,7 +2352,49 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
   };
 
   return <div className="wfs-project-shell"><style>{studioStyles}</style>
-    <header className="wfs-project-head"><div><h2>Project workflow</h2><p>Choose a reusable process for {project?.name ?? "this project"}.</p></div><button className="wfs-button" onClick={() => navigation.navigate("/workflows?view=templates")}><Settings2 size={14} /> Edit templates</button></header>
+    <header className="wfs-project-head">
+      <div>
+        <h2>Project workflow</h2>
+        <p>Choose a reusable process for {project?.name ?? "this project"}.</p>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          className="wfs-button wfs-button-run"
+          onClick={() => setRunModalOpen(true)}
+          title="Run Project Workflow for this project"
+        >
+          <Play size={14} /> ▶ Run Project Workflow
+        </button>
+        <button className="wfs-button" onClick={() => navigation.navigate("/workflows?view=templates")}>
+          <Settings2 size={14} /> Edit templates
+        </button>
+      </div>
+    </header>
+
+    {activeRun && (
+      <section className="wfs-project-current" style={{ borderLeft: "4px solid #10b981", background: "color-mix(in srgb, #10b981 5%, var(--card, var(--background)))" }}>
+        <div className="wfs-project-current-head">
+          <div>
+            <span className="wfs-badge wfs-badge-published" style={{ textTransform: "uppercase" }}>
+              Active Run: {activeRun.status}
+            </span>
+            <h3 style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+              <Activity size={16} color="#10b981" /> {activeRun.id}
+            </h3>
+            <p>Initial Requirement: “{activeRun.inputRequirement}”</p>
+          </div>
+          <button
+            className="wfs-button wfs-button-primary"
+            onClick={() =>
+              navigation.navigate(`/workflows?workflow=${encodeURIComponent(activeRun.workflowId)}&view=monitor&run=${encodeURIComponent(activeRun.id)}`)
+            }
+          >
+            <Activity size={14} /> View in Workflow Monitor
+          </button>
+        </div>
+      </section>
+    )}
+
     {workflows.length === 0 ? <div className="wfs-project-empty"><Workflow size={22} /><div><strong>No workflow templates</strong><p>Create a template once, then reuse it across any project.</p></div><button className="wfs-button wfs-button-primary" onClick={() => navigation.navigate("/workflows?view=templates")}><Plus size={14} /> Create template</button></div> : <>
       <section className="wfs-project-picker">
         <label className="wfs-field"><span>Workflow template</span><select value={selectedWorkflowId} disabled={published} onChange={(event) => setSelectedWorkflowId(event.target.value)}>{workflows.map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}</select></label>
@@ -1191,6 +2408,20 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
         {published && <div className="wfs-project-note"><CheckCircle2 size={15} /><span>Dependencies are active. Start the first Project Manager task when you are ready.</span></div>}
       </section> : <div className="wfs-project-empty"><Workflow size={22} /><div><strong>No workflow selected</strong><p>Select a template above. Paperclip will create a separate project copy, so the shared template remains reusable.</p></div></div>}
     </>}
+
+    <RunWorkflowModal
+      isOpen={runModalOpen}
+      onClose={() => setRunModalOpen(false)}
+      companyId={companyId}
+      projects={project ? [project] : []}
+      workflows={workflows}
+      initialProjectId={projectId}
+      initialWorkflowId={binding?.templateId ?? workflows[0]?.id}
+      onRunStarted={(run) => {
+        projectData.refresh();
+        navigation.navigate(`/workflows?workflow=${encodeURIComponent(run.workflowId)}&view=monitor&run=${encodeURIComponent(run.id)}`);
+      }}
+    />
   </div>;
 }
 
