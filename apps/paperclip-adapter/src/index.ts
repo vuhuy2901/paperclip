@@ -1,11 +1,16 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { explicitTaskId, resolveAssignedTask, taskPrompt, taskResult, type PaperclipRequest } from "./task-context.js";
 
 const execFileAsync = promisify(execFile);
 export const type = "ai_company_external";
 export const label = "AI Software Company";
-export const models = [{ id: "runtime-configured", label: "Configured at runtime" }];
+export const models = [
+  { id: "gpt-6-sol", label: "GPT-6 Sol (Codex)" },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (Codex)" },
+  { id: "runtime-configured", label: "Configured at runtime" },
+];
 export const agentConfigurationDoc = `# AI Software Company adapter
 
 Uses the Core API for workflow state and the Codex CLI for assigned worktree tasks.
@@ -162,25 +167,7 @@ function executionResult(ok: boolean, summary: string, resultJson: Record<string
   return { exitCode: ok ? 0 : 1, signal: null, timedOut: false, errorMessage: ok ? null : summary, summary, resultJson };
 }
 
-export async function execute(ctx: any) {
-  const context = ctx.context ?? {};
-  const wake = context.paperclipWake ?? {};
-  let prompt = String(context.prompt ?? context.task?.description ?? wake.prompt ?? wake.message ?? "");
-  const taskId = String(context.taskId ?? context.issueId ?? "");
-  if (!prompt && taskId) {
-    try {
-      const response = await fetch(`http://127.0.0.1:3101/api/issues/${encodeURIComponent(taskId)}`, {
-        headers: ctx.authToken ? { authorization: `Bearer ${ctx.authToken}` } : {},
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (response.ok) {
-        const issue = await response.json() as { title?: string; description?: string };
-        prompt = [issue.title, issue.description].filter(Boolean).join("\n\n");
-      }
-    } catch { /* Explicitly fail below if the task cannot be read. */ }
-  }
-  const changeId = extractChangeId(context, prompt);
-  if (changeId) {
+async function dispatchCoreRun(ctx: any, context: any, taskId: string, changeId: string) {
     const core = coreConfiguration();
     const idempotencyKey = String(context.idempotencyKey || taskId || `paperclip-${changeId}`);
     try {
@@ -208,30 +195,85 @@ export async function execute(ctx: any) {
     } catch (error: any) {
       return executionResult(false, `Core API wake failed: ${String(error?.message ?? error).slice(0, 300)}`);
     }
-  }
-  if (!prompt) return executionResult(false, `Paperclip task content unavailable for issue ${taskId || "unknown"}`);
+}
+
+export async function execute(ctx: any) {
+  const context = ctx.context ?? {};
+  const wake = context.paperclipWake ?? {};
+  let prompt = String(context.prompt ?? context.task?.description ?? wake.prompt ?? wake.message ?? "");
+  let taskId = explicitTaskId(ctx);
+  const changeId = extractChangeId(context, prompt);
+  if (changeId) return dispatchCoreRun(ctx, context, taskId, changeId);
+  if (!ctx.authToken) return executionResult(false, "Paperclip did not provide the run-scoped agent credential. Reload the adapter with supportsLocalAgentJwt enabled.");
+  const apiUrl = (process.env.PAPERCLIP_INTERNAL_API_URL ?? "http://127.0.0.1:3101").replace(/\/$/, "");
+  const request: PaperclipRequest = async (path, options = {}) => {
+    const response = await fetch(`${apiUrl}${path}`, {
+      method: options.method ?? "GET",
+      headers: { "content-type": "application/json", ...(ctx.authToken ? { authorization: `Bearer ${ctx.authToken}` } : {}), ...(ctx.runId ? { "x-paperclip-run-id": ctx.runId } : {}) },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({})) as { error?: string };
+      throw new Error(`Paperclip ${options.method ?? "GET"} ${path.split("?")[0]} returned HTTP ${response.status}: ${detail.error ?? response.statusText}`);
+    }
+    return response.json();
+  };
+  let issue: any = null;
+  let checkedOut = false;
   try {
+    const resolved = await resolveAssignedTask(ctx, request);
+    if (!resolved.issue) {
+      const summary = `Waiting: ${resolved.reason}`;
+      await ctx.onLog?.("stdout", `${summary}\n`);
+      return executionResult(true, summary, { outcome: "waiting", dispatched: false });
+    }
+    issue = resolved.issue;
+    taskId = issue.id;
+    prompt = await taskPrompt(issue, request);
+    const issueChangeId = extractChangeId(context, [issue.title, issue.description].filter(Boolean).join("\n"));
+    if (issueChangeId) return dispatchCoreRun(ctx, context, taskId, issueChangeId);
+    await ctx.onLog?.("stdout", `Selected ${issue.identifier}: ${issue.title}. Loading project requirements and completed dependencies.\n`);
     const roleDir = roleDirectories[ctx.agent?.name];
     const rolePrompt = roleDir ? await readFile(`/opt/role-assets/${roleDir}/prompt.md`, "utf8") : "";
     const roleSkills = roleDir ? await readFile(`/opt/role-assets/${roleDir}/skills.md`, "utf8") : "";
-    const workPrompt = [rolePrompt, roleSkills, prompt, taskId ? `Paperclip issue ID: ${taskId}` : ""].filter(Boolean).join("\n\n");
+    const planning = ["project-manager", "architect", "ui-ux-designer", "code-reviewer"].includes(roleDir ?? "");
+    const cwd = ctx.config?.gatewayCwd ?? issue.project?.codebase?.localFolder ?? "/workspace";
+    const sandbox = planning ? "read-only" : "workspace-write";
+    const workPrompt = [rolePrompt, roleSkills, prompt, `Paperclip issue ID: ${taskId}`,
+      "Return your substantive deliverable in the final response so Paperclip can save it as a task comment. Explain completed work, evidence, and remaining blockers. Finish with <paperclip-result>{\"status\":\"done\"}</paperclip-result> only if this assigned task's deliverables are complete. Use status blocked for missing prerequisites or in_progress for unfinished work. Never claim completion on a question, tool failure, or plan for an implementation task.",
+      planning ? "This is a read-only planning/review task. Provide the full plan, specification, or review in your final response. Do not implement code or deploy." : "Do not modify unrelated projects or deploy without the user's approval.",
+    ].filter(Boolean).join("\n\n");
+    await request(`/api/issues/${taskId}/checkout`, { method: "POST", body: { agentId: ctx.agent.id, expectedStatuses: ["todo", "in_progress", "backlog"] } });
+    checkedOut = true;
+    await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: `${ctx.agent.name} started ${issue.identifier}.\n\nRun: ${ctx.runId}\nModel: ${ctx.config?.model ?? "runtime default"}\nProject requirements and dependencies loaded.`, } });
     const gateway = (process.env.CODEX_GATEWAY_URL ?? "http://host.docker.internal:8400").replace(/\/$/, "");
     ctx.onDispatch?.();
     const response = await fetch(`${gateway}/run`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-gateway-token": process.env.CODEX_GATEWAY_TOKEN ?? "dev-codex-gateway" },
-      body: JSON.stringify({ cwd: "/workspace", sandbox: "workspace-write", timeout_seconds: Number(ctx.config?.timeoutSec ?? 900), model: ctx.config?.model, prompt: workPrompt }),
+      body: JSON.stringify({ cwd, sandbox, timeout_seconds: Number(ctx.config?.timeoutSec ?? 900), model: ctx.config?.model, prompt: workPrompt }),
       signal: ctx.signal,
     });
-    if (!response.ok) return executionResult(false, `Codex gateway returned HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`Codex gateway returned HTTP ${response.status}`);
     const body = await response.json() as { status?: string; summary?: string; events?: Array<{ type?: string; item?: { type?: string; text?: string } }> };
     const assistantText = body.events?.filter((event) => event.type === "item.completed" && event.item?.type === "agent_message").map((event) => event.item?.text ?? "").filter(Boolean).at(-1);
     const summary = assistantText || body.summary || "Codex gateway returned no summary";
     await ctx.onLog?.("stdout", `${summary}\n`);
-    return executionResult(body.status === "completed", summary.slice(0, 4000), { gatewayStatus: body.status, eventCount: body.events?.length ?? 0 });
+    const outcome = taskResult(summary);
+    await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: `${ctx.agent.name}: ${body.status === "completed" ? outcome.status : "execution failed"}\n\n${outcome.report}` } });
+    if (body.status === "completed" && outcome.status !== "in_progress") {
+      await request(`/api/issues/${taskId}`, { method: "PATCH", body: { status: outcome.status } });
+    }
+    return executionResult(body.status === "completed", outcome.report.slice(0, 4000), { issueId: taskId, issueIdentifier: issue.identifier, taskStatus: body.status === "completed" ? outcome.status : "in_progress", gatewayStatus: body.status, model: ctx.config?.model ?? null, eventCount: body.events?.length ?? 0 });
   } catch (error: any) {
-    return executionResult(false, `Codex gateway failed: ${String(error?.message ?? error).slice(0, 300)}`);
+    const summary = `Task execution failed: ${String(error?.message ?? error).slice(0, 500)}`;
+    await ctx.onLog?.("stderr", `${summary}\n`);
+    if (issue && taskId && checkedOut) {
+      try { await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: summary } }); } catch { /* Preserve the original error if reporting also fails. */ }
+    }
+    return executionResult(false, summary, { issueId: taskId || null });
   }
 }
 
-export function createServerAdapter() { return { type, execute, testEnvironment, listSkills, syncSkills, models, agentConfigurationDoc }; }
+export function createServerAdapter() { return { type, execute, testEnvironment, listSkills, syncSkills, models, agentConfigurationDoc, supportsLocalAgentJwt: true }; }

@@ -30,6 +30,17 @@ services:
       WORKSPACE_ROOT: /workspace/data/worktrees
       CODEX_GATEWAY_URL: ${CODEX_GATEWAY_URL:-http://host.docker.internal:8400}
       CODEX_GATEWAY_TOKEN: ${CODEX_GATEWAY_TOKEN:-dev-codex-gateway}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      AI_PM_MODEL: ${AI_PM_MODEL:-openrouter/free}
+      AI_ARCHITECT_MODEL: ${AI_ARCHITECT_MODEL:-openrouter/free}
+      AI_UIUX_MODEL: ${AI_UIUX_MODEL:-qwen2.5:0.5b}
+      AI_BACKEND_MODEL: ${AI_BACKEND_MODEL:-openrouter/free}
+      AI_FRONTEND_MODEL: ${AI_FRONTEND_MODEL:-openrouter/free}
+      AI_REVIEWER_MODEL: ${AI_REVIEWER_MODEL:-qwen2.5:0.5b}
+      AI_TESTER_MODEL: ${AI_TESTER_MODEL:-qwen2.5:0.5b}
+      AI_DEVOPS_MODEL: ${AI_DEVOPS_MODEL:-qwen2.5:0.5b}
     volumes: ["core-data:/app/data", ".:/workspace"]
     depends_on:
       core-api: {condition: service_healthy}
@@ -127,10 +138,22 @@ services:
       default:
         aliases:
           - core-postgres
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [ai]
+    ports: ["11434:11434"]
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 volumes:
   core-data:
   postgres-data:
   paperclip-data:
+  ollama-data:
 networks:
   default:
     name: ${COMPOSE_NETWORK_NAME:-ai_company_default}

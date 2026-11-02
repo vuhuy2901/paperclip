@@ -11,6 +11,14 @@ docker compose up -d --build
 docker compose ps
 ```
 
+## AI providers
+
+Role defaults are documented in `.env.example`: Project Manager, Architect, Backend and Frontend use OpenRouter Free; UI/UX, Tester and DevOps use Ollama; Code Reviewer uses Ollama by default. Copy `.env.example` to `.env` and add `OPENROUTER_API_KEY` locally if needed.
+
+Start the local Ollama service on Windows with `powershell -ExecutionPolicy Bypass -File scripts/setup_ai_providers.ps1`. This creates a persistent `ollama-data` volume and pulls `qwen2.5:0.5b` (use `-OllamaModel llama3.2:3b` later if the larger model is desired).
+
+The current execution contract still supports `local-deterministic`, `codex-cli` and `codex-gateway` runners only. Provider model defaults are prepared for the provider adapter; they do not silently turn deterministic runs into model runs.
+
 Nếu dùng Codex CLI đã đăng nhập trên Windows, bật gateway và cấu hình đủ tám role bằng một lệnh:
 
 ```powershell

@@ -16,3 +16,5 @@ packages/contracts/generated/*.json
 node_modules/
 dist/
 *.tsbuildinfo
+*.log
+.gemini/

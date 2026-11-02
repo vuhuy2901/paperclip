@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 CORE = os.getenv("CORE_PUBLIC_URL", "http://localhost:8001").rstrip("/")
 GATEWAY = "http://localhost:8400"
+CODEX_MODEL = os.getenv("CODEX_MODEL", "gpt-5.6-luna")
 SCOPES = {
     "project-manager": [".ai-company/handoffs/project-manager"],
     "architect": [".ai-company/handoffs/architect"],
@@ -74,7 +75,7 @@ def main() -> None:
         raise SystemExit("Core role list differs from this demo configuration; no roles were changed.")
     for role, scope in SCOPES.items():
         api(f"/api/roles/{role}", "PUT", {
-            "runner": "codex-gateway", "model": "configured-at-runtime",
+            "runner": "codex-gateway", "model": CODEX_MODEL,
             "timeout_seconds": 900, "sandbox": "workspace-write",
             "tool_policy": ["read", "write", "git"], "file_scope": scope,
         })

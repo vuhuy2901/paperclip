@@ -128,16 +128,21 @@ class Handler(BaseHTTPRequestHandler):
                 with ACTIVE_LOCK:
                     ACTIVE[request_id] = (process, cancel_event)
                 timed_out = False
-                deadline = time.monotonic() + int(payload.get("timeout_seconds", 900))
-                while process.poll() is None:
-                    if time.monotonic() >= deadline:
-                        timed_out = True
-                        process.terminate()
-                        break
-                    time.sleep(0.1)
-                stdout, stderr = process.communicate()
-                with ACTIVE_LOCK:
-                    ACTIVE.pop(request_id, None)
+                try:
+                    # Drain both pipes while Codex runs. Waiting on poll() first
+                    # deadlocks when a task emits more than the OS pipe buffer.
+                    stdout, stderr = process.communicate(timeout=int(payload.get("timeout_seconds", 900)))
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    process.terminate()
+                    try:
+                        stdout, stderr = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        stdout, stderr = process.communicate()
+                finally:
+                    with ACTIVE_LOCK:
+                        ACTIVE.pop(request_id, None)
             if cancel_event.is_set():
                 self.send_json(200, {"status": "cancelled", "summary": "Codex CLI cancelled through host gateway", "events": [], "failure_category": "cancelled", "request_id": request_id})
                 return
