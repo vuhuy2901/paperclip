@@ -180,13 +180,21 @@ export type WorkflowRunSettings = {
   maxRetries?: number;
 };
 
+export type NodeCompletionPolicy = "all_required" | "any_one" | "majority";
+
 export type NodeExecutionState = {
   nodeId: string;
   kind: WorkflowNodeKind;
   title: string;
   status: NodeExecutionStatus;
+  /** Primary mapped issue (first / only). */
   issueId: string | null;
   issueIdentifier: string | null;
+  /** All issues mapped to this node (multi-issue support — §14). */
+  issueIds: string[];
+  issueIdentifiers: string[];
+  /** Completion policy for multi-issue nodes. */
+  completionPolicy: NodeCompletionPolicy;
   agentId: string | null;
   agentName: string | null;
   agentRole: string | null;
@@ -195,6 +203,9 @@ export type NodeExecutionState = {
   error: string | null;
   retryCount: number;
   blockedByNodeIds: string[];
+  /** Last execution gate decision (for audit / tracing). */
+  lastGateCode?: string | null;
+  lastGateReason?: string | null;
 };
 
 export type WorkflowRunHistoryEntry = {
