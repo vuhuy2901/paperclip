@@ -56,6 +56,15 @@ function optionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function maskSecrets(text: string): string {
+  if (typeof text !== "string") return "";
+  return text
+    .replace(/sk-[a-zA-Z0-9_\-]{20,}/g, "sk-***")
+    .replace(/(?:api[_-]?key|token|password|secret)\s*[:=]\s*["']?([a-zA-Z0-9_\-\.]{8,})["']?/gi, (match, val) =>
+      match.replace(val, "***")
+    );
+}
+
 function workflowKey(workflowId: string): string {
   return `workflow:${workflowId}`;
 }
@@ -875,6 +884,49 @@ async function stepWorkflowRun(
       for (const iid of allIssueIds) {
         const issue = await ctx.issues.get(iid, companyId);
         issueStatuses.push(issue?.status ?? "unknown");
+
+        // Sync issue comments as agent execution history & artifacts
+        try {
+          const comments = await ctx.issues.listComments(iid, companyId);
+          for (const c of comments) {
+            const commentLogId = `comment-${c.id}`;
+            if (!run.executionHistory.some((e) => e.id === commentLogId)) {
+              const body = maskSecrets(c.body ?? "");
+              const isTool = /tool|invoc|exec|cli/i.test(body);
+              const isErr = /error|failed|exception/i.test(body);
+              const commentTimestamp = c.createdAt instanceof Date ? c.createdAt.toISOString() : (c.createdAt ? String(c.createdAt) : now);
+              run.executionHistory.push({
+                id: commentLogId,
+                timestamp: commentTimestamp,
+                level: isErr ? "error" : isTool ? "tool" : "info",
+                message: `[${issue?.identifier ?? iid}] ${body}`,
+                nodeId: node.id,
+                agentId: state.agentId ?? undefined,
+                issueId: iid,
+                stream: isErr ? "stderr" : "stdout"
+              });
+              modified = true;
+
+              const commitMatch = body.match(/(?:commit|sha)[:\s]+([0-9a-f]{7,40})/i);
+              if (commitMatch) {
+                if (!run.artifacts) run.artifacts = [];
+                if (!run.artifacts.some((a) => a.name.includes(commitMatch[1].slice(0, 7)))) {
+                  run.artifacts.push({
+                    id: randomUUID(),
+                    type: "commit",
+                    name: `Commit ${commitMatch[1].slice(0, 7)}`,
+                    description: `Git commit from step "${state.title}"`,
+                    nodeId: node.id,
+                    issueId: iid,
+                    createdAt: commentTimestamp
+                  });
+                }
+              }
+            }
+          }
+        } catch {
+          // ignore transient comment read error
+        }
       }
 
       const completion = evaluateNodeCompletion(issueStatuses, state.completionPolicy);
@@ -1114,10 +1166,11 @@ const plugin = definePlugin({
     ctx.data.register("project-workflow", async (params): Promise<ProjectWorkflowData> => {
       const companyId = requiredString(params.companyId, "companyId");
       const projectId = requiredString(params.projectId, "projectId");
-      const [project, workflows, agents, binding, allRuns] = await Promise.all([
+      const [project, workflows, agents, issues, binding, allRuns] = await Promise.all([
         ctx.projects.get(projectId, companyId),
         readIndex(ctx, companyId),
         ctx.agents.list({ companyId, limit: 200, offset: 0 }),
+        ctx.issues.list({ companyId, projectId, limit: 500, offset: 0 }),
         readProjectBinding(ctx, projectId),
         readRunsIndex(ctx, companyId)
       ]);
@@ -1129,6 +1182,7 @@ const plugin = definePlugin({
         project: project as unknown as ProjectWorkflowData["project"],
         workflows,
         agents: agents as unknown as ProjectWorkflowData["agents"],
+        issues: issues as unknown as ProjectWorkflowData["issues"],
         binding,
         monitor: binding ? await monitorWorkflow(ctx, binding.workflow) : [],
         activeRun,
@@ -1150,6 +1204,24 @@ const plugin = definePlugin({
       if (!run) throw new Error("Workflow run not found");
       const monitor = await monitorWorkflow(ctx, run.workflowSnapshot);
       return { run, monitor };
+    });
+
+    ctx.data.register("workflow-run-logs", async (params) => {
+      const companyId = requiredString(params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const nodeId = optionalString(params.nodeId);
+      const run = await readRun(ctx, companyId, runId);
+      if (!run) throw new Error("Workflow run not found");
+      let logs = run.executionHistory;
+      if (nodeId) logs = logs.filter((l) => l.nodeId === nodeId);
+      return {
+        runId,
+        status: run.status,
+        logs,
+        artifacts: run.artifacts ?? [],
+        nodeExecutionStates: run.nodeExecutionStates,
+        updatedAt: run.updatedAt
+      };
     });
 
     ctx.data.register("preflight-check", async (params): Promise<PreflightCheckResult> => {
@@ -1418,6 +1490,25 @@ const plugin = definePlugin({
       });
       await persistRun(ctx, run);
       return { run };
+    });
+
+    ctx.actions.register("clear-run-history", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const projectId = optionalString(params.projectId);
+      const allRuns = await readRunsIndex(ctx, companyId);
+      const toKeep = allRuns.filter(
+        (r) =>
+          r.status === "running" ||
+          r.status === "waiting_approval" ||
+          r.status === "paused" ||
+          (projectId && r.projectId !== projectId)
+      );
+      const toDelete = allRuns.filter((r) => !toKeep.some((k) => k.id === r.id));
+      for (const del of toDelete) {
+        await ctx.state.delete({ scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: runKey(del.id) });
+      }
+      await writeRunsIndex(ctx, companyId, toKeep);
+      return { deletedCount: toDelete.length };
     });
 
     ctx.actions.register("retry-failed-step", async (params, actionContext) => {

@@ -7,6 +7,7 @@ export type WorkflowNodeData = {
   description: string;
   issueId: string | null;
   issueIdentifier: string | null;
+  issueIds?: string[];
   agentId: string | null;
   agentName: string | null;
   agentRole: string | null;
@@ -15,6 +16,9 @@ export type WorkflowNodeData = {
   executionPolicy: "paperclip" | "human" | "visual-only";
   requiredRole?: string | null;
   model?: string | null;
+  runtimeDuration?: string | null;
+  lastGateCode?: string | null;
+  lastGateReason?: string | null;
   [key: string]: unknown;
 };
 
@@ -147,6 +151,7 @@ export type ProjectWorkflowData = {
   project: PaperclipProject | null;
   workflows: WorkflowIndexEntry[];
   agents: PaperclipAgent[];
+  issues?: PaperclipIssue[];
   binding: ProjectWorkflowBinding | null;
   monitor: MonitorNode[];
   activeRun?: WorkflowRunRecord | null;
@@ -165,12 +170,14 @@ export type WorkflowRunStatus =
 export type NodeExecutionStatus =
   | "pending"
   | "ready"
+  | "queued"
   | "running"
   | "waiting_approval"
   | "done"
   | "failed"
   | "blocked"
-  | "skipped";
+  | "skipped"
+  | "cancelled";
 
 export type WorkflowRunSettings = {
   maxConcurrentAgents: number;
@@ -208,14 +215,31 @@ export type NodeExecutionState = {
   lastGateReason?: string | null;
 };
 
+export type WorkflowRunArtifact = {
+  id: string;
+  type: "file" | "commit" | "pr" | "document" | "test" | "build" | "deployment";
+  name: string;
+  url?: string;
+  description?: string;
+  nodeId?: string;
+  issueId?: string;
+  createdAt: string;
+};
+
 export type WorkflowRunHistoryEntry = {
   id: string;
   timestamp: string;
-  level: "info" | "warn" | "error" | "action" | "approval";
+  level: "info" | "warn" | "error" | "action" | "approval" | "tool";
   message: string;
   nodeId?: string;
   agentId?: string;
   issueId?: string;
+  stream?: "stdout" | "stderr" | "system";
+  toolName?: string;
+  toolArgs?: unknown;
+  toolResult?: unknown;
+  durationMs?: number;
+  payload?: Record<string, unknown>;
 };
 
 export type WorkflowRunRecord = {
@@ -237,6 +261,7 @@ export type WorkflowRunRecord = {
   relatedIssueIds: string[];
   executionHistory: WorkflowRunHistoryEntry[];
   workflowSnapshot: WorkflowDefinition;
+  artifacts?: WorkflowRunArtifact[];
   currentStepTitle?: string;
   totalTokens?: number;
   updatedAt: string;

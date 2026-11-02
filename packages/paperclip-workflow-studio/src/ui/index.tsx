@@ -34,40 +34,51 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleDot,
+  Clock,
   Clock3,
+  Compass,
   Copy,
   Download,
   Diamond,
+  Eye,
+  ExternalLink,
+  FileCode,
+  FileText,
+  FolderGit2,
   GitBranch,
   GitFork,
+  History,
   Layers3,
   LayoutDashboard,
+  ListTree,
   Maximize2,
+  Minimize2,
   MoreHorizontal,
+  Package,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pause,
   Play,
   Plus,
   Redo2,
   RefreshCw,
   Rocket,
+  RotateCcw,
   Save,
   Search,
   Settings2,
+  ShieldAlert,
   Split,
   Square,
+  Terminal,
+  Trash2,
   Undo2,
   UserCheck,
   Workflow,
-  ZoomIn,
-  ZoomOut,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Trash2,
+  Wrench,
   X,
-  Pause,
-  RotateCcw,
-  FileText,
-  ShieldAlert,
-  ExternalLink
+  ZoomIn,
+  ZoomOut
 } from "lucide-react";
 import {
   useHostNavigation,
@@ -84,6 +95,7 @@ import type {
   MonitorNode,
   PaperclipAgent,
   PaperclipProject,
+  PaperclipIssue,
   ProjectWorkflowData,
   ValidationIssue,
   ValidationResult,
@@ -97,13 +109,18 @@ import type {
   WorkflowRunRecord,
   WorkflowRunSummary,
   WorkflowRunStatus,
+  WorkflowRunHistoryEntry,
+  WorkflowRunArtifact,
   PreflightCheckResult,
   NodeExecutionState,
   WorkflowRunSettings
 } from "../types.js";
 import { studioStyles } from "./styles.js";
+import { TerminalViewer } from "./terminal-viewer.js";
+import { ProjectTaskTreeView } from "./task-tree.js";
+import { RunHistoryView } from "./run-history-view.js";
 
-type StudioMode = "designer" | "monitor" | "templates" | "control-center";
+type StudioMode = "designer" | "monitor" | "history" | "templates" | "control-center";
 type FlowNode = Node<WorkflowNodeData, "workflowNode">;
 type FlowEdge = Edge<Record<string, never>, "smoothstep">;
 type DesignerContextMenu =
@@ -152,17 +169,38 @@ function nodeIcon(kind: WorkflowNodeKind): React.ReactNode {
 function WorkflowCardNode({ data, selected }: NodeProps<FlowNode>) {
   const avatarUrl = typeof data.avatarUrl === "string" ? data.avatarUrl : null;
   const isTask = data.kind === "task" || data.kind === "approval";
-  const stateClass = ["running", "in_progress"].includes(data.status)
-    ? "running"
-    : ["error", "failed"].includes(data.status)
-    ? "error"
-    : data.status === "waiting_approval"
-    ? "waiting_approval"
-    : ["done", "completed"].includes(data.status)
-    ? "completed"
-    : data.status === "blocked"
-    ? "blocked"
-    : "";
+  const status = (data.status as string) || "pending";
+
+  const isRunning = ["running", "in_progress"].includes(status);
+  const isFailed = ["error", "failed"].includes(status);
+  const isApproval = status === "waiting_approval";
+  const isCompleted = ["done", "completed"].includes(status);
+  const isBlocked = status === "blocked";
+  const isReady = status === "ready";
+  const isQueued = status === "queued";
+  const isCancelled = ["cancelled", "skipped"].includes(status);
+
+  const stateClass = isRunning
+    ? "wfs-node-running running"
+    : isFailed
+    ? "wfs-node-failed error"
+    : isApproval
+    ? "wfs-node-waiting_approval waiting_approval"
+    : isCompleted
+    ? "wfs-node-completed completed"
+    : isBlocked
+    ? "wfs-node-blocked blocked"
+    : isReady
+    ? "wfs-node-ready"
+    : isQueued
+    ? "wfs-node-queued"
+    : isCancelled
+    ? "wfs-node-cancelled"
+    : "wfs-node-pending";
+
+  const multiIssueCount = Array.isArray(data.issueIds) ? data.issueIds.length : 0;
+  const runtimeDuration = typeof data.runtimeDuration === "string" ? data.runtimeDuration : null;
+
   return (
     <div className={`wfs-node ${selected ? "selected" : ""} ${stateClass}`}>
       {data.kind !== "start" && <Handle className="wfs-handle target" type="target" position={Position.Left} />}
@@ -178,12 +216,23 @@ function WorkflowCardNode({ data, selected }: NodeProps<FlowNode>) {
       </div>
       <div className="wfs-node-body">
         <div className="wfs-node-title">{data.title}</div>
-        {isTask && <div className="wfs-node-id">{data.issueIdentifier ?? "Not published"}</div>}
+        {isTask && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, marginTop: 3 }}>
+            <span className="wfs-node-id">{data.issueIdentifier ?? "Not published"}</span>
+            {multiIssueCount > 1 && (
+              <span className="wfs-node-multi-badge">📦 {multiIssueCount} tasks</span>
+            )}
+          </div>
+        )}
         <div className="wfs-node-foot">
-          <span className={`wfs-status wfs-status-${data.status}`}>
-            <span className="wfs-status-dot" />{statusLabel(data.status)}
+          <span className={`wfs-status wfs-status-${status}`}>
+            <span className="wfs-status-dot" />{statusLabel(status)}
           </span>
-          <span className="wfs-node-model">{data.model ?? data.priority}</span>
+          {isRunning && runtimeDuration ? (
+            <span className="wfs-node-timer">⏱️ {runtimeDuration}</span>
+          ) : (
+            <span className="wfs-node-model">{data.model ?? data.priority}</span>
+          )}
         </div>
       </div>
       {data.kind !== "end" && <Handle className="wfs-handle source" type="source" position={Position.Right} />}
@@ -207,27 +256,84 @@ function workflowToNodes(
     const runState = runNodeStates ? runNodeStates[node.id] : null;
     const status = runState?.status ?? live?.issue?.status ?? node.data.status;
     const issueIdentifier = runState?.issueIdentifier ?? live?.issue?.identifier ?? node.data.issueIdentifier;
+
+    let runtimeDuration: string | null = null;
+    if (runState?.startedAt) {
+      const start = new Date(runState.startedAt).getTime();
+      const end = runState.finishedAt ? new Date(runState.finishedAt).getTime() : Date.now();
+      const diff = Math.max(0, Math.floor((end - start) / 1000));
+      const m = Math.floor(diff / 60);
+      const s = diff % 60;
+      runtimeDuration = `${m}m ${s}s`;
+    }
+
     return {
       ...node,
       data: {
         ...node.data,
         status,
         issueIdentifier,
+        issueIds: runState?.issueIds ?? (node.data.issueIds as string[] | undefined) ?? (node.data.issueId ? [node.data.issueId] : []),
         agentName: runState?.agentName ?? agent?.name ?? node.data.agentName,
         agentRole: runState?.agentRole ?? agent?.title ?? agent?.role ?? node.data.agentRole,
         model: typeof agent?.adapterConfig?.model === "string" ? agent.adapterConfig.model : node.data.model,
-        avatarUrl: agent?.avatarUrl ?? agent?.icon ?? null
+        avatarUrl: agent?.avatarUrl ?? agent?.icon ?? null,
+        startedAt: runState?.startedAt ?? null,
+        finishedAt: runState?.finishedAt ?? null,
+        error: runState?.error ?? null,
+        blockedByNodeIds: runState?.blockedByNodeIds ?? [],
+        lastGateCode: runState?.lastGateCode ?? null,
+        lastGateReason: runState?.lastGateReason ?? null,
+        runtimeDuration
       }
     };
   });
 }
 
-function workflowToEdges(edges: WorkflowEdge[]): FlowEdge[] {
-  return edges.map((edge) => ({
-    ...edge,
-    type: "smoothstep",
-    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 }
-  }));
+function workflowToEdges(
+  edges: WorkflowEdge[],
+  nodeStates?: Record<string, NodeExecutionState | undefined>
+): FlowEdge[] {
+  return edges.map((edge) => {
+    const sourceStatus = nodeStates?.[edge.source]?.status;
+    const targetStatus = nodeStates?.[edge.target]?.status;
+
+    let edgeClass = "";
+    let isAnimated = false;
+    let arrowColor: string | undefined = undefined;
+
+    // Active handoff: source completed and target is running, ready, or queued
+    if (
+      sourceStatus === "done" &&
+      (targetStatus === "running" || targetStatus === "ready" || targetStatus === "queued")
+    ) {
+      edgeClass = "active-handoff";
+      isAnimated = true;
+      arrowColor = "#3b82f6";
+    } else if (sourceStatus === "done" && targetStatus === "done") {
+      edgeClass = "completed-edge";
+      arrowColor = "#10b981";
+    } else if (targetStatus === "blocked") {
+      edgeClass = "blocked-edge";
+      arrowColor = "#f59e0b";
+    } else if (sourceStatus === "failed") {
+      edgeClass = "failed-edge";
+      arrowColor = "#ef4444";
+    }
+
+    return {
+      ...edge,
+      type: "smoothstep",
+      animated: isAnimated,
+      className: edgeClass,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 16,
+        height: 16,
+        color: arrowColor
+      }
+    };
+  });
 }
 
 function flowToWorkflow(workflow: WorkflowDefinition, nodes: FlowNode[], edges: FlowEdge[], viewport?: Viewport): WorkflowDefinition {
@@ -964,6 +1070,242 @@ function DesignerCanvas({
   </div>;
 }
 
+function LiveNodeInspector({
+  node,
+  bootstrap,
+  monitor,
+  run,
+  close,
+  openIssue,
+  startResize
+}: {
+  node: FlowNode | null;
+  bootstrap: BootstrapData;
+  monitor?: MonitorNode;
+  run?: WorkflowRunRecord | null;
+  close: () => void;
+  openIssue: (issueId: string) => void;
+  startResize?: (event: React.PointerEvent) => void;
+}) {
+  const [tab, setTab] = useState<"overview" | "logs" | "timeline" | "artifacts" | "issues">("overview");
+
+  if (!node) {
+    return (
+      <aside className="wfs-inspector">
+        <div className="wfs-inspector-empty">
+          <div>
+            <Compass size={24} style={{ marginBottom: 8, color: "var(--muted-foreground)" }} /><br />
+            Select a workflow node to inspect real-time agent activity, terminal logs, and outputs.
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  const data = node.data;
+  const status = (data.status as string) || "pending";
+  const issueIds = Array.isArray(data.issueIds) && data.issueIds.length > 0
+    ? data.issueIds
+    : data.issueId ? [data.issueId] : [];
+  
+  const mappedIssues = bootstrap.issues.filter((i) => issueIds.includes(i.id));
+
+  // Filter logs for this node or its mapped issues
+  const allLogs = run?.executionHistory ?? [];
+  const nodeLogs = allLogs.filter((l) =>
+    l.nodeId === node.id || (l.issueId && issueIds.includes(l.issueId))
+  );
+  // If no node-specific logs yet, allow viewing all run logs
+  const displayLogs = nodeLogs.length > 0 ? nodeLogs : allLogs;
+
+  const nodeArtifacts = (run?.artifacts ?? []).filter(
+    (a) => a.nodeId === node.id || (a.issueId && issueIds.includes(a.issueId))
+  );
+
+  return (
+    <aside className="wfs-inspector" style={{ width: 380, display: "flex", flexDirection: "column" }}>
+      {startResize && <div className="wfs-resize-handle right" onPointerDown={startResize} title="Resize inspector" />}
+      
+      <div className="wfs-inspector-head">
+        <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+          <strong style={{ fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {data.title}
+          </strong>
+          <span className={`wfs-badge wfs-badge-${status === "running" ? "published" : status === "failed" ? "draft" : ""}`} style={{ fontSize: 9 }}>
+            {statusLabel(status)}
+          </span>
+        </div>
+        <button className="wfs-button wfs-icon-button" onClick={close} aria-label="Close inspector">
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* 5-Tab Bar */}
+      <div className="wfs-tabs" style={{ margin: "8px 10px 0", flexWrap: "wrap", height: "auto", padding: 2 }}>
+        <button className="wfs-tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>
+          <LayoutDashboard size={11} style={{ marginRight: 4 }} /> Overview
+        </button>
+        <button className="wfs-tab" aria-selected={tab === "logs"} onClick={() => setTab("logs")}>
+          <Terminal size={11} style={{ marginRight: 4 }} /> Live Logs ({nodeLogs.length})
+        </button>
+        <button className="wfs-tab" aria-selected={tab === "timeline"} onClick={() => setTab("timeline")}>
+          <Clock3 size={11} style={{ marginRight: 4 }} /> Timeline
+        </button>
+        <button className="wfs-tab" aria-selected={tab === "artifacts"} onClick={() => setTab("artifacts")}>
+          <Box size={11} style={{ marginRight: 4 }} /> Artifacts ({nodeArtifacts.length})
+        </button>
+        {mappedIssues.length > 0 && (
+          <button className="wfs-tab" aria-selected={tab === "issues"} onClick={() => setTab("issues")}>
+            <Layers3 size={11} style={{ marginRight: 4 }} /> Tasks ({mappedIssues.length})
+          </button>
+        )}
+      </div>
+
+      <div className="wfs-inspector-content" style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+        {tab === "overview" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            {/* Agent Profile Card */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 8, background: "var(--wfs-panel)", border: "1px solid var(--border)" }}>
+              <div className="wfs-agent-avatar" style={{ width: 34, height: 34, fontSize: 11 }}>
+                {data.agentName ? initials(data.agentName) : "AI"}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <strong style={{ fontSize: 12, display: "block" }}>{data.agentName ?? (data.kind === "approval" ? "Human Product Owner" : "Automated System")}</strong>
+                <span style={{ fontSize: 10, color: "var(--muted-foreground)" }}>{data.agentRole ?? "Worker"} • {data.model ?? "Standard Runtime"}</span>
+              </div>
+            </div>
+
+            <div className="wfs-meta-grid">
+              <div className="wfs-meta"><span>Step Type</span><strong>{data.kind}</strong></div>
+              <div className="wfs-meta"><span>Status</span><strong>{statusLabel(status)}</strong></div>
+              <div className="wfs-meta"><span>Duration</span><strong>{data.runtimeDuration ?? "Pending"}</strong></div>
+              <div className="wfs-meta"><span>Priority</span><strong>{data.priority || "Normal"}</strong></div>
+            </div>
+
+            {/* Mapped Paperclip Issue */}
+            {data.issueId && (
+              <div style={{ padding: 10, borderRadius: 8, background: "var(--wfs-panel)", border: "1px solid var(--border)", display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 10, textTransform: "uppercase", color: "var(--muted-foreground)", fontWeight: 700 }}>
+                  Primary Paperclip Issue
+                </span>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 11, fontFamily: "monospace" }}>{data.issueIdentifier ?? data.issueId}</span>
+                  <button className="wfs-button" style={{ height: 24, fontSize: 10 }} onClick={() => openIssue(data.issueId!)}>
+                    <ExternalLink size={11} /> Open Issue
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Execution Gate Details */}
+            {data.lastGateCode && (
+              <div style={{ padding: 10, borderRadius: 8, background: data.lastGateCode.includes("DENY") || data.lastGateCode.includes("BLOCKED") ? "color-mix(in srgb, #f59e0b 12%, var(--background))" : "color-mix(in srgb, #10b981 10%, var(--background))", border: "1px solid var(--border)", fontSize: 11 }}>
+                <strong>Execution Gate: [{data.lastGateCode}]</strong>
+                <p style={{ margin: "3px 0 0", fontSize: 10, color: "var(--muted-foreground)" }}>{data.lastGateReason}</p>
+              </div>
+            )}
+
+            {/* Predecessors / Blocked by */}
+            {monitor?.blockedBy && monitor.blockedBy.length > 0 && (
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase" }}>
+                  Waiting On Predecessors ({monitor.blockedBy.length})
+                </span>
+                {monitor.blockedBy.map((blocker) => (
+                  <div key={blocker.id} style={{ padding: "6px 8px", background: "var(--wfs-panel)", borderRadius: 6, border: "1px solid var(--border)", fontSize: 10.5 }}>
+                    <strong>{blocker.identifier ?? blocker.id}</strong>: {blocker.title}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "logs" && (
+          <div style={{ height: "calc(100% - 10px)", minHeight: 420 }}>
+            <TerminalViewer
+              logs={displayLogs}
+              isRunning={status === "running"}
+              title={nodeLogs.length > 0 ? `Step Logs: ${data.title}` : "Run Logs (Node Filter Empty)"}
+              agentName={data.agentName}
+            />
+          </div>
+        )}
+
+        {tab === "timeline" && (
+          <div className="wfs-timeline">
+            {nodeLogs.length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center", color: "var(--muted-foreground)", fontSize: 11 }}>
+                No timeline events recorded for this step yet.
+              </div>
+            ) : (
+              nodeLogs.map((entry) => (
+                <div key={entry.id} className="wfs-timeline-item">
+                  <div className={`wfs-timeline-dot ${entry.level === "error" ? "error" : entry.level === "approval" ? "approval" : entry.level === "action" ? "done" : ""}`}>
+                    {entry.level === "error" ? "!" : entry.level === "approval" ? "PO" : "✓"}
+                  </div>
+                  <div className="wfs-timeline-card">
+                    <div className="wfs-timeline-head">
+                      <span className={`wfs-badge wfs-badge-${entry.level}`} style={{ fontSize: 9 }}>
+                        {entry.level.toUpperCase()}
+                      </span>
+                      <time className="wfs-timeline-time">{new Date(entry.timestamp).toLocaleTimeString()}</time>
+                    </div>
+                    <div style={{ marginTop: 3, fontSize: 11, lineHeight: 1.4 }}>{entry.message}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {tab === "artifacts" && (
+          <div className="wfs-artifacts-list">
+            {nodeArtifacts.length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center", color: "var(--muted-foreground)", fontSize: 11 }}>
+                No code or file artifacts linked to this step yet.
+              </div>
+            ) : (
+              nodeArtifacts.map((art) => (
+                <div key={art.id} className="wfs-artifact-card">
+                  <div className="wfs-artifact-icon">
+                    <FileCode size={16} />
+                  </div>
+                  <div className="wfs-artifact-info">
+                    <strong>{art.name}</strong>
+                    <small>{art.description || art.type}</small>
+                  </div>
+                  {art.url && (
+                    <a className="wfs-button" style={{ height: 24, fontSize: 10 }} href={art.url} target="_blank" rel="noreferrer">
+                      <ExternalLink size={11} /> Open
+                    </a>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {tab === "issues" && (
+          <div style={{ display: "grid", gap: 6 }}>
+            {mappedIssues.map((subtask) => (
+              <div key={subtask.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", background: "var(--wfs-panel)", borderRadius: 7, border: "1px solid var(--border)" }}>
+                <div>
+                  <strong style={{ fontSize: 11.5, display: "block" }}>{subtask.identifier ? `[${subtask.identifier}] ` : ""}{subtask.title}</strong>
+                  <span style={{ fontSize: 9.5, color: "var(--muted-foreground)" }}>Status: {subtask.status}</span>
+                </div>
+                <button className="wfs-button" style={{ height: 24, fontSize: 10 }} onClick={() => openIssue(subtask.id)}>
+                  <ExternalLink size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
 function MonitorCanvas({
   bootstrap,
   data,
@@ -979,9 +1321,18 @@ function MonitorCanvas({
 }) {
   const navigation = useHostNavigation();
   const toast = usePluginToast();
+  const flow = useReactFlow();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
+  const [autoFollow, setAutoFollow] = useState(true);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  // Replay mode state
+  const [replayMode, setReplayMode] = useState(false);
+  const [replayStep, setReplayStep] = useState(0);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 5>(1);
 
   const runParams = useMemo(() => (runId && companyId ? { companyId, runId } : undefined), [companyId, runId]);
   const runData = usePluginData<{ run: WorkflowRunRecord; monitor: MonitorNode[] }>("workflow-run", runParams);
@@ -997,11 +1348,43 @@ function MonitorCanvas({
   const currentWorkflow = run ? run.workflowSnapshot : data.workflow;
   const currentMonitor = runData.data?.monitor ?? data.monitor;
 
+  // Replay calculation: if replayMode is active, compute historical node execution states up to replayStep
+  const effectiveNodeStates = useMemo(() => {
+    if (!run) return undefined;
+    if (!replayMode) return run.nodeExecutionStates;
+
+    const historical: Record<string, NodeExecutionState> = {};
+    for (const [nid, st] of Object.entries(run.nodeExecutionStates)) {
+      historical[nid] = { ...st, status: "pending" };
+    }
+    const upTo = Math.min(replayStep, run.executionHistory.length - 1);
+    for (let i = 0; i <= upTo; i++) {
+      const entry = run.executionHistory[i];
+      if (entry.nodeId && historical[entry.nodeId]) {
+        if (entry.level === "info" && entry.message.includes("is now READY")) {
+          historical[entry.nodeId].status = "ready";
+        } else if (entry.level === "action" && entry.message.includes("Dispatching step")) {
+          historical[entry.nodeId].status = "running";
+        } else if (entry.level === "approval") {
+          historical[entry.nodeId].status = "waiting_approval";
+        } else if (entry.level === "info" && entry.message.includes("Step completed")) {
+          historical[entry.nodeId].status = "done";
+        } else if (entry.level === "error") {
+          historical[entry.nodeId].status = "failed";
+        }
+      }
+    }
+    return historical;
+  }, [run, replayMode, replayStep]);
+
   const nodes = useMemo(
-    () => workflowToNodes(currentWorkflow, bootstrap.agents, currentMonitor, run?.nodeExecutionStates),
-    [currentWorkflow, bootstrap.agents, currentMonitor, run?.nodeExecutionStates]
+    () => workflowToNodes(currentWorkflow, bootstrap.agents, currentMonitor, effectiveNodeStates),
+    [currentWorkflow, bootstrap.agents, currentMonitor, effectiveNodeStates]
   );
-  const edges = useMemo(() => workflowToEdges(currentWorkflow.edges), [currentWorkflow.edges]);
+  const edges = useMemo(
+    () => workflowToEdges(currentWorkflow.edges, effectiveNodeStates),
+    [currentWorkflow.edges, effectiveNodeStates]
+  );
   const monitorByNode = useMemo(() => new Map(currentMonitor.map((item) => [item.nodeId, item])), [currentMonitor]);
 
   // Elapsed time calculation
@@ -1036,7 +1419,7 @@ function MonitorCanvas({
           // ignore transient poll error
         }
       }
-    }, 3500);
+    }, 3000);
     return () => window.clearInterval(interval);
   }, [run?.status, runId, companyId, stepAction, runData.refresh]);
 
@@ -1048,6 +1431,33 @@ function MonitorCanvas({
     }, 8000);
     return () => window.clearInterval(timer);
   }, [runId, refresh]);
+
+  // Auto Follow Running Node Effect
+  useEffect(() => {
+    if (!autoFollow) return;
+    const runningNode = nodes.find((n) => ["running", "in_progress"].includes(n.data.status));
+    if (runningNode) {
+      flow.setCenter(runningNode.position.x + 100, runningNode.position.y + 60, {
+        duration: 450,
+        zoom: Math.max(0.75, flow.getZoom())
+      });
+    }
+  }, [nodes, autoFollow, flow]);
+
+  // Replay timer
+  useEffect(() => {
+    if (!replayPlaying || !run) return;
+    const interval = window.setInterval(() => {
+      setReplayStep((curr) => {
+        if (curr >= run.executionHistory.length - 1) {
+          setReplayPlaying(false);
+          return curr;
+        }
+        return curr + 1;
+      });
+    }, 1000 / replaySpeed);
+    return () => window.clearInterval(interval);
+  }, [replayPlaying, replaySpeed, run]);
 
   // Metrics
   const nodeStates = run ? Object.values(run.nodeExecutionStates) : [];
@@ -1147,83 +1557,165 @@ function MonitorCanvas({
     }
   };
 
+  const copyRunId = () => {
+    if (!run?.id) return;
+    navigator.clipboard.writeText(run.id);
+    toast({ title: "Run ID copied", body: run.id, tone: "success" });
+  };
+
   const selected = nodes.find((node) => node.id === selectedNodeId) ?? null;
 
   return (
-    <div className={`wfs-body ${selected ? "" : "inspector-closed"}`} style={{ gridTemplateColumns: selected ? "minmax(0,1fr) 306px" : "minmax(0,1fr) 0" }}>
+    <div
+      className={`wfs-body ${selected ? "" : "inspector-closed"} ${fullscreen ? "wfs-fullscreen" : ""}`}
+      style={{ gridTemplateColumns: selected ? "minmax(0,1fr) 380px" : "minmax(0,1fr) 0" }}
+    >
       <main className="wfs-canvas">
-        {/* Top Monitor Bar */}
-        <div className="wfs-monitor-bar" style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+        {/* Top Live Monitor Header Bar */}
+        <div className="wfs-monitor-bar" style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
           {run && (
-            <div className="wfs-monitor-stat">
+            <div className="wfs-monitor-stat" style={{ cursor: "pointer" }} onClick={copyRunId} title="Click to copy Run ID">
               <span>Run ID</span>
-              <strong style={{ fontFamily: "monospace", fontSize: 11 }}>{run.id}</strong>
+              <strong style={{ fontFamily: "monospace", fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+                {run.id.slice(0, 8)}... <Copy size={11} color="var(--muted-foreground)" />
+              </strong>
             </div>
           )}
+
+          <div className="wfs-monitor-stat">
+            <span>Status</span>
+            <strong style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, textTransform: "capitalize" }}>
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background:
+                    run?.status === "running" ? "#22c55e" : run?.status === "failed" ? "#ef4444" : "#3b82f6"
+                }}
+              />
+              {run ? statusLabel(run.status) : "Live Preview"}
+            </strong>
+          </div>
+
           <div className="wfs-monitor-stat">
             <span>Progress</span>
-            <strong>{progress}%</strong>
+            <strong>{progress}% ({done}/{total})</strong>
           </div>
-          <div className="wfs-progress">
+
+          <div className="wfs-progress" style={{ width: 120 }}>
             <span style={{ width: `${progress}%` }} />
           </div>
+
           <div className="wfs-monitor-stat">
-            <span>Running</span>
-            <strong>{running}</strong>
+            <span>Active Agents</span>
+            <strong style={{ color: running > 0 ? "#2563eb" : "inherit" }}>{running}</strong>
           </div>
-          <div className="wfs-monitor-stat">
-            <span>Completed</span>
-            <strong>{done}/{total}</strong>
-          </div>
-          <div className="wfs-monitor-stat">
-            <span>Blocked</span>
-            <strong>{blocked}</strong>
-          </div>
+
+          {blocked > 0 && (
+            <div className="wfs-monitor-stat" style={{ color: "#d97706" }}>
+              <span>Blocked</span>
+              <strong>{blocked}</strong>
+            </div>
+          )}
+
           {failed > 0 && (
             <div className="wfs-monitor-stat" style={{ color: "#dc2626" }}>
               <span>Failed</span>
               <strong>{failed}</strong>
             </div>
           )}
+
           {run && (
             <div className="wfs-monitor-stat">
               <span>Elapsed</span>
-              <strong>{elapsed}</strong>
+              <strong style={{ fontFamily: "monospace" }}>{elapsed}</strong>
             </div>
           )}
 
-          {/* Run Controls */}
-          {run && (
-            <div className="wfs-run-controls" style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-              {run.status === "running" && (
-                <button className="wfs-button" disabled={busyAction} onClick={handlePause} title="Pause Workflow">
-                  <Pause size={13} /> Pause
-                </button>
-              )}
-              {run.status === "paused" && (
-                <button className="wfs-button wfs-button-primary" disabled={busyAction} onClick={handleResume} title="Resume Workflow">
-                  <Play size={13} /> Resume
-                </button>
-              )}
-              {!["completed", "cancelled"].includes(run.status) && (
-                <button className="wfs-button wfs-button-danger" disabled={busyAction} onClick={handleStop} title="Stop Workflow">
-                  <Square size={13} /> Stop
-                </button>
-              )}
-              {failed > 0 && (
-                <button className="wfs-button" disabled={busyAction} onClick={handleRetry} title="Retry Failed Step">
-                  <RotateCcw size={13} /> Retry Step
-                </button>
-              )}
-              <button className="wfs-button" onClick={() => setLogsOpen((v) => !v)} title="View Execution Logs">
-                <FileText size={13} /> Logs ({run.executionHistory.length})
+          {/* PO Action Controls */}
+          <div className="wfs-run-controls" style={{ marginLeft: "auto", display: "flex", gap: 5, flexWrap: "wrap" }}>
+            {run && run.status === "running" && (
+              <button className="wfs-button" disabled={busyAction} onClick={handlePause} title="Pause Workflow Execution">
+                <Pause size={13} /> Pause
               </button>
-            </div>
-          )}
+            )}
+            {run && run.status === "paused" && (
+              <button className="wfs-button wfs-button-primary" disabled={busyAction} onClick={handleResume} title="Resume Workflow Execution">
+                <Play size={13} /> Resume
+              </button>
+            )}
+            {run && !["completed", "cancelled"].includes(run.status) && (
+              <button className="wfs-button wfs-button-danger" disabled={busyAction} onClick={handleStop} title="Stop and Cancel Workflow">
+                <Square size={13} /> Stop
+              </button>
+            )}
+            {failed > 0 && (
+              <button className="wfs-button" disabled={busyAction} onClick={handleRetry} title="Retry Failed Step">
+                <RotateCcw size={13} /> Retry
+              </button>
+            )}
 
-          <button className="wfs-button wfs-icon-button" onClick={() => { if (runId && runParams) runData.refresh(); else refresh(); }} title="Refresh now">
-            <RefreshCw size={14} />
-          </button>
+            {/* Replay Mode Toggle */}
+            {run && (
+              <button
+                className={`wfs-button ${replayMode ? "wfs-button-primary" : ""}`}
+                onClick={() => {
+                  setReplayMode((v) => !v);
+                  if (!replayMode) setReplayStep(run.executionHistory.length - 1);
+                }}
+                title="Toggle Historical Replay Mode"
+              >
+                <History size={13} /> {replayMode ? "Exit Replay" : "Replay"}
+              </button>
+            )}
+
+            {/* Auto Follow Toggle */}
+            <button
+              className={`wfs-button ${autoFollow ? "wfs-button-primary" : ""}`}
+              onClick={() => setAutoFollow((v) => !v)}
+              title={autoFollow ? "Auto Follow Running Node: ACTIVE" : "Auto Follow Running Node: OFF"}
+            >
+              <Eye size={13} /> {autoFollow ? "Follow ON" : "Follow"}
+            </button>
+
+            {/* Fit View */}
+            <button
+              className="wfs-button wfs-icon-button"
+              onClick={() => flow.fitView({ padding: 0.2, duration: 400 })}
+              title="Fit View"
+            >
+              <Maximize2 size={13} />
+            </button>
+
+            {/* Fullscreen Toggle */}
+            <button
+              className="wfs-button wfs-icon-button"
+              onClick={() => setFullscreen((v) => !v)}
+              title={fullscreen ? "Exit Fullscreen" : "Fullscreen Monitor"}
+            >
+              {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
+
+            {/* Global Console Toggle */}
+            {run && (
+              <button
+                className={`wfs-button ${logsOpen ? "wfs-button-primary" : ""}`}
+                onClick={() => setLogsOpen((v) => !v)}
+                title="Global Event Stream & Terminal"
+              >
+                <Terminal size={13} /> Logs ({run.executionHistory.length})
+              </button>
+            )}
+
+            <button
+              className="wfs-button wfs-icon-button"
+              onClick={() => { if (runId && runParams) runData.refresh(); else refresh(); }}
+              title="Refresh status"
+            >
+              <RefreshCw size={13} />
+            </button>
+          </div>
         </div>
 
         {/* PO Approval Gate Banner */}
@@ -1286,53 +1778,111 @@ function MonitorCanvas({
         >
           <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
           <Controls showInteractive={false} />
-          <MiniMap pannable zoomable />
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(node) => {
+              const st = node.data?.status;
+              if (st === "done" || st === "completed") return "#10b981";
+              if (st === "running" || st === "in_progress") return "#2563eb";
+              if (st === "blocked") return "#f59e0b";
+              if (st === "waiting_approval") return "#8b5cf6";
+              if (st === "failed") return "#ef4444";
+              return "#94a3b8";
+            }}
+          />
         </ReactFlow>
 
-        {/* Slide-in Execution Logs Drawer */}
+        {/* Historical Replay Scrubber Bar */}
+        {replayMode && run && (
+          <div className="wfs-replay-bar">
+            <button
+              className="wfs-button wfs-icon-button"
+              onClick={() => setReplayPlaying((v) => !v)}
+              title={replayPlaying ? "Pause Replay" : "Play Replay"}
+            >
+              {replayPlaying ? <Pause size={13} /> : <Play size={13} />}
+            </button>
+
+            <button
+              className="wfs-button wfs-icon-button"
+              disabled={replayStep <= 0}
+              onClick={() => setReplayStep((s) => Math.max(0, s - 1))}
+              title="Step Backward"
+            >
+              <Undo2 size={13} />
+            </button>
+
+            <button
+              className="wfs-button wfs-icon-button"
+              disabled={replayStep >= run.executionHistory.length - 1}
+              onClick={() => setReplayStep((s) => Math.min(run.executionHistory.length - 1, s + 1))}
+              title="Step Forward"
+            >
+              <Redo2 size={13} />
+            </button>
+
+            <input
+              type="range"
+              className="wfs-replay-scrubber"
+              min={0}
+              max={Math.max(0, run.executionHistory.length - 1)}
+              value={replayStep}
+              onChange={(e) => setReplayStep(Number(e.target.value))}
+            />
+
+            <span className="wfs-replay-time">
+              Step {replayStep + 1} of {run.executionHistory.length}
+            </span>
+
+            <select
+              style={{ height: 26, fontSize: 10, borderRadius: 5 }}
+              value={replaySpeed}
+              onChange={(e) => setReplaySpeed(Number(e.target.value) as any)}
+              title="Replay Speed"
+            >
+              <option value={1}>1x Speed</option>
+              <option value={2}>2x Speed</option>
+              <option value={5}>5x Speed</option>
+            </select>
+          </div>
+        )}
+
+        {/* Slide-in Global Terminal / Execution Console Drawer */}
         {logsOpen && run && (
-          <aside className="wfs-logs-drawer">
+          <aside className="wfs-logs-drawer" style={{ width: 560 }}>
             <div className="wfs-logs-head">
-              <div>
-                <strong>Execution Logs</strong>
-                <span style={{ fontSize: 10, color: "var(--muted-foreground)", display: "block" }}>
-                  Run ID: {run.id}
-                </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Terminal size={15} color="#58a6ff" />
+                <div>
+                  <strong>Global Execution Console</strong>
+                  <span style={{ fontSize: 10, color: "var(--muted-foreground)", display: "block" }}>
+                    Run ID: {run.id} • {run.projectName}
+                  </span>
+                </div>
               </div>
               <button className="wfs-button wfs-icon-button" onClick={() => setLogsOpen(false)}>
                 <X size={14} />
               </button>
             </div>
-            <div className="wfs-logs-list">
-              {run.executionHistory.length === 0 ? (
-                <div style={{ padding: 16, color: "var(--muted-foreground)", fontSize: 11, textAlign: "center" }}>
-                  No execution logs recorded yet.
-                </div>
-              ) : (
-                [...run.executionHistory].reverse().map((entry) => (
-                  <div key={entry.id} className="wfs-log-entry">
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span className={`wfs-badge wfs-badge-${entry.level}`} style={{ fontSize: 9 }}>
-                        {entry.level.toUpperCase()}
-                      </span>
-                      <time className="wfs-log-time">{new Date(entry.timestamp).toLocaleTimeString()}</time>
-                    </div>
-                    <div style={{ marginTop: 2, fontSize: 11, lineHeight: 1.4 }}>{entry.message}</div>
-                  </div>
-                ))
-              )}
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <TerminalViewer
+                logs={run.executionHistory}
+                isRunning={run.status === "running"}
+                title="Global Event Stream"
+              />
             </div>
           </aside>
         )}
       </main>
 
+      {/* Right Node Inspector with 5 Tabs */}
       {selected && (
-        <NodeInspector
+        <LiveNodeInspector
           node={selected}
           bootstrap={bootstrap}
           monitor={monitorByNode.get(selected.id)}
-          readOnly
-          updateNode={() => undefined}
+          run={run}
           close={() => setSelectedNodeId(null)}
           openIssue={(id) => navigation.navigate(`/issues/${id}`)}
         />
@@ -1617,6 +2167,7 @@ export function AgentControlCenterView({
   onOpenRunMonitor,
   openWorkflow,
   openTemplates,
+  openHistory,
   openList,
   refreshBootstrap
 }: {
@@ -1626,6 +2177,7 @@ export function AgentControlCenterView({
   onOpenRunMonitor: (workflowId: string, runId: string) => void;
   openWorkflow: (id: string) => void;
   openTemplates: () => void;
+  openHistory: () => void;
   openList: () => void;
   refreshBootstrap: () => void;
 }) {
@@ -1677,6 +2229,7 @@ export function AgentControlCenterView({
           <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
             <button className="wfs-tab" aria-selected="false" onClick={openList}>Workflows</button>
             <button className="wfs-tab" aria-selected="true">Agent Control Center</button>
+            <button className="wfs-tab" aria-selected="false" onClick={openHistory}>Run History</button>
             <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button>
           </div>
           <div className="wfs-list-eyebrow">AI Software Company Orchestration</div>
@@ -1892,6 +2445,7 @@ function WorkflowListPage({
   deleteWorkflow,
   openTemplates,
   openControlCenter,
+  openHistory,
   onOpenRunModal
 }: {
   workflows: WorkflowIndexEntry[];
@@ -1903,6 +2457,7 @@ function WorkflowListPage({
   deleteWorkflow: (workflow: WorkflowIndexEntry) => void;
   openTemplates: () => void;
   openControlCenter: () => void;
+  openHistory: () => void;
   onOpenRunModal: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -1920,6 +2475,7 @@ function WorkflowListPage({
         <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
           <button className="wfs-tab" aria-selected="true">Workflows</button>
           <button className="wfs-tab" aria-selected="false" onClick={openControlCenter}>Agent Control Center</button>
+          <button className="wfs-tab" aria-selected="false" onClick={openHistory}>Run History</button>
           <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button>
         </div>
         <div className="wfs-list-eyebrow">Workflow Studio</div>
@@ -1978,6 +2534,8 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
   const mode: StudioMode =
     routeView === "monitor"
       ? "monitor"
+      : routeView === "history"
+      ? "history"
       : routeView === "templates"
       ? "templates"
       : routeView === "control-center"
@@ -1994,6 +2552,7 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
   const openList = useCallback(() => navigation.navigate("/workflows"), [navigation]);
   const openTemplates = useCallback(() => navigation.navigate("/workflows?view=templates"), [navigation]);
   const openControlCenter = useCallback(() => navigation.navigate("/workflows?view=control-center"), [navigation]);
+  const openHistory = useCallback(() => navigation.navigate("/workflows?view=history"), [navigation]);
   const openRunMonitor = useCallback(
     (wfId: string, rId: string) =>
       navigation.navigate(`/workflows?workflow=${encodeURIComponent(wfId)}&view=monitor&run=${encodeURIComponent(rId)}`),
@@ -2060,6 +2619,60 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
     finally { setBusy(false); }
   };
 
+  if (mode === "history") {
+    return (
+      <div className="wfs-root wfs-list-root">
+        <style>{reactFlowStyles + studioStyles}</style>
+        <div className="wfs-control-center">
+          <header className="wfs-list-header">
+            <div>
+              <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
+                <button className="wfs-tab" aria-selected="false" onClick={openList}>Workflows</button>
+                <button className="wfs-tab" aria-selected="false" onClick={openControlCenter}>Agent Control Center</button>
+                <button className="wfs-tab" aria-selected="true">Run History</button>
+                <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button>
+              </div>
+              <div className="wfs-list-eyebrow">Execution Observability</div>
+              <h1>Workflow Run History</h1>
+              <p>Past workflow runs, multi-agent execution timelines, outputs, and archived terminal logs.</p>
+            </div>
+            <div className="wfs-list-header-actions">
+              <button
+                className="wfs-button wfs-button-run"
+                onClick={() => {
+                  setRunModalWorkflowId(null);
+                  setRunModalOpen(true);
+                }}
+              >
+                <Play size={14} /> ▶ Run Project Workflow
+              </button>
+            </div>
+          </header>
+          <RunHistoryView
+            runs={bootstrap.runs ?? []}
+            onInspectRun={(wfId, rId, replay) =>
+              navigation.navigate(`/workflows?workflow=${encodeURIComponent(wfId)}&view=monitor&run=${encodeURIComponent(rId)}${replay ? "&replay=1" : ""}`)
+            }
+            onClearHistory={async () => { bootstrapData.refresh(); }}
+          />
+        </div>
+        <RunWorkflowModal
+          isOpen={runModalOpen}
+          onClose={() => setRunModalOpen(false)}
+          companyId={companyId}
+          projects={bootstrap.projects}
+          workflows={bootstrap.workflows}
+          initialProjectId={runModalProjectId}
+          initialWorkflowId={runModalWorkflowId}
+          onRunStarted={(run) => {
+            bootstrapData.refresh();
+            openRunMonitor(run.workflowId, run.id);
+          }}
+        />
+      </div>
+    );
+  }
+
   if (mode === "control-center") {
     return (
       <div className="wfs-root wfs-list-root">
@@ -2074,6 +2687,7 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
           onOpenRunMonitor={openRunMonitor}
           openWorkflow={openWorkflow}
           openTemplates={openTemplates}
+          openHistory={openHistory}
           openList={openList}
           refreshBootstrap={bootstrapData.refresh}
         />
@@ -2108,6 +2722,7 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
           deleteWorkflow={(item) => void deleteFromList(item)}
           openTemplates={openTemplates}
           openControlCenter={openControlCenter}
+          openHistory={openHistory}
           onOpenRunModal={() => {
             setRunModalWorkflowId(null);
             setRunModalOpen(true);
@@ -2166,6 +2781,7 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
           openList={openList}
           openTemplates={openTemplates}
           openControlCenter={openControlCenter}
+          openHistory={openHistory}
           openMode={(view) => openWorkflow(workflowId, view)}
           openWorkflow={openWorkflow}
           onOpenRunModal={(wfId) => {
@@ -2206,6 +2822,7 @@ function WorkflowLoader({
   openList,
   openTemplates,
   openControlCenter,
+  openHistory,
   openMode,
   openWorkflow,
   onOpenRunModal,
@@ -2224,6 +2841,7 @@ function WorkflowLoader({
   openList: () => void;
   openTemplates: () => void;
   openControlCenter: () => void;
+  openHistory: () => void;
   openMode: (mode: "designer" | "monitor") => void;
   openWorkflow: (id: string, mode?: "designer" | "monitor") => void;
   onOpenRunModal: (workflowId?: string) => void;
@@ -2262,6 +2880,9 @@ function WorkflowLoader({
             <button className="wfs-tab" aria-selected="true">
               Monitor
             </button>
+            <button className="wfs-tab" aria-selected="false" onClick={openHistory}>
+              Run History
+            </button>
             <button className="wfs-tab" aria-selected="false" onClick={openControlCenter}>
               Agent Control Center
             </button>
@@ -2294,7 +2915,15 @@ function WorkflowLoader({
         workflowData.refresh();
       }}
       selectWorkflow={openWorkflow}
-      switchMode={(next) => (next === "templates" ? openTemplates() : next === "control-center" ? openControlCenter() : openMode(next))}
+      switchMode={(next) =>
+        next === "templates"
+          ? openTemplates()
+          : next === "control-center"
+          ? openControlCenter()
+          : next === "history"
+          ? openHistory()
+          : openMode(next)
+      }
       onOpenRunModal={onOpenRunModal}
     />
   );
@@ -2312,6 +2941,7 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [busy, setBusy] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
+  const [subtab, setSubtab] = useState<"overview" | "tasks" | "monitor" | "history" | "deliverables">("overview");
 
   useEffect(() => {
     const first = projectData.data?.binding?.templateId ?? projectData.data?.workflows[0]?.id ?? "";
@@ -2323,11 +2953,18 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
   if (projectData.error) return <div className="wfs-project-shell"><style>{studioStyles}</style><ErrorState message={projectData.error.message} retry={projectData.refresh} /></div>;
   if (!projectData.data) return <div className="wfs-project-shell"><style>{studioStyles}</style><ErrorState message="Project workflow data is unavailable." /></div>;
 
-  const { project, workflows, binding, monitor, activeRun } = projectData.data;
+  const { project, workflows, binding, monitor, activeRun, agents = [], issues = [], recentRuns = [] } = projectData.data;
   const issueNodes = binding?.workflow.nodes.filter((node) => node.data.kind === "task" || node.data.kind === "approval") ?? [];
   const assignedAgents = [...new Map(issueNodes.filter((node) => node.data.agentId).map((node) => [node.data.agentId!, node.data.agentName ?? "Agent"])).values()];
   const completed = monitor.filter((item) => item.issue?.status === "done").length;
   const published = binding?.workflow.status === "published";
+
+  // Deliverables gathered from active run or recent runs
+  const allArtifacts = [
+    ...(activeRun?.artifacts ?? []),
+    ...recentRuns.flatMap((r) => (r as any).artifacts ?? [])
+  ];
+  const deliverables = [...new Map(allArtifacts.map((a: WorkflowRunArtifact) => [a.name, a])).values()];
 
   const attach = async () => {
     if (!selectedWorkflowId) return;
@@ -2351,78 +2988,274 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
     finally { setBusy(false); }
   };
 
-  return <div className="wfs-project-shell"><style>{studioStyles}</style>
-    <header className="wfs-project-head">
-      <div>
-        <h2>Project workflow</h2>
-        <p>Choose a reusable process for {project?.name ?? "this project"}.</p>
-      </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button
-          className="wfs-button wfs-button-run"
-          onClick={() => setRunModalOpen(true)}
-          title="Run Project Workflow for this project"
-        >
-          <Play size={14} /> ▶ Run Project Workflow
-        </button>
-        <button className="wfs-button" onClick={() => navigation.navigate("/workflows?view=templates")}>
-          <Settings2 size={14} /> Edit templates
-        </button>
-      </div>
-    </header>
-
-    {activeRun && (
-      <section className="wfs-project-current" style={{ borderLeft: "4px solid #10b981", background: "color-mix(in srgb, #10b981 5%, var(--card, var(--background)))" }}>
-        <div className="wfs-project-current-head">
-          <div>
-            <span className="wfs-badge wfs-badge-published" style={{ textTransform: "uppercase" }}>
-              Active Run: {activeRun.status}
-            </span>
-            <h3 style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-              <Activity size={16} color="#10b981" /> {activeRun.id}
-            </h3>
-            <p>Initial Requirement: “{activeRun.inputRequirement}”</p>
-          </div>
+  return (
+    <div className="wfs-project-shell">
+      <style>{reactFlowStyles + studioStyles}</style>
+      <header className="wfs-project-head">
+        <div>
+          <h2>{project?.name ?? "Project"} Workflow & Live Monitor</h2>
+          <p>Orchestrate the 8 AI agents, track real-time execution, and inspect delivery artifacts.</p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
-            className="wfs-button wfs-button-primary"
-            onClick={() =>
-              navigation.navigate(`/workflows?workflow=${encodeURIComponent(activeRun.workflowId)}&view=monitor&run=${encodeURIComponent(activeRun.id)}`)
-            }
+            className="wfs-button wfs-button-run"
+            onClick={() => setRunModalOpen(true)}
+            title="Run Project Workflow for this project"
           >
-            <Activity size={14} /> View in Workflow Monitor
+            <Play size={14} /> ▶ Run Project Workflow
+          </button>
+          <button className="wfs-button" onClick={() => navigation.navigate("/workflows?view=templates")}>
+            <Settings2 size={14} /> Edit templates
           </button>
         </div>
-      </section>
-    )}
+      </header>
 
-    {workflows.length === 0 ? <div className="wfs-project-empty"><Workflow size={22} /><div><strong>No workflow templates</strong><p>Create a template once, then reuse it across any project.</p></div><button className="wfs-button wfs-button-primary" onClick={() => navigation.navigate("/workflows?view=templates")}><Plus size={14} /> Create template</button></div> : <>
-      <section className="wfs-project-picker">
-        <label className="wfs-field"><span>Workflow template</span><select value={selectedWorkflowId} disabled={published} onChange={(event) => setSelectedWorkflowId(event.target.value)}>{workflows.map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}</select></label>
-        <button className="wfs-button wfs-button-primary" disabled={busy || published || !selectedWorkflowId} onClick={() => void attach()}>{binding ? <RefreshCw size={14} /> : <Plus size={14} />}{binding ? "Change workflow" : "Use workflow"}</button>
-      </section>
-      {binding ? <section className="wfs-project-current">
-        <div className="wfs-project-current-head"><div><span className={`wfs-badge ${published ? "wfs-badge-published" : "wfs-badge-draft"}`}>{published ? "Published" : "Saved"}</span><h3>{binding.templateName}</h3><p>Reusable project workflow</p></div>{!published && <button className="wfs-button wfs-button-primary" disabled={busy} onClick={() => void publish()}><Rocket size={14} /> Create {issueNodes.length} project tasks</button>}</div>
-        <div className="wfs-project-stats"><div><span>Steps</span><strong>{binding.workflow.nodes.length}</strong></div><div><span>Agents</span><strong>{assignedAgents.length}</strong></div><div><span>Tasks</span><strong>{binding.workflow.publishedIssueIds.length || issueNodes.length}</strong></div><div><span>Completed</span><strong>{completed}/{binding.workflow.publishedIssueIds.length || issueNodes.length}</strong></div></div>
-        <div className="wfs-project-agents">{assignedAgents.map((agent) => <span key={agent}><Bot size={12} />{agent}</span>)}</div>
-        <div className="wfs-project-flow">{["Plan", "Architecture", "Build", "Review", "Test", "Deploy", "Approve"].map((step, index, steps) => <React.Fragment key={step}><span>{step}</span>{index < steps.length - 1 && <ChevronRight size={12} />}</React.Fragment>)}</div>
-        {published && <div className="wfs-project-note"><CheckCircle2 size={15} /><span>Dependencies are active. Start the first Project Manager task when you are ready.</span></div>}
-      </section> : <div className="wfs-project-empty"><Workflow size={22} /><div><strong>No workflow selected</strong><p>Select a template above. Paperclip will create a separate project copy, so the shared template remains reusable.</p></div></div>}
-    </>}
+      {/* 5-Tab Bar */}
+      <div className="wfs-tabs" role="tablist" style={{ marginBottom: 14 }}>
+        <button className="wfs-tab" aria-selected={subtab === "overview"} onClick={() => setSubtab("overview")}>
+          <LayoutDashboard size={13} style={{ marginRight: 5 }} /> Overview
+        </button>
+        <button className="wfs-tab" aria-selected={subtab === "tasks"} onClick={() => setSubtab("tasks")}>
+          <ListTree size={13} style={{ marginRight: 5 }} /> Tasks ({issues.length})
+        </button>
+        <button className="wfs-tab" aria-selected={subtab === "monitor"} onClick={() => setSubtab("monitor")}>
+          <Activity size={13} style={{ marginRight: 5, color: activeRun ? "#10b981" : "inherit" }} />
+          Live Monitor {activeRun && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", display: "inline-block", marginLeft: 4 }} />}
+        </button>
+        <button className="wfs-tab" aria-selected={subtab === "history"} onClick={() => setSubtab("history")}>
+          <History size={13} style={{ marginRight: 5 }} /> Run History ({recentRuns.length})
+        </button>
+        <button className="wfs-tab" aria-selected={subtab === "deliverables"} onClick={() => setSubtab("deliverables")}>
+          <Package size={13} style={{ marginRight: 5 }} /> Deliverables ({deliverables.length})
+        </button>
+      </div>
 
-    <RunWorkflowModal
-      isOpen={runModalOpen}
-      onClose={() => setRunModalOpen(false)}
-      companyId={companyId}
-      projects={project ? [project] : []}
-      workflows={workflows}
-      initialProjectId={projectId}
-      initialWorkflowId={binding?.templateId ?? workflows[0]?.id}
-      onRunStarted={(run) => {
-        projectData.refresh();
-        navigation.navigate(`/workflows?workflow=${encodeURIComponent(run.workflowId)}&view=monitor&run=${encodeURIComponent(run.id)}`);
-      }}
-    />
-  </div>;
+      {/* Subtab 1: Overview */}
+      {subtab === "overview" && (
+        <div style={{ display: "grid", gap: 14 }}>
+          {activeRun && (
+            <section className="wfs-project-current" style={{ borderLeft: "4px solid #10b981", background: "color-mix(in srgb, #10b981 5%, var(--card, var(--background)))" }}>
+              <div className="wfs-project-current-head">
+                <div>
+                  <span className="wfs-badge wfs-badge-published" style={{ textTransform: "uppercase" }}>
+                    Active Run: {activeRun.status}
+                  </span>
+                  <h3 style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                    <Activity size={16} color="#10b981" /> {activeRun.id}
+                  </h3>
+                  <p>Initial Requirement: “{activeRun.inputRequirement}”</p>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="wfs-button wfs-button-primary" onClick={() => setSubtab("monitor")}>
+                    <Activity size={14} /> Open Live Monitor
+                  </button>
+                  <button
+                    className="wfs-button"
+                    onClick={() =>
+                      navigation.navigate(`/workflows?workflow=${encodeURIComponent(activeRun.workflowId)}&view=monitor&run=${encodeURIComponent(activeRun.id)}`)
+                    }
+                  >
+                    <ExternalLink size={14} /> Full View
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {workflows.length === 0 ? (
+            <div className="wfs-project-empty">
+              <Workflow size={22} />
+              <div>
+                <strong>No workflow templates</strong>
+                <p>Create a template once, then reuse it across any project.</p>
+              </div>
+              <button className="wfs-button wfs-button-primary" onClick={() => navigation.navigate("/workflows?view=templates")}>
+                <Plus size={14} /> Create template
+              </button>
+            </div>
+          ) : (
+            <>
+              <section className="wfs-project-picker">
+                <label className="wfs-field">
+                  <span>Workflow template</span>
+                  <select value={selectedWorkflowId} disabled={published} onChange={(event) => setSelectedWorkflowId(event.target.value)}>
+                    {workflows.map((workflow) => (
+                      <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <button className="wfs-button wfs-button-primary" disabled={busy || published || !selectedWorkflowId} onClick={() => void attach()}>
+                  {binding ? <RefreshCw size={14} /> : <Plus size={14} />}{binding ? "Change workflow" : "Use workflow"}
+                </button>
+              </section>
+
+              {binding ? (
+                <section className="wfs-project-current">
+                  <div className="wfs-project-current-head">
+                    <div>
+                      <span className={`wfs-badge ${published ? "wfs-badge-published" : "wfs-badge-draft"}`}>
+                        {published ? "Published" : "Saved"}
+                      </span>
+                      <h3>{binding.templateName}</h3>
+                      <p>Reusable project workflow</p>
+                    </div>
+                    {!published && (
+                      <button className="wfs-button wfs-button-primary" disabled={busy} onClick={() => void publish()}>
+                        <Rocket size={14} /> Create {issueNodes.length} project tasks
+                      </button>
+                    )}
+                  </div>
+                  <div className="wfs-project-stats">
+                    <div><span>Steps</span><strong>{binding.workflow.nodes.length}</strong></div>
+                    <div><span>Agents</span><strong>{assignedAgents.length}</strong></div>
+                    <div><span>Tasks</span><strong>{binding.workflow.publishedIssueIds.length || issueNodes.length}</strong></div>
+                    <div><span>Completed</span><strong>{completed}/{binding.workflow.publishedIssueIds.length || issueNodes.length}</strong></div>
+                  </div>
+                  <div className="wfs-project-agents">
+                    {assignedAgents.map((agent) => (
+                      <span key={agent}><Bot size={12} />{agent}</span>
+                    ))}
+                  </div>
+                  <div className="wfs-project-flow">
+                    {["Plan", "Architecture", "Build", "Review", "Test", "Deploy", "Approve"].map((step, index, steps) => (
+                      <React.Fragment key={step}>
+                        <span>{step}</span>
+                        {index < steps.length - 1 && <ChevronRight size={12} />}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  {published && (
+                    <div className="wfs-project-note">
+                      <CheckCircle2 size={15} />
+                      <span>Dependencies are active. Click "Run Project Workflow" to launch autonomous multi-agent execution.</span>
+                    </div>
+                  )}
+                </section>
+              ) : (
+                <div className="wfs-project-empty">
+                  <Workflow size={22} />
+                  <div>
+                    <strong>No workflow selected</strong>
+                    <p>Select a template above. Paperclip will create a separate project copy, so the shared template remains reusable.</p>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Subtab 2: Tasks Tree View */}
+      {subtab === "tasks" && (
+        <ProjectTaskTreeView
+          issues={issues}
+          agents={agents}
+          onOpenIssue={(id) => navigation.navigate(`/issues/${id}`)}
+        />
+      )}
+
+      {/* Subtab 3: Live Monitor */}
+      {subtab === "monitor" && (
+        <div style={{ height: "calc(100vh - 220px)", minHeight: 620, border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", position: "relative" }}>
+          {binding ? (
+            <ReactFlowProvider>
+              <MonitorCanvas
+                bootstrap={{
+                  projects: project ? [project] : [],
+                  agents,
+                  issues,
+                  workflows,
+                  runs: recentRuns
+                }}
+                data={{
+                  workflow: binding.workflow,
+                  monitor
+                }}
+                refresh={projectData.refresh}
+                companyId={companyId}
+                runId={activeRun?.id ?? recentRuns[0]?.id ?? null}
+              />
+            </ReactFlowProvider>
+          ) : (
+            <div className="wfs-project-empty" style={{ height: "100%" }}>
+              <Activity size={24} />
+              <div>
+                <strong>No workflow attached</strong>
+                <p>Attach a workflow template on the Overview tab or start a Run to monitor live execution.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Subtab 4: Run History */}
+      {subtab === "history" && (
+        <RunHistoryView
+          runs={recentRuns}
+          onInspectRun={(wfId: string, rId: string, replay?: boolean) =>
+            navigation.navigate(`/workflows?workflow=${encodeURIComponent(wfId)}&view=monitor&run=${encodeURIComponent(rId)}${replay ? "&replay=1" : ""}`)
+          }
+          onClearHistory={async () => { projectData.refresh(); }}
+        />
+      )}
+
+      {/* Subtab 5: Deliverables */}
+      {subtab === "deliverables" && (
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0, fontSize: 14 }}>Project Deliverables & Artifacts</h3>
+            <span style={{ fontSize: 11, color: "var(--muted-foreground)" }}>{deliverables.length} item(s)</span>
+          </div>
+          {deliverables.length === 0 ? (
+            <div className="wfs-project-empty">
+              <Package size={24} />
+              <div>
+                <strong>No deliverables recorded yet</strong>
+                <p>Deliverables, git commits, code files, and documentation generated by AI agents will appear here automatically.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="wfs-artifacts-list">
+              {deliverables.map((item) => (
+                <div key={item.id} className="wfs-artifact-card">
+                  <div className="wfs-artifact-icon">
+                    {item.type === "commit" ? <GitBranch size={16} /> : item.type === "document" ? <FileText size={16} /> : <FileCode size={16} />}
+                  </div>
+                  <div className="wfs-artifact-info">
+                    <strong>{item.name}</strong>
+                    <small>{item.description || item.type}</small>
+                    <time style={{ fontSize: 9.5, color: "var(--muted-foreground)" }}>
+                      {new Date(item.createdAt).toLocaleString()}
+                    </time>
+                  </div>
+                  {item.url && (
+                    <a className="wfs-button" style={{ height: 26, fontSize: 10.5 }} href={item.url} target="_blank" rel="noreferrer">
+                      <ExternalLink size={12} /> Open Artifact
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <RunWorkflowModal
+        isOpen={runModalOpen}
+        onClose={() => setRunModalOpen(false)}
+        companyId={companyId}
+        projects={project ? [project] : []}
+        workflows={workflows}
+        initialProjectId={projectId}
+        initialWorkflowId={binding?.templateId ?? workflows[0]?.id}
+        onRunStarted={(run) => {
+          projectData.refresh();
+          setSubtab("monitor");
+          navigation.navigate(`/workflows?workflow=${encodeURIComponent(run.workflowId)}&view=monitor&run=${encodeURIComponent(run.id)}`);
+        }}
+      />
+    </div>
+  );
 }
 
 export function WorkflowStudioPage({ context }: PluginPageProps) {

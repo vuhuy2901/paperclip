@@ -73,12 +73,104 @@ export const studioStyles = `
 .wfs-approval-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border-radius:10px;background:color-mix(in srgb,#8b5cf6 14%,var(--background));border:1px solid color-mix(in srgb,#8b5cf6 45%,var(--border));color:var(--foreground)}
 .wfs-approval-actions{display:flex;gap:8px;flex:none}
 .wfs-run-controls{display:flex;align-items:center;gap:6px}
-.wfs-logs-drawer{position:fixed;right:0;top:0;bottom:0;width:min(440px,92vw);z-index:1050;background:var(--background);border-left:1px solid var(--border);box-shadow:-12px 0 36px color-mix(in srgb,var(--foreground) 16%,transparent);display:grid;grid-template-rows:auto 1fr;overflow:hidden}
+.wfs-logs-drawer{position:fixed;right:0;top:0;bottom:0;width:min(520px,94vw);z-index:1050;background:var(--background);border-left:1px solid var(--border);box-shadow:-12px 0 36px color-mix(in srgb,var(--foreground) 16%,transparent);display:grid;grid-template-rows:auto 1fr;overflow:hidden}
 .wfs-logs-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);background:var(--wfs-panel)}
 .wfs-logs-list{overflow-y:auto;padding:12px;display:grid;gap:8px}
 .wfs-log-entry{padding:8px 10px;border-radius:8px;background:var(--wfs-panel);border:1px solid var(--border);font-size:10.5px;display:grid;gap:3px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 .wfs-log-time{font-size:9px;color:var(--muted-foreground)}
 .wfs-runs-table{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card,var(--background))}
-.wfs-node.waiting_approval{border-color:#8b5cf6;box-shadow:0 0 0 2px color-mix(in srgb,#8b5cf6 35%,transparent)}
-.wfs-node.completed{border-color:#22c55e}
+
+/* REALTIME NODE VISUALIZATION STATES & GLOW */
+.wfs-node{position:relative;border:1.5px solid var(--border);transition:all .2s cubic-bezier(0.4, 0, 0.2, 1)}
+.wfs-node.wfs-node-pending{border-color:color-mix(in srgb,var(--border) 80%,transparent);opacity:.85}
+.wfs-node.wfs-node-ready{border-color:#3b82f6;box-shadow:0 0 0 2px color-mix(in srgb,#3b82f6 30%,transparent),0 4px 16px color-mix(in srgb,#3b82f6 20%,transparent)}
+.wfs-node.wfs-node-queued{border-color:#60a5fa;border-style:dashed;box-shadow:0 0 0 1px color-mix(in srgb,#60a5fa 30%,transparent)}
+.wfs-node.wfs-node-running,.wfs-node.running{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,0.4),0 0 22px rgba(37,99,235,0.35);animation:wfs-node-glow 2.4s ease-in-out infinite}
+.wfs-node.wfs-node-blocked,.wfs-node.blocked{border-color:#f59e0b;box-shadow:0 0 0 2px color-mix(in srgb,#f59e0b 35%,transparent),0 4px 18px color-mix(in srgb,#f59e0b 22%,transparent)}
+.wfs-node.wfs-node-waiting_approval,.wfs-node.waiting_approval{border-color:#8b5cf6;box-shadow:0 0 0 2px color-mix(in srgb,#8b5cf6 40%,transparent),0 6px 20px color-mix(in srgb,#8b5cf6 25%,transparent)}
+.wfs-node.wfs-node-completed,.wfs-node.completed{border-color:#10b981;box-shadow:0 0 0 1.5px color-mix(in srgb,#10b981 30%,transparent),0 3px 12px color-mix(in srgb,#10b981 18%,transparent)}
+.wfs-node.wfs-node-failed,.wfs-node.error{border-color:#ef4444;box-shadow:0 0 0 2px color-mix(in srgb,#ef4444 40%,transparent),0 4px 18px color-mix(in srgb,#ef4444 30%,transparent)}
+.wfs-node.wfs-node-cancelled{border-color:#64748b;opacity:.6}
+
+@keyframes wfs-node-glow{
+  0%,100%{box-shadow:0 0 0 2px rgba(37,99,235,0.45),0 0 18px rgba(37,99,235,0.3)}
+  50%{box-shadow:0 0 0 3px rgba(37,99,235,0.7),0 0 32px rgba(6,182,212,0.45)}
+}
+
+.wfs-node-timer{display:inline-flex;align-items:center;gap:3px;font-size:9.5px;color:#2563eb;font-weight:700;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:color-mix(in srgb,#2563eb 10%,transparent);padding:2px 5px;border-radius:4px}
+.wfs-node-multi-badge{display:inline-flex;align-items:center;gap:3px;font-size:9px;color:var(--muted-foreground);background:var(--muted);padding:1px 5px;border-radius:4px;margin-top:3px}
+
+/* ANIMATED EXECUTION EDGES */
+.react-flow__edge.active-handoff .react-flow__edge-path{stroke:#3b82f6!important;stroke-width:2.6px!important;stroke-dasharray:7 4!important;animation:wfs-edge-dash 0.9s linear infinite!important;filter:drop-shadow(0 0 4px rgba(59,130,246,0.65))}
+.react-flow__edge.completed-edge .react-flow__edge-path{stroke:#10b981!important;stroke-width:2px!important;filter:drop-shadow(0 0 2px rgba(16,185,129,0.35))}
+.react-flow__edge.blocked-edge .react-flow__edge-path{stroke:#f59e0b!important;stroke-dasharray:4 4!important;stroke-width:1.8px!important}
+.react-flow__edge.failed-edge .react-flow__edge-path{stroke:#ef4444!important;stroke-dasharray:5 4!important;stroke-width:2px!important}
+
+@keyframes wfs-edge-dash{
+  from{stroke-dashoffset:22}
+  to{stroke-dashoffset:0}
+}
+
+/* TERMINAL LOG VIEWER (XTERM STYLE) */
+.wfs-terminal{display:flex;flex-direction:column;height:100%;min-height:280px;background:#0d1117;color:#e6edf3;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;border-radius:8px;overflow:hidden;border:1px solid #30363d}
+.wfs-terminal-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#161b22;border-bottom:1px solid #30363d;font-size:11px}
+.wfs-terminal-title{display:flex;align-items:center;gap:8px;font-weight:600;color:#c9d1d9}
+.wfs-terminal-pulse{width:7px;height:7px;border-radius:50%;background:#3fb950;box-shadow:0 0 8px #3fb950}
+.wfs-terminal-pulse.paused{background:#d29922;box-shadow:none}
+.wfs-terminal-actions{display:flex;align-items:center;gap:6px}
+.wfs-terminal-btn{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 7px;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:10px;cursor:pointer;transition:all .15s ease}
+.wfs-terminal-btn:hover{background:#30363d;color:#ffffff}
+.wfs-terminal-btn.active{background:#1f6feb;border-color:#388bfd;color:#ffffff}
+.wfs-terminal-search{height:24px;padding:0 8px;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:10.5px;width:130px;outline:none}
+.wfs-terminal-search:focus{border-color:#58a6ff}
+.wfs-terminal-body{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:3px;font-size:11px;line-height:1.45}
+.wfs-terminal-line{display:flex;align-items:flex-start;gap:8px;word-break:break-word}
+.wfs-terminal-time{color:#7d8590;font-size:10px;flex:none;user-select:none}
+.wfs-terminal-tag{display:inline-block;padding:0 4px;border-radius:3px;font-size:9.5px;font-weight:700;flex:none}
+.wfs-tag-info{background:rgba(56,139,253,0.15);color:#58a6ff}
+.wfs-tag-action{background:rgba(63,185,80,0.15);color:#3fb950}
+.wfs-tag-tool{background:rgba(187,128,255,0.15);color:#d2a8ff}
+.wfs-tag-warn{background:rgba(210,153,34,0.15);color:#d29922}
+.wfs-tag-error{background:rgba(248,81,73,0.15);color:#f85149}
+.wfs-tag-approval{background:rgba(163,113,247,0.15);color:#bc8cff}
+.wfs-terminal-msg{flex:1}
+.wfs-terminal-msg.stderr{color:#f85149}
+.wfs-terminal-msg.tool-result{color:#7ee787}
+.wfs-terminal-empty{padding:28px;text-align:center;color:#7d8590;font-size:11px}
+
+/* EXECUTION TIMELINE */
+.wfs-timeline{display:flex;flex-direction:column;padding:12px;gap:12px;position:relative}
+.wfs-timeline::before{content:"";position:absolute;left:21px;top:20px;bottom:20px;width:2px;background:var(--border)}
+.wfs-timeline-item{display:flex;align-items:flex-start;gap:12px;position:relative}
+.wfs-timeline-dot{width:18px;height:18px;border-radius:50%;background:var(--card,var(--background));border:2px solid #3b82f6;display:grid;place-items:center;font-size:9px;flex:none;z-index:2}
+.wfs-timeline-dot.done{border-color:#10b981;background:#10b981;color:#ffffff}
+.wfs-timeline-dot.error{border-color:#ef4444;background:#ef4444;color:#ffffff}
+.wfs-timeline-dot.approval{border-color:#8b5cf6;background:#8b5cf6;color:#ffffff}
+.wfs-timeline-card{flex:1;background:var(--wfs-panel);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:11px;display:grid;gap:3px}
+.wfs-timeline-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.wfs-timeline-time{font-size:9.5px;color:var(--muted-foreground)}
+
+/* ARTIFACTS TAB */
+.wfs-artifacts-list{display:grid;gap:8px;padding:12px}
+.wfs-artifact-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--wfs-panel);transition:border-color .15s ease}
+.wfs-artifact-card:hover{border-color:var(--wfs-accent)}
+.wfs-artifact-icon{width:32px;height:32px;border-radius:7px;background:var(--wfs-accent-soft);color:var(--wfs-accent);display:grid;place-items:center;flex:none}
+.wfs-artifact-info{flex:1;min-width:0}
+.wfs-artifact-info strong{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wfs-artifact-info small{display:block;font-size:10px;color:var(--muted-foreground);margin-top:2px}
+
+/* TASK TREE VIEW */
+.wfs-task-tree{display:grid;gap:6px;padding:12px}
+.wfs-tree-item{border:1px solid var(--border);border-radius:8px;background:var(--card,var(--background));overflow:hidden}
+.wfs-tree-head{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--wfs-panel);cursor:pointer;font-size:11.5px}
+.wfs-tree-children{padding:6px 8px 8px 24px;display:grid;gap:5px;border-top:1px solid var(--border)}
+.wfs-subtask-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--background);font-size:11px}
+
+/* REPLAY CONTROLS BAR */
+.wfs-replay-bar{position:absolute;left:16px;right:16px;bottom:16px;z-index:5;display:flex;align-items:center;gap:12px;padding:8px 14px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--background) 95%,transparent);backdrop-filter:blur(14px);box-shadow:0 6px 24px color-mix(in srgb,var(--foreground) 10%,transparent)}
+.wfs-replay-scrubber{flex:1;cursor:pointer}
+.wfs-replay-time{font-size:10px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted-foreground)}
+
+/* FULLSCREEN OVERRIDE */
+.wfs-root.wfs-fullscreen{position:fixed!important;inset:0!important;z-index:9999!important;width:100vw!important;height:100vh!important;max-width:none!important;border-radius:0!important;margin:0!important}
 `;
