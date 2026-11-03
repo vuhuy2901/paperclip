@@ -2410,12 +2410,6 @@ export function AgentControlCenterView({
     <div className="wfs-control-center">
       <header className="wfs-list-header">
         <div>
-          <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
-            <button className="wfs-tab" aria-selected="false" onClick={openList}>Workflow Templates</button>
-            <button className="wfs-tab" aria-selected="true">Agent Control Center</button>
-            <button className="wfs-tab" aria-selected="false" onClick={() => navigation.navigate("/projects-portfolio")}>Projects Portfolio</button>
-            <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button>
-          </div>
           <div className="wfs-list-eyebrow">AI Software Company Orchestration</div>
           <h1>Agent Control Center</h1>
           <p>
@@ -3504,11 +3498,6 @@ export function ProjectPortfolioView({
     <div className="wfs-portfolio-page">
       <header className="wfs-portfolio-header">
         <div>
-          <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
-            <button className="wfs-tab" aria-selected="true">Projects Portfolio</button>
-            <button className="wfs-tab" aria-selected="false" onClick={() => navigation.navigate("/workflows")}>Workflow Templates</button>
-            <button className="wfs-tab" aria-selected="false" onClick={() => navigation.navigate("/workflows?view=control-center")}>Agent Control Center</button>
-          </div>
           <div className="wfs-list-eyebrow">Product & Execution Observability</div>
           <h1>Projects Portfolio</h1>
           <p>
@@ -4061,12 +4050,6 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
           >
             <Play size={14} /> Giao yêu cầu cho AI
           </button>
-          <button className="wfs-button" onClick={() => navigation.navigate("/projects-portfolio")}>
-            <Briefcase size={14} /> Projects Portfolio
-          </button>
-          <button className="wfs-button" onClick={() => navigation.navigate("/workflows?view=templates")}>
-            <Settings2 size={14} /> Edit templates
-          </button>
         </div>
       </header>
 
@@ -4127,7 +4110,7 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
                 <strong>No workflow templates</strong>
                 <p>Create a template once, then reuse it across any project.</p>
               </div>
-              <button className="wfs-button wfs-button-primary" onClick={() => navigation.navigate("/workflows?view=templates")}>
+              <button className="wfs-button wfs-button-primary" onClick={() => navigation.navigate("/workflows")}>
                 <Plus size={14} /> Create template
               </button>
             </div>
