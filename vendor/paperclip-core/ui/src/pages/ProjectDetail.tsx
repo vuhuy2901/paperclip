@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Link, useParams, useNavigate, useLocation, Navigate } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PROJECT_COLORS, PROJECT_ICON_NAMES, isUuidLike, type BudgetPolicySummary } from "@paperclipai/shared";
@@ -22,6 +22,7 @@ import { ProjectTile } from "../components/ProjectTile";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { IssuesList } from "../components/IssuesList";
 import { ProjectOperationsView } from "../components/ProjectOperationsView";
+import { ProjectStructureView } from "../components/ProjectStructureView";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProjectWorkspacesContent } from "../components/ProjectWorkspacesContent";
@@ -53,7 +54,7 @@ import {
 
 /* ── Top-level tab types ── */
 
-type ProjectBaseTab = "overview" | "list" | "advanced" | "plugin-operations" | "workspaces" | "configuration" | "budget";
+type ProjectBaseTab = "overview" | "structure" | "list" | "advanced" | "plugin-operations" | "workspaces" | "configuration" | "budget";
 type ProjectPluginTab = `plugin:${string}`;
 type ProjectTab = ProjectBaseTab | ProjectPluginTab;
 
@@ -67,6 +68,7 @@ function resolveProjectTab(pathname: string, projectId: string): ProjectTab | nu
   if (projectsIdx === -1 || segments[projectsIdx + 1] !== projectId) return null;
   const tab = segments[projectsIdx + 2];
   if (tab === "overview") return "overview";
+  if (tab === "structure") return "structure";
   if (tab === "advanced") return "advanced";
   if (tab === "configuration") return "configuration";
   if (tab === "budget") return "budget";
@@ -710,6 +712,10 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/overview`, { replace: true });
       return;
     }
+    if (activeTab === "structure") {
+      navigate(`/projects/${canonicalProjectRef}/structure`, { replace: true });
+      return;
+    }
     if (activeTab === "advanced") {
       navigate(`/projects/${canonicalProjectRef}/advanced`, { replace: true });
       return;
@@ -887,6 +893,8 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/workspaces`);
     } else if (tab === "overview") {
       navigate(`/projects/${canonicalProjectRef}/overview`);
+    } else if (tab === "structure") {
+      navigate(`/projects/${canonicalProjectRef}/structure`);
     } else if (tab === "advanced") {
       navigate(`/projects/${canonicalProjectRef}/advanced`);
     } else if (tab === "budget") {
@@ -1024,6 +1032,7 @@ export function ProjectDetail() {
         <PageTabBar
           items={[
             { value: "overview", label: "Tổng quan" },
+            { value: "structure", label: "Cấu trúc dự án" },
             { value: "list", label: "Tasks" },
             ...pluginTabItems.map((item) => ({
               value: item.value,
@@ -1042,10 +1051,16 @@ export function ProjectDetail() {
         />
       </Tabs>
 
-
-
       {(activeTab === "overview" || activeTab === "list") && project?.id && resolvedCompanyId && (
         <ProjectOperationsView project={project} companyId={resolvedCompanyId} projectRef={canonicalProjectRef} mode={activeTab === "overview" ? "overview" : "tasks"} />
+      )}
+
+      {activeTab === "structure" && project?.id && resolvedCompanyId && (
+        <ProjectStructureView
+          projectId={project.id}
+          companyId={resolvedCompanyId}
+          projectRef={canonicalProjectRef}
+        />
       )}
 
       {activeTab === "advanced" && project?.id && resolvedCompanyId && (

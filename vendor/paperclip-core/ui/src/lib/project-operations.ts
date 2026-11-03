@@ -186,3 +186,51 @@ export function buildProjectOperationsModel(input: {
     journeyStep,
   };
 }
+
+export type NormalizedNodeStatus = "pending" | "running" | "done" | "failed" | "waiting_approval" | "blocked";
+
+export function mapNodeExecutionStatus(state?: { status?: string } | null): NormalizedNodeStatus {
+  if (!state || !state.status) return "pending";
+  const s = state.status.toLowerCase();
+  if (s === "running" || s === "in_progress") return "running";
+  if (s === "done" || s === "completed" || s === "success") return "done";
+  if (s === "failed" || s === "error") return "failed";
+  if (s === "waiting_approval" || s === "approval" || s === "waiting") return "waiting_approval";
+  if (s === "blocked") return "blocked";
+  return "pending";
+}
+
+export function computeWorkflowRunProgress(
+  nodes: Array<{ id: string }>,
+  nodeExecutionStates?: Record<string, { status?: string }> | null
+): { totalNodes: number; completedNodes: number; failedNodes: number; runningNodes: number; percent: number } {
+  const totalNodes = nodes.length;
+  if (totalNodes === 0) {
+    return { totalNodes: 0, completedNodes: 0, failedNodes: 0, runningNodes: 0, percent: 0 };
+  }
+  const states = nodeExecutionStates ?? {};
+  let completedNodes = 0;
+  let failedNodes = 0;
+  let runningNodes = 0;
+
+  for (const node of nodes) {
+    const status = mapNodeExecutionStatus(states[node.id]);
+    if (status === "done") completedNodes++;
+    else if (status === "failed") failedNodes++;
+    else if (status === "running") runningNodes++;
+  }
+
+  const percent = Math.round((completedNodes / totalNodes) * 100);
+  return { totalNodes, completedNodes, failedNodes, runningNodes, percent };
+}
+
+export function validateSafeWorkspacePath(relPath: string): boolean {
+  if (!relPath || typeof relPath !== "string") return false;
+  if (relPath.includes("..") || relPath.includes("\\") || relPath.startsWith("/")) return false;
+  const parts = relPath.split("/").filter(Boolean);
+  const forbiddenDirs = [".git", "node_modules", "dist", ".next", ".turbo"];
+  for (const part of parts) {
+    if (forbiddenDirs.includes(part.toLowerCase())) return false;
+  }
+  return true;
+}

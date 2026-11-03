@@ -76,6 +76,32 @@ async function enforceCheckoutGate(issueId, body, requestHeaders) {
 
 export function createProxyServer() {
   return http.createServer(async (request, response) => {
+    if (request.url && request.url.includes("/workspace")) {
+      const coreBase = process.env.CORE_API_URL || "http://core-api:8000";
+      const coreApiUrl = new URL(request.url, coreBase);
+      const headers = {
+        ...request.headers,
+        "x-service-token": process.env.SERVICE_TOKEN || "dev-service-token",
+        host: coreApiUrl.host
+      };
+      const upstream = http.request(
+        coreApiUrl,
+        { method: request.method, headers },
+        (targetResponse) => {
+          response.writeHead(targetResponse.statusCode ?? 502, targetResponse.headers);
+          targetResponse.pipe(response);
+        }
+      );
+      upstream.on("error", (err) => {
+        if (!response.headersSent) {
+          response.writeHead(502, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "CORE_API_UNAVAILABLE", message: String(err?.message ?? err) }));
+        }
+      });
+      request.pipe(upstream);
+      return;
+    }
+
     const issueId = checkoutIssueId(request.method, request.url);
     if (!issueId) {
       forward(request, response);

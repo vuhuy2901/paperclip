@@ -3,6 +3,10 @@ from fastapi import FastAPI, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
 import json
 import time
+import os
+import io
+import mimetypes
+import zipfile
 import subprocess
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -287,3 +291,165 @@ def paperclip_wake(payload: dict, db: Session = Depends(get_db)):
     run = WorkflowRun(change_id=change_id, idempotency_key=key, config_snapshot={"runner":settings.default_runner,"max_repairs":settings.max_repairs,"roles":snapshot(db)})
     db.add(run); db.flush(); seed_tasks(db, run, change.text); emit(db, run.id, "paperclip.wake.accepted", {"change_id": change_id, "key": key}); db.commit()
     return {"accepted": True, "deduplicated": False, "run_id": run.id}
+
+WORKSPACE_IGNORE_DIRS = {".git", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".gemini", ".idea", ".vscode"}
+WORKSPACE_IGNORE_FILES = {".DS_Store", "package-lock.json", ".gitkeep"}
+MAX_FILE_SIZE = 1024 * 1024  # 1 MB
+
+def get_project_workspace_root(project_id: str) -> Path:
+    candidates = [
+        Path("/workspace/apps/english-vocabulary"),
+        Path(f"/workspace/data/worktrees/{project_id}"),
+        Path("apps/english-vocabulary").resolve(),
+        Path(".").resolve(),
+        Path("/workspace")
+    ]
+    for c in candidates:
+        if c.is_dir() and ((c / "src").is_dir() or (c / "package.json").is_file()):
+            return c.resolve()
+    for c in candidates:
+        if c.is_dir():
+            return c.resolve()
+    return Path("/workspace").resolve()
+
+def validate_workspace_path(root: Path, relative_path: str) -> Path:
+    if not relative_path or ".." in relative_path or relative_path.startswith("/") or "\\" in relative_path:
+        raise HTTPException(status_code=403, detail="Path traversal forbidden")
+    target = (root / relative_path).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Path traversal forbidden")
+    for part in target.parts:
+        if part in WORKSPACE_IGNORE_DIRS:
+            raise HTTPException(status_code=403, detail="Access to ignored directory forbidden")
+    return target
+
+@app.get("/api/projects/{project_id}/workspace/tree", dependencies=[Depends(auth)])
+def get_workspace_tree(project_id: str, agent_filter: str | None = None):
+    root = get_project_workspace_root(project_id)
+    if not root.is_dir():
+        return {"project_id": project_id, "root_name": root.name, "files": []}
+
+    git_statuses = {}
+    try:
+        git_res = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, timeout=5)
+        if git_res.returncode == 0:
+            for line in git_res.stdout.splitlines():
+                if len(line) >= 4:
+                    code = line[:2].strip()
+                    path_str = line[3:].strip()
+                    git_statuses[path_str] = "new" if "?" in code or "A" in code else "modified"
+    except Exception:
+        pass
+
+    files = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in WORKSPACE_IGNORE_DIRS and not d.startswith(".")]
+        rel_dir = os.path.relpath(dirpath, root)
+        if rel_dir == ".":
+            rel_dir = ""
+
+        for f in filenames:
+            if f in WORKSPACE_IGNORE_FILES or f.startswith("."):
+                continue
+            full_path = Path(dirpath) / f
+            rel_path = (Path(rel_dir) / f).as_posix() if rel_dir else f
+
+            try:
+                stat = full_path.stat()
+                size = stat.st_size
+                mtime = stat.st_mtime
+            except OSError:
+                continue
+
+            agent_author = "Backend Engineer"
+            lower = rel_path.lower()
+            if "front" in lower or "ui" in lower or lower.endswith((".css", ".html")):
+                agent_author = "Frontend Engineer"
+            elif lower.endswith((".py", ".sql", ".js", ".ts")) and ("api" in lower or "server" in lower or "app" in lower):
+                agent_author = "Backend Engineer"
+            elif "docker" in lower or lower.endswith((".yaml", ".yml")):
+                agent_author = "DevOps Engineer"
+            elif "test" in lower or "spec" in lower:
+                agent_author = "QA Tester"
+            elif lower.endswith((".md", ".txt", ".json")):
+                agent_author = "Solution Architect"
+
+            status = git_statuses.get(rel_path, "unchanged")
+            if agent_filter and agent_author.lower() != agent_filter.lower():
+                continue
+
+            files.append({
+                "path": rel_path,
+                "name": f,
+                "size": size,
+                "modified_at": mtime,
+                "status": status,
+                "agent": agent_author,
+                "is_new": status == "new",
+                "is_modified": status == "modified",
+            })
+
+    files.sort(key=lambda x: x["path"])
+    return {"project_id": project_id, "root_name": root.name, "files": files}
+
+@app.get("/api/projects/{project_id}/workspace/file", dependencies=[Depends(auth)])
+def get_workspace_file(project_id: str, path: str):
+    root = get_project_workspace_root(project_id)
+    target = validate_workspace_path(root, path)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    if target.stat().st_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File exceeds 1MB limit")
+
+    try:
+        content = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Binary files cannot be displayed")
+
+    diff = None
+    try:
+        diff_res = subprocess.run(["git", "diff", "HEAD", "--", path], cwd=root, capture_output=True, text=True, timeout=5)
+        if diff_res.returncode == 0 and diff_res.stdout.strip():
+            diff = diff_res.stdout
+    except Exception:
+        pass
+
+    mime, _ = mimetypes.guess_type(target.name)
+    ext = target.suffix.lstrip(".").lower()
+    return {
+        "path": path,
+        "name": target.name,
+        "size": target.stat().st_size,
+        "content": content,
+        "diff": diff,
+        "language": ext or "text",
+        "mime": mime or "text/plain",
+    }
+
+@app.get("/api/projects/{project_id}/workspace/download-zip")
+def download_workspace_zip(project_id: str, x_service_token: str | None = Header(default=None)):
+    root = get_project_workspace_root(project_id)
+    if not root.is_dir():
+        raise HTTPException(status_code=404, detail="Workspace directory not found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in WORKSPACE_IGNORE_DIRS and not d.startswith(".")]
+            for f in filenames:
+                if f in WORKSPACE_IGNORE_FILES or f.startswith("."):
+                    continue
+                file_full = Path(dirpath) / f
+                if file_full.stat().st_size > MAX_FILE_SIZE * 5:
+                    continue
+                rel_path = file_full.relative_to(root)
+                zf.write(file_full, arcname=str(rel_path))
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{root.name}-source.zip"'}
+    )
