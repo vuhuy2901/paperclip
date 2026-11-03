@@ -70,9 +70,9 @@ test("task id supports runtime and wake payload conventions", () => {
   assert.equal(explicitTaskId({ runtime: { taskKey: "runtime" } }), "runtime");
 });
 
-test("project brief and completed predecessor handoff reach the model", async () => {
-  const prompt = await taskPrompt({ ...assigned, projectId: "project", project: { name: "English learning" }, blockedBy: [{ id: "parent", identifier: "AIS-4", title: "Architecture" }] }, async (path) => {
-    if (path.includes("/companies/")) return [{ id: "brief", identifier: "AIS-2", title: "MVP", description: "Beginner, Intermediate, Advanced", assigneeAgentId: null }];
+test("explicit source requirement and completed predecessor handoff reach the model", async () => {
+  const prompt = await taskPrompt({ ...assigned, description: "Nguồn yêu cầu: AIS-2", projectId: "project", project: { name: "English learning" }, blockedBy: [{ id: "parent", identifier: "AIS-4", title: "Architecture" }] }, async (path) => {
+    if (path === "/api/issues/AIS-2") return { id: "brief", identifier: "AIS-2", title: "MVP", description: "Beginner, Intermediate, Advanced", projectId: "project" };
     if (path.includes("parent")) return [{ body: "Approved architecture handoff" }];
     return [];
   });
@@ -81,11 +81,22 @@ test("project brief and completed predecessor handoff reach the model", async ()
   assert.match(prompt, /Approved architecture handoff/);
 });
 
+test("unrelated project briefs are not injected into task context", async () => {
+  const paths = [];
+  const prompt = await taskPrompt({ ...assigned, projectId: "project", project: { name: "English learning" } }, async (path) => {
+    paths.push(path);
+    return [];
+  });
+  assert.ok(!paths.some((path) => path.includes("/companies/")));
+  assert.doesNotMatch(prompt, /Project requirement/);
+});
+
 test("provider success alone does not mark the task done", () => {
   assert.equal(taskResult("I will start tomorrow").status, "in_progress");
   assert.equal(taskResult('Missing requirements\n<paperclip-result>{"status":"blocked"}</paperclip-result>').status, "blocked");
   assert.equal(taskResult('<paperclip-result>{"status":"done"}</paperclip-result>').status, "in_progress");
   assert.deepEqual(taskResult('Completed plan\n<paperclip-result>{"status":"done"}</paperclip-result>'), { status: "done", report: "Completed plan" });
+  assert.deepEqual(taskResult('Missing access\n< paperclip-result>{"status":"blocked"}</paperclip-result>'), { status: "blocked", report: "Missing access" });
   assert.equal(taskResult('<paperclip-result>{invalid}</paperclip-result>').status, "in_progress");
 });
 
@@ -240,7 +251,7 @@ test("a model-reported blocker includes Paperclip's required unblock descriptor"
     assert.equal(result.exitCode, 0);
     assert.equal(result.resultJson.taskStatus, "blocked");
     assert.equal(update.status, "blocked");
-    assert.equal(update.unblockDescriptor.owner, "board");
+    assert.deepEqual(update.unblockDescriptor.owner, { agentId: ctx.agent.id });
     assert.ok(update.unblockDescriptor.action.trim());
   } finally { globalThis.fetch = original; }
 });

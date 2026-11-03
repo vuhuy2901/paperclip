@@ -33,14 +33,14 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      AI_PM_MODEL: ${AI_PM_MODEL:-openrouter/free}
-      AI_ARCHITECT_MODEL: ${AI_ARCHITECT_MODEL:-openrouter/free}
-      AI_UIUX_MODEL: ${AI_UIUX_MODEL:-qwen2.5:0.5b}
-      AI_BACKEND_MODEL: ${AI_BACKEND_MODEL:-openrouter/free}
-      AI_FRONTEND_MODEL: ${AI_FRONTEND_MODEL:-openrouter/free}
-      AI_REVIEWER_MODEL: ${AI_REVIEWER_MODEL:-qwen2.5:0.5b}
-      AI_TESTER_MODEL: ${AI_TESTER_MODEL:-qwen2.5:0.5b}
-      AI_DEVOPS_MODEL: ${AI_DEVOPS_MODEL:-qwen2.5:0.5b}
+      AI_PM_MODEL: ${AI_PM_MODEL:-llama3.2:3b}
+      AI_ARCHITECT_MODEL: ${AI_ARCHITECT_MODEL:-llama3.2:3b}
+      AI_UIUX_MODEL: ${AI_UIUX_MODEL:-llama3.2:3b}
+      AI_BACKEND_MODEL: ${AI_BACKEND_MODEL:-llama3.2:3b}
+      AI_FRONTEND_MODEL: ${AI_FRONTEND_MODEL:-llama3.2:3b}
+      AI_REVIEWER_MODEL: ${AI_REVIEWER_MODEL:-llama3.2:3b}
+      AI_TESTER_MODEL: ${AI_TESTER_MODEL:-llama3.2:3b}
+      AI_DEVOPS_MODEL: ${AI_DEVOPS_MODEL:-llama3.2:3b}
     volumes: ["core-data:/app/data", ".:/workspace"]
     depends_on:
       core-api: {condition: service_healthy}

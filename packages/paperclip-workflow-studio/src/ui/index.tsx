@@ -349,6 +349,64 @@ function workflowToEdges(
   });
 }
 
+function areNodesEquivalent(prev: FlowNode[] | null | undefined, next: FlowNode[]): boolean {
+  if (!prev || prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (a.id !== b.id) return false;
+    if (a.position.x !== b.position.x || a.position.y !== b.position.y) return false;
+    if (a.data.status !== b.data.status) return false;
+    if (a.data.issueIdentifier !== b.data.issueIdentifier) return false;
+    if (a.data.model !== b.data.model) return false;
+    if (a.data.agentId !== b.data.agentId) return false;
+    if (a.data.agentName !== b.data.agentName) return false;
+    if (a.data.title !== b.data.title) return false;
+    if (a.data.lastGateCode !== b.data.lastGateCode) return false;
+    if (a.data.runtimeDuration !== b.data.runtimeDuration) return false;
+  }
+  return true;
+}
+
+function areEdgesEquivalent(prev: FlowEdge[] | null | undefined, next: FlowEdge[]): boolean {
+  if (!prev || prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (a.id !== b.id || a.source !== b.source || a.target !== b.target) return false;
+    if (a.animated !== b.animated || a.className !== b.className) return false;
+    const aColor = a.markerEnd && typeof a.markerEnd === "object" && "color" in a.markerEnd ? a.markerEnd.color : undefined;
+    const bColor = b.markerEnd && typeof b.markerEnd === "object" && "color" in b.markerEnd ? b.markerEnd.color : undefined;
+    if (aColor !== bColor) return false;
+  }
+  return true;
+}
+
+const ElapsedTimer = React.memo(function ElapsedTimer({ startedAt, finishedAt }: { startedAt?: string | null; finishedAt?: string | null }) {
+  const [elapsed, setElapsed] = useState("00:00");
+  useEffect(() => {
+    if (!startedAt) {
+      setElapsed("00:00");
+      return;
+    }
+    const calc = () => {
+      const start = new Date(startedAt).getTime();
+      const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
+      const diff = Math.max(0, Math.floor((end - start) / 1000));
+      const m = Math.floor(diff / 60);
+      const s = diff % 60;
+      setElapsed(`${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`);
+    };
+    calc();
+    if (!finishedAt) {
+      const timer = window.setInterval(calc, 1000);
+      return () => window.clearInterval(timer);
+    }
+  }, [startedAt, finishedAt]);
+
+  return <strong style={{ fontFamily: "monospace" }}>{elapsed}</strong>;
+});
+
 function flowToWorkflow(workflow: WorkflowDefinition, nodes: FlowNode[], edges: FlowEdge[], viewport?: Viewport): WorkflowDefinition {
   return {
     ...workflow,
@@ -823,7 +881,7 @@ function DesignerCanvas({
     setNodes(next.nodes); setEdges(next.edges); markChanged();
   }, [nodes, edges, markChanged]);
 
-  const fitAll = useCallback(() => flow.fitView({ padding: 0.18, minZoom: 0.2, maxZoom: 1, duration: 280 }), [flow]);
+  const fitAll = useCallback(() => flow.fitView({ padding: 0.16, minZoom: 0.45, maxZoom: 1.05, duration: 280 }), [flow]);
   const fitSelection = useCallback(() => {
     const selected = nodes.filter((node) => node.selected);
     if (selected.length) flow.fitView({ nodes: selected, padding: 0.55, maxZoom: 1.12, duration: 260 });
@@ -986,55 +1044,88 @@ function DesignerCanvas({
   return <div className="wfs-designer" style={designerStyle} onClick={() => { setContextMenu(null); setMoreOpen(false); }}>
     <div className="wfs-toolbar wfs-designer-toolbar" onClick={(event) => event.stopPropagation()}>
       <div className="wfs-toolbar-left">
-        <button className="wfs-button wfs-icon-button" onClick={() => requestNavigation(() => navigation.navigate("/workflows"), "the workflow list")} title="Back to workflows"><ArrowLeft size={14} /></button>
-        <div className="wfs-brand"><span className="wfs-brand-icon"><Workflow size={16} /></span><div className="wfs-title-wrap"><div className="wfs-title">Workflow Designer</div><div className="wfs-subtitle">{dirty ? "Unsaved changes" : workflowStatusLabel(workflow.status)}</div></div></div>
-        <input className="wfs-name-input" value={workflow.name} onChange={(event) => updateWorkflow({ name: event.target.value })} aria-label="Workflow name" />
-        <span className="wfs-badge wfs-badge-draft">Shared template</span>
+        <button
+          className="wfs-button wfs-back-btn"
+          onClick={() => requestNavigation(() => navigation.navigate("/workflows"), "Workflows")}
+          title="Back to workflows"
+        >
+          <ArrowLeft size={14} />
+          <span>Workflows</span>
+        </button>
+        <div className="wfs-divider" />
+        <div className="wfs-brand-icon" style={{ width: 30, height: 30, flex: "none" }}>
+          <Workflow size={15} />
+        </div>
+        <input
+          className="wfs-name-input"
+          value={workflow.name}
+          onChange={(event) => updateWorkflow({ name: event.target.value })}
+          aria-label="Workflow name"
+          placeholder="Workflow name"
+        />
+        <span className="wfs-badge-version">v{workflow.version}</span>
+        <span className={`wfs-badge ${workflow.status === "published" ? "wfs-badge-published" : "wfs-badge-draft"}`}>
+          {workflow.status === "published" ? "Published" : "Draft"}
+        </span>
+        {dirty && <span className="wfs-badge-dirty">Unsaved</span>}
       </div>
-      <div className="wfs-tabs" role="tablist"><button className="wfs-tab" aria-selected="true">Designer</button><button className="wfs-tab" aria-selected="false" onClick={() => requestNavigation(() => switchMode("monitor"), "Monitor")}>Monitor</button><button className="wfs-tab" aria-selected="false" onClick={() => requestNavigation(() => switchMode("templates"), "Templates")}>Templates</button></div>
+
+      <div className="wfs-toolbar-spacer" />
+
       <div className="wfs-toolbar-actions">
-        <button className="wfs-button wfs-icon-button" onClick={undo} disabled={history.current.length === 0} title="Undo"><Undo2 size={14} /></button>
-        <button className="wfs-button wfs-icon-button" onClick={redo} disabled={future.current.length === 0} title="Redo"><Redo2 size={14} /></button>
-        <button className="wfs-button" onClick={() => autoLayout()} title="Arrange nodes"><LayoutDashboard size={14} /><span>Auto layout</span></button>
-        <button className="wfs-button wfs-icon-button" onClick={fitAll} title="Fit all"><Maximize2 size={14} /></button>
-        <button className="wfs-button wfs-button-primary" onClick={() => void save()} disabled={busy || !dirty} title="Save workflow"><Save size={14} /><span>Save</span></button>
-        {workflow.status === "published" ? (
-          <button
-            className="wfs-button wfs-button-run"
-            onClick={() => onOpenRunModal ? onOpenRunModal(workflow.id) : undefined}
-            title="Run Project Workflow"
-          >
-            <Play size={14} />
-            <span>Run Workflow</span>
+        <button className="wfs-button wfs-icon-button" onClick={undo} disabled={history.current.length === 0} title="Undo">
+          <Undo2 size={14} />
+        </button>
+        <button className="wfs-button wfs-icon-button" onClick={redo} disabled={future.current.length === 0} title="Redo">
+          <Redo2 size={14} />
+        </button>
+        <button className="wfs-button" onClick={() => autoLayout()} title="Arrange nodes automatically">
+          <LayoutDashboard size={14} />
+          <span>Auto layout</span>
+        </button>
+        <button className="wfs-button wfs-icon-button" onClick={fitAll} title="Fit View">
+          <Maximize2 size={14} />
+        </button>
+        <button className="wfs-button" onClick={() => void validate()} disabled={busy} title="Validate workflow graph">
+          <Check size={14} />
+          <span>Validate</span>
+        </button>
+        <button className="wfs-button" onClick={() => void save()} disabled={busy || !dirty} title="Save workflow changes">
+          <Save size={14} />
+          <span>Save</span>
+        </button>
+        <button
+          className="wfs-button wfs-button-primary"
+          onClick={() => void preparePublish()}
+          disabled={busy}
+          title="Publish workflow"
+        >
+          <Rocket size={14} />
+          <span>Publish</span>
+        </button>
+        <div className="wfs-menu-anchor">
+          <button className="wfs-button wfs-icon-button" onClick={() => setMoreOpen((value) => !value)} title="More actions">
+            <MoreHorizontal size={15} />
           </button>
-        ) : (
-          <button
-            className="wfs-button"
-            onClick={() => {
-              toast({
-                title: "Draft Workflow",
-                body: "Validate and publish this workflow before running it.",
-                tone: "warn"
-              });
-              void preparePublish();
-            }}
-            title="Validate & publish before running"
-          >
-            <Rocket size={14} />
-            <span>Publish to Run</span>
-          </button>
-        )}
-        <div className="wfs-menu-anchor"><button className="wfs-button wfs-icon-button" onClick={() => setMoreOpen((value) => !value)} title="More actions"><MoreHorizontal size={15} /></button>{moreOpen && <div className="wfs-popover wfs-toolbar-popover">
-          <button onClick={() => { void validate(); setMoreOpen(false); }}><Check size={14} /> Validate</button>
-          <button onClick={() => { requestNavigation(() => void duplicateWorkflow(workflow.id), "the duplicated workflow"); setMoreOpen(false); }}><Copy size={14} /> Duplicate workflow</button>
-          <button onClick={exportJson}><Download size={14} /> Export JSON</button>
-          <div className="wfs-menu-separator" />
-          <button onClick={() => { autoLayout("LR", false); setMoreOpen(false); }}>Horizontal layout</button>
-          <button onClick={() => { autoLayout("TB", false); setMoreOpen(false); }}>Vertical layout</button>
-          <button onClick={() => { autoLayout(workflow.layout.direction, true); setMoreOpen(false); }}>Compact layout</button>
-          <div className="wfs-menu-separator" />
-          <button className="danger" onClick={() => { setDeleteWorkflowId(workflow.id); setMoreOpen(false); }}><Trash2 size={14} /> Delete workflow</button>
-        </div>}</div>
+          {moreOpen && (
+            <div className="wfs-popover wfs-toolbar-popover">
+              <button onClick={() => { requestNavigation(() => void duplicateWorkflow(workflow.id), "the duplicated workflow"); setMoreOpen(false); }}>
+                <Copy size={14} /> Duplicate workflow
+              </button>
+              <button onClick={() => { exportJson(); setMoreOpen(false); }}>
+                <Download size={14} /> Export JSON
+              </button>
+              <div className="wfs-menu-separator" />
+              <button onClick={() => { autoLayout("LR", false); setMoreOpen(false); }}>Horizontal layout</button>
+              <button onClick={() => { autoLayout("TB", false); setMoreOpen(false); }}>Vertical layout</button>
+              <button onClick={() => { autoLayout(workflow.layout.direction, true); setMoreOpen(false); }}>Compact layout</button>
+              <div className="wfs-menu-separator" />
+              <button className="danger" onClick={() => { setDeleteWorkflowId(workflow.id); setMoreOpen(false); }}>
+                <Trash2 size={14} /> Delete workflow
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
     <div className={`wfs-body ${selectedNode ? "" : "inspector-closed"}`}>
@@ -1394,39 +1485,46 @@ function MonitorCanvas({
     return historical;
   }, [run, replayMode, replayStep]);
 
-  const nodes = useMemo(
+  // Stable nodes & edges caching to prevent React Flow from re-mounting and flickering canvas
+  const prevNodesRef = useRef<FlowNode[]>([]);
+  const prevEdgesRef = useRef<FlowEdge[]>([]);
+
+  const rawNodes = useMemo(
     () => workflowToNodes(currentWorkflow, bootstrap.agents, currentMonitor, effectiveNodeStates),
     [currentWorkflow, bootstrap.agents, currentMonitor, effectiveNodeStates]
   );
-  const edges = useMemo(
+  const nodes = useMemo(() => {
+    if (areNodesEquivalent(prevNodesRef.current, rawNodes)) {
+      return prevNodesRef.current;
+    }
+    prevNodesRef.current = rawNodes;
+    return rawNodes;
+  }, [rawNodes]);
+
+  const rawEdges = useMemo(
     () => workflowToEdges(currentWorkflow.edges, effectiveNodeStates),
     [currentWorkflow.edges, effectiveNodeStates]
   );
-  const monitorByNode = useMemo(() => new Map(currentMonitor.map((item) => [item.nodeId, item])), [currentMonitor]);
-
-  // Elapsed time calculation
-  const [elapsed, setElapsed] = useState("00:00");
-  useEffect(() => {
-    if (!run?.startedAt) return;
-    const calc = () => {
-      const start = new Date(run.startedAt).getTime();
-      const end = run.finishedAt ? new Date(run.finishedAt).getTime() : Date.now();
-      const diff = Math.max(0, Math.floor((end - start) / 1000));
-      const m = Math.floor(diff / 60);
-      const s = diff % 60;
-      setElapsed(`${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`);
-    };
-    calc();
-    if (!run.finishedAt) {
-      const timer = window.setInterval(calc, 1000);
-      return () => window.clearInterval(timer);
+  const edges = useMemo(() => {
+    if (areEdgesEquivalent(prevEdgesRef.current, rawEdges)) {
+      return prevEdgesRef.current;
     }
-  }, [run?.startedAt, run?.finishedAt]);
+    prevEdgesRef.current = rawEdges;
+    return rawEdges;
+  }, [rawEdges]);
+  const monitorByNode = useMemo(() => new Map(currentMonitor.map((item) => [item.nodeId, item])), [currentMonitor]);
 
   // Autonomous background runner: step workflow while running
   useEffect(() => {
     if (!run || !runId || !companyId) return;
     if (run.status !== "running" && run.status !== "pending") return;
+
+    const nodeStatesList = Object.values(run.nodeExecutionStates ?? {});
+    const runningAgents = nodeStatesList.filter((s) => s.status === "running").length;
+    const failedSteps = nodeStatesList.filter((s) => s.status === "failed" || s.status === "cancelled").length;
+    // If run has failed steps and no active agents, back off polling to 15s instead of aggressive 3s
+    const pollInterval = (failedSteps > 0 && runningAgents === 0) ? 15000 : 3000;
+
     const interval = window.setInterval(async () => {
       if (document.visibilityState === "visible") {
         try {
@@ -1436,9 +1534,9 @@ function MonitorCanvas({
           // ignore transient poll error
         }
       }
-    }, 3000);
+    }, pollInterval);
     return () => window.clearInterval(interval);
-  }, [run?.status, runId, companyId, stepAction, runData.refresh]);
+  }, [run?.status, run?.nodeExecutionStates, runId, companyId, stepAction, runData.refresh]);
 
   // Regular monitor refresh if not in run mode
   useEffect(() => {
@@ -1449,18 +1547,22 @@ function MonitorCanvas({
     return () => window.clearInterval(timer);
   }, [runId, refresh]);
 
-  // Auto Follow Running Node Effect
+  // Only move the viewport when the followed step changes to a NEW node.
+  const lastFollowedIdRef = useRef<string | null>(null);
+  const followedNode = nodes.find((node) => ["running", "in_progress"].includes(node.data.status)) ??
+    nodes.find((node) => ["blocked", "failed"].includes(node.data.status));
+  const followedNodeId = followedNode?.id;
+  const followedNodeX = followedNode?.position.x;
+  const followedNodeY = followedNode?.position.y;
   useEffect(() => {
-    if (!autoFollow) return;
-    const focalNode = nodes.find((node) => ["running", "in_progress"].includes(node.data.status)) ??
-      nodes.find((node) => ["blocked", "failed"].includes(node.data.status));
-    if (focalNode) {
-      flow.setCenter(focalNode.position.x + 100, focalNode.position.y + 60, {
-        duration: 450,
-        zoom: Math.max(0.75, flow.getZoom())
-      });
-    }
-  }, [nodes, autoFollow, flow]);
+    if (!autoFollow || !followedNodeId || followedNodeX === undefined || followedNodeY === undefined) return;
+    if (lastFollowedIdRef.current === followedNodeId) return;
+    lastFollowedIdRef.current = followedNodeId;
+    flow.setCenter(followedNodeX + 100, followedNodeY + 60, {
+      duration: 450,
+      zoom: Math.max(0.75, flow.getZoom())
+    });
+  }, [followedNodeId, followedNodeX, followedNodeY, autoFollow, flow]);
 
   // Replay timer
   useEffect(() => {
@@ -1666,7 +1768,7 @@ function MonitorCanvas({
           {run && (
             <div className="wfs-monitor-stat">
               <span>Elapsed</span>
-              <strong style={{ fontFamily: "monospace" }}>{elapsed}</strong>
+              <ElapsedTimer startedAt={run?.startedAt} finishedAt={run?.finishedAt} />
             </div>
           )}
 
@@ -2473,6 +2575,22 @@ export function AgentControlCenterView({
   );
 }
 
+function formatRelativeTime(dateString: string): string {
+  try {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
+    if (isNaN(diffSec) || diffSec < 0) return "Just now";
+    if (diffSec < 60) return "Just now";
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    if (diffSec < 604800) return `${Math.floor(diffSec / 86400)}d ago`;
+    return date.toLocaleDateString();
+  } catch {
+    return dateString;
+  }
+}
+
 function WorkflowListPage({
   workflows,
   busy,
@@ -2480,69 +2598,431 @@ function WorkflowListPage({
   openWorkflow,
   duplicateWorkflow,
   renameWorkflow,
-  deleteWorkflow,
-  openTemplates,
-  openControlCenter,
-  openHistory,
-  onOpenRunModal
+  deleteWorkflow
 }: {
   workflows: WorkflowIndexEntry[];
   busy: boolean;
-  createWorkflow: () => void;
+  createWorkflow: (name?: string) => Promise<void> | void;
   openWorkflow: (id: string) => void;
   duplicateWorkflow: (id: string) => void;
   renameWorkflow: (workflow: WorkflowIndexEntry, name: string) => void;
   deleteWorkflow: (workflow: WorkflowIndexEntry) => void;
-  openTemplates: () => void;
-  openControlCenter: () => void;
-  openHistory: () => void;
-  onOpenRunModal: () => void;
 }) {
-  const navigation = useHostNavigation();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | "draft" | "published">("all");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [actionMenuId, setActionMenuId] = useState<string | null>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [newWorkflowName, setNewWorkflowName] = useState("New Workflow");
   const [renameTarget, setRenameTarget] = useState<WorkflowIndexEntry | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<WorkflowIndexEntry | null>(null);
+
+  useEffect(() => {
+    if (!actionMenuId) return;
+    const closeMenu = () => setActionMenuId(null);
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, [actionMenuId]);
+
+  const publishedCount = workflows.filter((w) => w.status === "published").length;
+  const draftCount = workflows.filter((w) => w.status !== "published").length;
+
   const visible = workflows
-    .filter((workflow) => (status === "all" || workflow.status === status) && `${workflow.name} ${workflow.description}`.toLowerCase().includes(query.trim().toLowerCase()))
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  const beginRename = (workflow: WorkflowIndexEntry) => { setRenameTarget(workflow); setRenameValue(workflow.name); };
-  return <div className="wfs-list-page">
-    <header className="wfs-list-header">
-      <div>
-        <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
-          <button className="wfs-tab" aria-selected="true">Workflow Templates</button>
-          <button className="wfs-tab" aria-selected="false" onClick={openControlCenter}>Agent Control Center</button>
-          <button className="wfs-tab" aria-selected="false" onClick={() => navigation.navigate("/projects-portfolio")}>Projects Portfolio</button>
-          <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button>
+    .filter((workflow) => {
+      if (status === "published" && workflow.status !== "published") return false;
+      if (status === "draft" && workflow.status === "published") return false;
+      if (query.trim()) {
+        const q = query.trim().toLowerCase();
+        const combined = `${workflow.name} ${workflow.description || ""}`.toLowerCase();
+        if (!combined.includes(q)) return false;
+      }
+      return true;
+    })
+    .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
+
+  const beginRename = (workflow: WorkflowIndexEntry) => {
+    setRenameTarget(workflow);
+    setRenameValue(workflow.name);
+  };
+
+  return (
+    <div className="wfs-list-page">
+      <header className="wfs-list-header">
+        <div>
+          <div className="wfs-list-eyebrow">Workflows</div>
+          <h1>Workflows</h1>
+          <p>Design and manage automated workflows.</p>
         </div>
-        <div className="wfs-list-eyebrow">Workflow Studio</div>
-        <h1>Workflow Templates</h1>
-        <p>Design, validate, publish, and manage reusable delivery graphs for Paperclip projects. Opening a workflow never starts an agent.</p>
+        <div className="wfs-list-header-actions">
+          <button
+            className="wfs-button wfs-button-primary"
+            disabled={busy}
+            onClick={() => {
+              setNewWorkflowName("New Workflow");
+              setCreateModalOpen(true);
+            }}
+          >
+            <Plus size={14} /> Create Workflow
+          </button>
+        </div>
+      </header>
+
+      <div className="wfs-list-controls">
+        <div className="wfs-pill-group" role="tablist" aria-label="Filter workflows by status">
+          <button
+            className="wfs-pill-btn"
+            aria-selected={status === "all"}
+            onClick={() => setStatus("all")}
+          >
+            All Workflows <span className="wfs-pill-count">{workflows.length}</span>
+          </button>
+          <button
+            className="wfs-pill-btn"
+            aria-selected={status === "published"}
+            onClick={() => setStatus("published")}
+          >
+            Published <span className="wfs-pill-count">{publishedCount}</span>
+          </button>
+          <button
+            className="wfs-pill-btn"
+            aria-selected={status === "draft"}
+            onClick={() => setStatus("draft")}
+          >
+            Drafts <span className="wfs-pill-count">{draftCount}</span>
+          </button>
+        </div>
+
+        <div className="wfs-controls-right">
+          <div className="wfs-search-box">
+            <Search size={14} />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search workflows..."
+              aria-label="Search workflows"
+            />
+            {query && (
+              <button
+                className="wfs-search-clear"
+                onClick={() => setQuery("")}
+                title="Clear search"
+                aria-label="Clear search"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          <div className="wfs-view-toggle" role="group" aria-label="View layout toggle">
+            <button
+              className="wfs-view-btn"
+              aria-selected={viewMode === "grid"}
+              onClick={() => setViewMode("grid")}
+              title="Grid view"
+            >
+              <LayoutGrid size={15} />
+            </button>
+            <button
+              className="wfs-view-btn"
+              aria-selected={viewMode === "list"}
+              onClick={() => setViewMode("list")}
+              title="Compact list view"
+            >
+              <List size={15} />
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="wfs-list-header-actions">
-        <button className="wfs-button" onClick={openTemplates}><Layers3 size={14} /> Templates</button>
-        <button className="wfs-button wfs-button-primary" disabled={busy} onClick={createWorkflow}><Plus size={14} /> Create workflow</button>
-      </div>
-    </header>
-    <div className="wfs-list-filters">
-      <label className="wfs-list-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search workflows" aria-label="Search workflows" /></label>
-      <select value={status} onChange={(event) => setStatus(event.target.value as "all" | "draft" | "published")} aria-label="Filter workflows by status"><option value="all">All statuses</option><option value="draft">Saved</option><option value="published">Published</option></select>
-      <span>{visible.length} of {workflows.length}</span>
+
+      {visible.length === 0 ? (
+        <div className="wfs-empty-state">
+          <div className="wfs-empty-state-icon">
+            <Workflow size={24} />
+          </div>
+          <h3>{workflows.length > 0 ? "No workflows match your search" : "No workflows yet"}</h3>
+          <p>
+            {workflows.length > 0
+              ? "Try adjusting your search query or status filter to find what you're looking for."
+              : "Create your first workflow to orchestrate AI agents and delivery steps."}
+          </p>
+          {workflows.length > 0 ? (
+            <button
+              className="wfs-button"
+              onClick={() => {
+                setQuery("");
+                setStatus("all");
+              }}
+            >
+              Clear filters
+            </button>
+          ) : (
+            <button
+              className="wfs-button wfs-button-primary"
+              onClick={() => {
+                setNewWorkflowName("New Workflow");
+                setCreateModalOpen(true);
+              }}
+            >
+              <Plus size={14} /> Create Workflow
+            </button>
+          )}
+        </div>
+      ) : viewMode === "grid" ? (
+        <div className="wfs-cards-grid">
+          {visible.map((workflow) => (
+            <div key={workflow.id} className="wfs-card">
+              <div className="wfs-card-head">
+                <div className="wfs-card-top-row">
+                  <div className="wfs-card-icon">
+                    <Workflow size={18} />
+                  </div>
+                  <div className="wfs-card-badges">
+                    <span className={`wfs-badge ${workflow.status === "published" ? "wfs-badge-published" : "wfs-badge-draft"}`}>
+                      {workflow.status === "published" ? "Published" : "Draft"}
+                    </span>
+                    <span className="wfs-badge-version">v{workflow.version}</span>
+                  </div>
+                  <div className="wfs-card-menu-anchor" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="wfs-icon-btn"
+                      onClick={() => setActionMenuId(actionMenuId === workflow.id ? null : workflow.id)}
+                      title={`Actions for ${workflow.name}`}
+                      aria-label={`Actions for ${workflow.name}`}
+                    >
+                      <MoreHorizontal size={15} />
+                    </button>
+                    {actionMenuId === workflow.id && (
+                      <div className="wfs-popover wfs-card-popover">
+                        <button onClick={() => { setActionMenuId(null); beginRename(workflow); }}>
+                          <Braces size={13} /> Rename
+                        </button>
+                        <button onClick={() => { setActionMenuId(null); duplicateWorkflow(workflow.id); }}>
+                          <Copy size={13} /> Duplicate
+                        </button>
+                        <div className="wfs-menu-separator" />
+                        <button className="danger" onClick={() => { setActionMenuId(null); setDeleteTarget(workflow); }}>
+                          <Trash2 size={13} /> Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <h3
+                  className="wfs-card-title"
+                  onClick={() => openWorkflow(workflow.id)}
+                  title={`Open ${workflow.name} in designer`}
+                >
+                  {workflow.name}
+                </h3>
+                <p className="wfs-card-desc">
+                  {workflow.description || "No description provided."}
+                </p>
+              </div>
+
+              <div className="wfs-card-foot">
+                <div className="wfs-card-updated" title={new Date(workflow.updatedAt).toLocaleString()}>
+                  <Clock3 size={12} />
+                  <span>Updated {formatRelativeTime(workflow.updatedAt)}</span>
+                </div>
+                <button
+                  className="wfs-button wfs-open-btn"
+                  onClick={() => openWorkflow(workflow.id)}
+                >
+                  <span>Open Designer</span>
+                  <ChevronRight size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="wfs-compact-table" role="table" aria-label="Workflows">
+          <div className="wfs-compact-head" role="row">
+            <span>Workflow</span>
+            <span>Status</span>
+            <span>Version</span>
+            <span>Last Updated</span>
+            <span style={{ textAlign: "right" }}>Actions</span>
+          </div>
+          {visible.map((workflow) => (
+            <div key={workflow.id} className="wfs-compact-row" role="row">
+              <button
+                className="wfs-compact-main"
+                onClick={() => openWorkflow(workflow.id)}
+                title={`Open ${workflow.name} in designer`}
+              >
+                <span className="wfs-compact-mark">
+                  <Workflow size={15} />
+                </span>
+                <div className="wfs-compact-text">
+                  <strong>{workflow.name}</strong>
+                  <small>{workflow.description || "No description provided."}</small>
+                </div>
+              </button>
+              <div>
+                <span className={`wfs-badge ${workflow.status === "published" ? "wfs-badge-published" : "wfs-badge-draft"}`}>
+                  {workflow.status === "published" ? "Published" : "Draft"}
+                </span>
+              </div>
+              <div>
+                <span className="wfs-badge-version">v{workflow.version}</span>
+              </div>
+              <div>
+                <time dateTime={workflow.updatedAt} className="wfs-compact-time">
+                  {new Date(workflow.updatedAt).toLocaleString()}
+                </time>
+              </div>
+              <div className="wfs-compact-actions">
+                <button className="wfs-button" onClick={() => openWorkflow(workflow.id)}>
+                  Open Designer
+                </button>
+                <div className="wfs-card-menu-anchor" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    className="wfs-icon-btn"
+                    onClick={() => setActionMenuId(actionMenuId === workflow.id ? null : workflow.id)}
+                    title={`Actions for ${workflow.name}`}
+                    aria-label={`Actions for ${workflow.name}`}
+                  >
+                    <MoreHorizontal size={14} />
+                  </button>
+                  {actionMenuId === workflow.id && (
+                    <div className="wfs-popover wfs-card-popover">
+                      <button onClick={() => { setActionMenuId(null); beginRename(workflow); }}>
+                        <Braces size={13} /> Rename
+                      </button>
+                      <button onClick={() => { setActionMenuId(null); duplicateWorkflow(workflow.id); }}>
+                        <Copy size={13} /> Duplicate
+                      </button>
+                      <div className="wfs-menu-separator" />
+                      <button className="danger" onClick={() => { setActionMenuId(null); setDeleteTarget(workflow); }}>
+                        <Trash2 size={13} /> Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {createModalOpen && (
+        <div className="wfs-modal-backdrop" role="presentation">
+          <div className="wfs-modal wfs-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="create-workflow-title">
+            <div className="wfs-modal-head">
+              <h3 id="create-workflow-title">Create Workflow</h3>
+              <p>Set up a new workflow template to design and automate delivery pipelines.</p>
+            </div>
+            <div className="wfs-modal-body">
+              <label className="wfs-field">
+                <span>Workflow Name</span>
+                <input
+                  autoFocus
+                  maxLength={120}
+                  value={newWorkflowName}
+                  onChange={(event) => setNewWorkflowName(event.target.value)}
+                  placeholder="e.g., Code Review & QA Pipeline"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && newWorkflowName.trim()) {
+                      const name = newWorkflowName.trim();
+                      setCreateModalOpen(false);
+                      void createWorkflow(name);
+                    }
+                  }}
+                />
+              </label>
+            </div>
+            <div className="wfs-modal-actions">
+              <button className="wfs-button" onClick={() => setCreateModalOpen(false)}>
+                Cancel
+              </button>
+              <button
+                className="wfs-button wfs-button-primary"
+                disabled={busy || !newWorkflowName.trim()}
+                onClick={() => {
+                  const name = newWorkflowName.trim();
+                  setCreateModalOpen(false);
+                  void createWorkflow(name);
+                }}
+              >
+                <Plus size={14} /> Create & Open Designer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renameTarget && (
+        <div className="wfs-modal-backdrop" role="presentation">
+          <div className="wfs-modal wfs-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="rename-workflow-title">
+            <div className="wfs-modal-head">
+              <h3 id="rename-workflow-title">Rename workflow</h3>
+              <p>Nodes, edges, project bindings, and Paperclip dependencies stay unchanged.</p>
+            </div>
+            <div className="wfs-modal-body">
+              <label className="wfs-field">
+                <span>Name</span>
+                <input
+                  autoFocus
+                  maxLength={120}
+                  value={renameValue}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && renameValue.trim()) {
+                      renameWorkflow(renameTarget, renameValue.trim());
+                      setRenameTarget(null);
+                    }
+                  }}
+                />
+              </label>
+            </div>
+            <div className="wfs-modal-actions">
+              <button className="wfs-button" onClick={() => setRenameTarget(null)}>
+                Cancel
+              </button>
+              <button
+                className="wfs-button wfs-button-primary"
+                disabled={busy || !renameValue.trim()}
+                onClick={() => {
+                  renameWorkflow(renameTarget, renameValue.trim());
+                  setRenameTarget(null);
+                }}
+              >
+                Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="wfs-modal-backdrop" role="presentation">
+          <div className="wfs-modal wfs-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-workflow-title">
+            <div className="wfs-modal-head">
+              <h3 id="delete-workflow-title">Are you sure you want to delete this workflow?</h3>
+              <p>Only “{deleteTarget.name}” will be removed. Paperclip issues, agents, projects, and task dependencies will not be deleted.</p>
+            </div>
+            <div className="wfs-modal-actions">
+              <button className="wfs-button" onClick={() => setDeleteTarget(null)}>
+                Cancel
+              </button>
+              <button
+                className="wfs-button wfs-button-danger"
+                disabled={busy}
+                onClick={() => {
+                  deleteWorkflow(deleteTarget);
+                  setDeleteTarget(null);
+                }}
+              >
+                <Trash2 size={14} /> Delete workflow
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-    {visible.length > 0 ? <div className="wfs-workflow-table" role="table" aria-label="Workflows">
-      <div className="wfs-workflow-table-head" role="row"><span>Name</span><span>Status</span><span>Updated</span><span>Actions</span></div>
-      {visible.map((workflow) => <div className="wfs-workflow-table-row" role="row" key={workflow.id}>
-        <button className="wfs-workflow-main" onClick={() => openWorkflow(workflow.id)}><span className="wfs-workflow-mark"><Workflow size={15} /></span><span><strong>{workflow.name}</strong><small>{workflow.description || "No description"}</small></span></button>
-        <span><span className={`wfs-badge ${workflow.status === "published" ? "wfs-badge-published" : "wfs-badge-draft"}`}>{workflowStatusLabel(workflow.status)}</span></span>
-        <time dateTime={workflow.updatedAt}>{new Date(workflow.updatedAt).toLocaleString()}</time>
-        <div className="wfs-workflow-actions"><button className="wfs-button" onClick={() => openWorkflow(workflow.id)}>Open</button><button className="wfs-button wfs-icon-button" onClick={() => duplicateWorkflow(workflow.id)} title={`Duplicate ${workflow.name}`}><Copy size={14} /></button><button className="wfs-button wfs-icon-button" onClick={() => beginRename(workflow)} title={`Rename ${workflow.name}`}><Braces size={14} /></button><button className="wfs-button wfs-icon-button wfs-button-danger" onClick={() => setDeleteTarget(workflow)} title={`Delete ${workflow.name}`}><Trash2 size={14} /></button></div>
-      </div>)}
-    </div> : <div className="wfs-list-empty"><Workflow size={24} /><div><strong>{workflows.length ? "No workflows match" : "No workflows yet"}</strong><p>{workflows.length ? "Change the search or status filter." : "Create a reusable workflow for your projects."}</p></div>{workflows.length === 0 && <button className="wfs-button wfs-button-primary" onClick={createWorkflow}><Plus size={14} /> Create workflow</button>}</div>}
-    {renameTarget && <div className="wfs-modal-backdrop" role="presentation"><div className="wfs-modal wfs-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="rename-workflow-title"><div className="wfs-modal-head"><h3 id="rename-workflow-title">Rename workflow</h3><p>Nodes, edges, project bindings, and Paperclip dependencies stay unchanged.</p></div><div className="wfs-modal-body"><label className="wfs-field"><span>Name</span><input autoFocus maxLength={120} value={renameValue} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && renameValue.trim()) { renameWorkflow(renameTarget, renameValue.trim()); setRenameTarget(null); } }} /></label></div><div className="wfs-modal-actions"><button className="wfs-button" onClick={() => setRenameTarget(null)}>Cancel</button><button className="wfs-button wfs-button-primary" disabled={busy || !renameValue.trim()} onClick={() => { renameWorkflow(renameTarget, renameValue.trim()); setRenameTarget(null); }}>Rename</button></div></div></div>}
-    {deleteTarget && <div className="wfs-modal-backdrop" role="presentation"><div className="wfs-modal wfs-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-workflow-title"><div className="wfs-modal-head"><h3 id="delete-workflow-title">Are you sure you want to delete this workflow?</h3><p>Only “{deleteTarget.name}” will be removed. Paperclip issues, agents, projects, and task dependencies will not be deleted.</p></div><div className="wfs-modal-actions"><button className="wfs-button" onClick={() => setDeleteTarget(null)}>Cancel</button><button className="wfs-button wfs-button-danger" disabled={busy} onClick={() => { deleteWorkflow(deleteTarget); setDeleteTarget(null); }}><Trash2 size={14} /> Delete workflow</button></div></div></div>}
-  </div>;
+  );
 }
 
 function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projectId: string | null }) {
@@ -2605,10 +3085,10 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
     } catch (error) { toast({ title: "Template failed", body: asMessage(error), tone: "error" }); }
   }, [createTemplate, companyId, bootstrapData.refresh, openWorkflow, toast]);
 
-  const createBlank = useCallback(async () => {
+  const createBlank = useCallback(async (name?: string) => {
     setBusy(true);
     try {
-      const response = await createWorkflowAction({ companyId, name: "Untitled workflow" }) as { workflow: WorkflowDefinition };
+      const response = await createWorkflowAction({ companyId, name: name?.trim() || "Untitled workflow" }) as { workflow: WorkflowDefinition };
       bootstrapData.refresh();
       openWorkflow(response.workflow.id);
       toast({ title: "Workflow created", body: "A reusable workflow is saved. No issue or agent run was created.", tone: "success" });
@@ -2663,12 +3143,9 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
         <div className="wfs-control-center">
           <header className="wfs-list-header">
             <div>
-              <div className="wfs-tabs" role="tablist" style={{ marginBottom: 12 }}>
-                <button className="wfs-tab" aria-selected="false" onClick={openList}>Workflows</button>
-                <button className="wfs-tab" aria-selected="false" onClick={openControlCenter}>Agent Control Center</button>
-                <button className="wfs-tab" aria-selected="true">Run History</button>
-                <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>Templates</button>
-              </div>
+              <button className="wfs-button" onClick={openList} style={{ marginBottom: 12 }}>
+                <ArrowLeft size={14} /> Back to Workflows
+              </button>
               <div className="wfs-list-eyebrow">Execution Observability</div>
               <h1>Workflow Run History</h1>
               <p>Past workflow runs, multi-agent execution timelines, outputs, and archived terminal logs.</p>
@@ -2745,38 +3222,18 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
     );
   }
 
-  if (!workflowId && mode !== "templates") {
+  if (!workflowId) {
     return (
       <div className="wfs-root wfs-list-root">
         <style>{reactFlowStyles + studioStyles}</style>
         <WorkflowListPage
           workflows={bootstrap.workflows}
           busy={busy}
-          createWorkflow={() => void createBlank()}
+          createWorkflow={(name) => void createBlank(name)}
           openWorkflow={openWorkflow}
           duplicateWorkflow={(id) => void duplicateFromList(id)}
           renameWorkflow={(item, name) => void renameFromList(item, name)}
           deleteWorkflow={(item) => void deleteFromList(item)}
-          openTemplates={openTemplates}
-          openControlCenter={openControlCenter}
-          openHistory={openHistory}
-          onOpenRunModal={() => {
-            setRunModalWorkflowId(null);
-            setRunModalOpen(true);
-          }}
-        />
-        <RunWorkflowModal
-          isOpen={runModalOpen}
-          onClose={() => setRunModalOpen(false)}
-          companyId={companyId}
-          projects={bootstrap.projects}
-          workflows={bootstrap.workflows}
-          initialProjectId={runModalProjectId}
-          initialWorkflowId={runModalWorkflowId}
-          onRunStarted={(run) => {
-            bootstrapData.refresh();
-            openRunMonitor(run.workflowId, run.id);
-          }}
         />
       </div>
     );
@@ -2785,54 +3242,30 @@ function WorkflowWorkspace({ companyId, projectId }: { companyId: string; projec
   return (
     <div className="wfs-root">
       <style>{reactFlowStyles + studioStyles}</style>
-      {mode === "templates" ? (
-        <>
-          <div className="wfs-toolbar">
-            <button className="wfs-button wfs-icon-button" onClick={openList} title="Back to workflows">
-              <ArrowLeft size={14} />
-            </button>
-            <div className="wfs-brand">
-              <span className="wfs-brand-icon">
-                <Layers3 size={16} />
-              </span>
-              <div className="wfs-title-wrap">
-                <div className="wfs-title">Workflow templates</div>
-                <div className="wfs-subtitle">Reusable starting points</div>
-              </div>
-            </div>
-            <div className="wfs-toolbar-spacer" />
-            <button className="wfs-button" disabled={busy} onClick={() => void createBlank()}>
-              <Plus size={14} /> Create blank workflow
-            </button>
-          </div>
-          <TemplatesPage exists={Boolean(lifecycleTemplate)} open={openLifecycleTemplate} />
-        </>
-      ) : workflowId ? (
-        <WorkflowLoader
-          key={`${workflowId}-${mode}-${runId ?? ""}`}
-          companyId={companyId}
-          workflowId={workflowId}
-          runId={runId}
-          bootstrap={bootstrap}
-          mode={mode}
-          openList={openList}
-          openTemplates={openTemplates}
-          openControlCenter={openControlCenter}
-          openHistory={openHistory}
-          openMode={(view) => openWorkflow(workflowId, view)}
-          openWorkflow={openWorkflow}
-          onOpenRunModal={(wfId) => {
-            setRunModalWorkflowId(wfId ?? workflowId);
-            setRunModalOpen(true);
-          }}
-          saveAction={saveAction}
-          validateAction={validateAction}
-          duplicateAction={duplicateAction}
-          deleteAction={deleteAction}
-          publishAction={publishAction}
-          refreshBootstrap={bootstrapData.refresh}
-        />
-      ) : null}
+      <WorkflowLoader
+        key={`${workflowId}-${mode}-${runId ?? ""}`}
+        companyId={companyId}
+        workflowId={workflowId}
+        runId={runId}
+        bootstrap={bootstrap}
+        mode={mode}
+        openList={openList}
+        openTemplates={openList}
+        openControlCenter={openList}
+        openHistory={openHistory}
+        openMode={(view) => openWorkflow(workflowId, view)}
+        openWorkflow={openWorkflow}
+        onOpenRunModal={(wfId) => {
+          setRunModalWorkflowId(wfId ?? workflowId);
+          setRunModalOpen(true);
+        }}
+        saveAction={saveAction}
+        validateAction={validateAction}
+        duplicateAction={duplicateAction}
+        deleteAction={deleteAction}
+        publishAction={publishAction}
+        refreshBootstrap={bootstrapData.refresh}
+      />
       <RunWorkflowModal
         isOpen={runModalOpen}
         onClose={() => setRunModalOpen(false)}
@@ -2893,7 +3326,7 @@ function WorkflowLoader({
   const params = useMemo(() => ({ companyId, workflowId, ...(runId ? { runId } : {}) }), [companyId, workflowId, runId]);
   const workflowData = usePluginData<WorkflowData>("workflow", params);
   const matchingRun = bootstrap.runs?.find((r) => r.id === runId) ?? null;
-  if (workflowData.loading) return <LoadingState />;
+  if (workflowData.loading && !workflowData.data) return <LoadingState />;
   if (workflowData.error) return <ErrorState message={workflowData.error.message} retry={workflowData.refresh} />;
   if (!workflowData.data) return <ErrorState message="Workflow data is unavailable." retry={workflowData.refresh} />;
   if (mode === "monitor") {
@@ -2918,15 +3351,6 @@ function WorkflowLoader({
             </button>
             <button className="wfs-tab" aria-selected="true">
               Monitor
-            </button>
-            <button className="wfs-tab" aria-selected="false" onClick={() => navigation.navigate("/projects-portfolio")}>
-              Projects Portfolio
-            </button>
-            <button className="wfs-tab" aria-selected="false" onClick={openControlCenter}>
-              Agent Control Center
-            </button>
-            <button className="wfs-tab" aria-selected="false" onClick={openTemplates}>
-              Templates
             </button>
           </div>
         </div>
@@ -3025,7 +3449,7 @@ export function ProjectPortfolioView({
     return () => window.clearInterval(interval);
   }, [portfolioQuery.data, portfolioQuery.refresh]);
 
-  if (portfolioQuery.loading) return <LoadingState />;
+  if (portfolioQuery.loading && !portfolioQuery.data) return <LoadingState />;
   if (portfolioQuery.error) return <ErrorState message={portfolioQuery.error.message} retry={portfolioQuery.refresh} />;
   if (!portfolioQuery.data) return <ErrorState message="Portfolio data is unavailable." retry={portfolioQuery.refresh} />;
 
@@ -3560,7 +3984,7 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
   }, [projectData.data?.activeRun?.status, projectData.refresh]);
 
   if (!companyId) return <ErrorState message="Open this tab inside a Paperclip company." />;
-  if (projectData.loading) return <div className="wfs-project-shell"><style>{studioStyles}</style><LoadingState /></div>;
+  if (projectData.loading && !projectData.data) return <div className="wfs-project-shell"><style>{studioStyles}</style><LoadingState /></div>;
   if (projectData.error) return <div className="wfs-project-shell"><style>{studioStyles}</style><ErrorState message={projectData.error.message} retry={projectData.refresh} /></div>;
   if (!projectData.data) return <div className="wfs-project-shell"><style>{studioStyles}</style><ErrorState message="Project workflow data is unavailable." /></div>;
 
@@ -3582,6 +4006,22 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
     ...recentRuns.flatMap((r) => (r as any).artifacts ?? [])
   ];
   const deliverables = [...new Map(allArtifacts.map((a: WorkflowRunArtifact) => [a.name, a])).values()];
+
+  const monitorBootstrap = useMemo(() => ({
+    projects: project ? [project] : [],
+    agents,
+    issues,
+    workflows,
+    runs: recentRuns
+  }), [project, agents, issues, workflows, recentRuns]);
+
+  const monitorData = useMemo(() => {
+    if (!binding) return null;
+    return {
+      workflow: binding.workflow,
+      monitor
+    };
+  }, [binding, monitor]);
 
   const attach = async () => {
     if (!selectedWorkflowId) return;
@@ -3780,20 +4220,11 @@ export function ProjectWorkflowTab({ context }: PluginDetailTabProps) {
       {/* Subtab 3: Live Monitor */}
       {subtab === "monitor" && (
         <div style={{ height: "calc(100vh - 220px)", minHeight: 620, border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", position: "relative" }}>
-          {binding ? (
+          {binding && monitorData ? (
             <ReactFlowProvider>
               <MonitorCanvas
-                bootstrap={{
-                  projects: project ? [project] : [],
-                  agents,
-                  issues,
-                  workflows,
-                  runs: recentRuns
-                }}
-                data={{
-                  workflow: binding.workflow,
-                  monitor
-                }}
+                bootstrap={monitorBootstrap}
+                data={monitorData}
                 refresh={projectData.refresh}
                 companyId={companyId}
                 runId={selectedRunId ?? activeRun?.id ?? recentRuns[0]?.id ?? null}

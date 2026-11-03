@@ -1,0 +1,1 @@
+{"name":"english-vocabulary-api","version":"1.0.0","private":true,"type":"module","scripts":{"dev":"node --watch src/server.js","start":"node src/server.js","test":"node --test"},"dependencies":{"@fastify/sensible":"^6.0.3","fastify":"^5.2.1","zod":"^3.24.2"},"devDependencies":{}}

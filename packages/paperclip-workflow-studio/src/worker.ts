@@ -1526,13 +1526,17 @@ async function stepWorkflowRun(
             state.lastGateCode = "NODE_FAILED";
             state.lastGateReason = state.error;
             modified = true;
-            if (run.settings.failurePolicy === "pause_and_report") {
+            const policy = run.settings?.failurePolicy ?? "pause_and_report";
+            if (policy === "pause_and_report") {
               run.status = "paused";
               run.pausedAt = now;
+            } else {
+              run.status = "failed";
+              run.finishedAt = now;
             }
             run.executionHistory.push({
               id: randomUUID(), timestamp: now, level: "error",
-              message: `Step "${state.title}" failed. ${run.settings.failurePolicy === "pause_and_report" ? "Workflow paused for PO review." : ""} ${completion.reason}`,
+              message: `Step "${state.title}" failed. ${policy === "pause_and_report" ? "Workflow paused for PO review." : "Workflow marked failed."} ${completion.reason}`,
               nodeId: node.id, issueId: state.issueId ?? undefined
             });
           }
@@ -1702,6 +1706,25 @@ async function stepWorkflowRun(
         id: randomUUID(), timestamp: now, level: "action",
         message: `Dispatching step: "${state.title}" to ${state.agentName ?? "Agent"} [gate: ADMITTED]. (Running: ${run.settings.maxConcurrentAgents - availableSlots}/${run.settings.maxConcurrentAgents})`,
         nodeId: node.id, agentId: state.agentId ?? undefined, issueId: state.issueId ?? undefined
+      });
+    }
+  }
+
+  // Safety net: if workflow is marked running but has stalled (failed steps, 0 running, 0 ready)
+  if (run.status === "running") {
+    const allStates = Object.values(run.nodeExecutionStates);
+    const anyRunning = allStates.some((s) => s.status === "running");
+    const anyReady = allStates.some((s) => s.status === "ready");
+    const anyFailed = allStates.some((s) => s.status === "failed" || s.status === "cancelled");
+    if (anyFailed && !anyRunning && !anyReady) {
+      run.status = "paused";
+      run.pausedAt = now;
+      modified = true;
+      run.executionHistory.push({
+        id: randomUUID(),
+        timestamp: now,
+        level: "warn",
+        message: "Workflow paused: stage execution failed and no downstream tasks can proceed. Click Retry to retry failed stage or inspect logs."
       });
     }
   }

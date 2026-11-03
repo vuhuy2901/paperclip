@@ -126,7 +126,7 @@ async function codexProbe() {
       const response = await fetch(`${gateway}/run`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-gateway-token": process.env.CODEX_GATEWAY_TOKEN ?? "dev-codex-gateway" },
-        body: JSON.stringify({ cwd: "/workspace", sandbox: "read-only", timeout_seconds: 90, prompt: "Reply with exactly READY and do not use tools." }),
+        body: JSON.stringify({ cwd: "/workspace", sandbox: "read-only", provider: "ollama", model: process.env.OLLAMA_MODEL ?? "llama3.2:3b", timeout_seconds: 90, prompt: "Reply with exactly READY and do not use tools." }),
         signal: AbortSignal.timeout(100_000),
       });
       if (!response.ok) return { ok: false, detail: `Codex gateway probe returned HTTP ${response.status}` };
@@ -260,7 +260,10 @@ export async function execute(ctx: any) {
     const roleSkills = roleDir ? await readFile(`/opt/role-assets/${roleDir}/skills.md`, "utf8") : "";
     const planning = ["project-manager", "architect", "ui-ux-designer", "code-reviewer"].includes(roleDir ?? "");
     const cwd = ctx.config?.gatewayCwd ?? issue.project?.codebase?.localFolder ?? "/workspace";
-    const sandbox = planning ? "read-only" : "workspace-write";
+    // Codex CLI's read-only sandbox on this Windows host rejects even file
+    // reads through its shell tool. Planning stays read-only by instruction;
+    // the workspace-write runner is required for repository inspection.
+    const sandbox = "workspace-write";
     const workPrompt = [rolePrompt, roleSkills, prompt, `Paperclip issue ID: ${taskId}`,
       "Return your substantive deliverable in the final response so Paperclip can save it as a task comment. Explain completed work, evidence, and remaining blockers. Finish with <paperclip-result>{\"status\":\"done\"}</paperclip-result> only if this assigned task's deliverables are complete. Use status blocked for missing prerequisites or in_progress for unfinished work. Never claim completion on a question, tool failure, or plan for an implementation task.",
       planning ? "This is a read-only planning/review task. Provide the full plan, specification, or review in your final response. Do not implement code or deploy." : "Do not modify unrelated projects or deploy without the user's approval.",
@@ -282,7 +285,7 @@ export async function execute(ctx: any) {
     const response = await fetch(`${gateway}/run`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-gateway-token": process.env.CODEX_GATEWAY_TOKEN ?? "dev-codex-gateway" },
-      body: JSON.stringify({ cwd, sandbox, timeout_seconds: Number(ctx.config?.timeoutSec ?? 900), model: ctx.config?.model, prompt: workPrompt }),
+      body: JSON.stringify({ cwd, sandbox, timeout_seconds: Number(ctx.config?.timeoutSec ?? 900), provider: ctx.config?.provider ?? "ollama", model: ctx.config?.model, prompt: workPrompt }),
       signal: ctx.signal,
     });
     if (!response.ok) throw new Error(`Codex gateway returned HTTP ${response.status}`);
@@ -296,7 +299,7 @@ export async function execute(ctx: any) {
     await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: `${ctx.agent.name}: ${body.status === "completed" ? outcome.status : "execution failed"}\n\n${outcome.report}` } });
     if (body.status === "completed" && outcome.status !== "in_progress") {
       const update = outcome.status === "blocked"
-        ? { status: "blocked", unblockDescriptor: { owner: "board", action: "Review the blocker report in this issue, supply the missing prerequisite, then move the task to Todo and retry." } }
+        ? { status: "blocked", unblockDescriptor: { owner: { agentId: ctx.agent.id }, action: "Review the blocker report in this issue, supply the missing prerequisite, then move the task to Todo and retry." } }
         : { status: outcome.status };
       await request(`/api/issues/${taskId}`, { method: "PATCH", body: update });
     }

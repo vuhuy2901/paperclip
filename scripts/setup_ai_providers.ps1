@@ -1,5 +1,5 @@
 param(
-  [string]$OllamaModel = "qwen2.5:0.5b"
+  [string]$OllamaModel = "llama3.2:3b"
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,4 +23,4 @@ docker compose --profile ai exec ollama ollama pull $OllamaModel
 if ($LASTEXITCODE -ne 0) {
   throw "Ollama model pull failed with exit code $LASTEXITCODE. Check Docker Desktop logs and retry."
 }
-Write-Host "Ollama is ready. Configure OPENROUTER_API_KEY in .env for OpenRouter roles."
+Write-Host "Ollama is ready. Agent roles can now use local model $OllamaModel."

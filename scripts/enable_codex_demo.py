@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -18,7 +19,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 CORE = os.getenv("CORE_PUBLIC_URL", "http://localhost:8001").rstrip("/")
 GATEWAY = "http://localhost:8400"
-CODEX_MODEL = os.getenv("CODEX_MODEL", "gpt-5.6-luna")
+CODEX_MODEL = os.getenv("CODEX_MODEL", os.getenv("OLLAMA_MODEL", "llama3.2:3b"))
 SCOPES = {
     "project-manager": [".ai-company/handoffs/project-manager"],
     "architect": [".ai-company/handoffs/architect"],
@@ -50,11 +51,13 @@ def gateway_ready() -> bool:
 
 
 def main() -> None:
-    login = subprocess.run(["codex", "login", "status"], text=True, capture_output=True, timeout=15)
-    if login.returncode != 0:
-        raise SystemExit("Codex CLI is not signed in. Run `codex login` on this host first.")
+    codex_bin = shutil.which("codex") or "codex"
+    if os.getenv("CODEX_GATEWAY_PROVIDER", "ollama") == "openai":
+        login = subprocess.run([codex_bin, "login", "status"], text=True, capture_output=True, timeout=15)
+        if login.returncode != 0:
+            raise SystemExit("Codex CLI is not signed in. Run `codex login` on this host first.")
     if not gateway_ready():
-        env = {**os.environ, "CODEX_HOST_WORKSPACE_ROOT": str(ROOT)}
+        env = {**os.environ, "CODEX_HOST_WORKSPACE_ROOT": str(ROOT), "CODEX_BIN": codex_bin}
         flags = 0
         if sys.platform == "win32":
             flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW

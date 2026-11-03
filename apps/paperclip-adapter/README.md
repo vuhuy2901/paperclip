@@ -10,11 +10,13 @@ does not invoke the model. A disabled timer heartbeat does not prevent a manual
 run.
 
 The adapter checks out the selected issue using the current authenticated run,
-loads the project requirement issues, parent requirement, discussion and completed
+loads the task's explicitly named source requirement, parent requirement, discussion and completed
 dependency handoffs, then sends the task to the configured model. Start and result
 comments are written to that issue. The model must explicitly report a completed
 deliverable before the adapter marks it `done`; failed execution never does so.
-Planning, architecture, design and review roles use a read-only gateway request.
+The Windows host gateway uses a workspace-write sandbox because the read-only
+Codex sandbox blocks even repository reads on this host. Planning, architecture,
+design and review roles remain read-only by their task instructions.
 Implementation uses the configured `gatewayCwd`, the project's local code folder,
 or the gateway's shared `/workspace` root.
 

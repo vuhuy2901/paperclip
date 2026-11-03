@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -13,7 +14,7 @@ from pathlib import Path
 
 HOST_ROOT = Path(os.getenv("CODEX_HOST_WORKSPACE_ROOT", Path.cwd())).resolve()
 TOKEN = os.getenv("CODEX_GATEWAY_TOKEN", "dev-codex-gateway")
-CODEX_BIN = os.getenv("CODEX_BIN", "codex")
+CODEX_BIN = os.getenv("CODEX_BIN") or shutil.which("codex") or "codex"
 ACTIVE: dict[str, tuple[subprocess.Popen, threading.Event]] = {}
 ACTIVE_LOCK = threading.Lock()
 
@@ -100,6 +101,11 @@ class Handler(BaseHTTPRequestHandler):
             if sandbox not in {"read-only", "workspace-write"}:
                 raise ValueError("unsupported sandbox")
             command = [CODEX_BIN, "exec", "--json", "--ephemeral", "--ignore-user-config"]
+            provider = str(payload.get("provider") or os.getenv("CODEX_GATEWAY_PROVIDER", "ollama")).lower()
+            if provider == "ollama":
+                command.extend(["--oss", "--local-provider", "ollama", "-c", "model_provider=ollama"])
+            elif provider != "openai":
+                raise ValueError(f"unsupported provider: {provider}")
             if sandbox == "workspace-write":
                 # Current Codex CLI forbids combining --approve-for-me with
                 # --sandbox; the approval flag itself selects workspace-write.
@@ -110,19 +116,23 @@ class Handler(BaseHTTPRequestHandler):
             reasoning_effort = payload.get("reasoning_effort") or os.getenv("CODEX_REASONING_EFFORT", "low")
             if reasoning_effort:
                 command.extend(["-c", f"model_reasoning_effort={reasoning_effort}"])
-            model = payload.get("model")
+            model = payload.get("model") or (os.getenv("OLLAMA_MODEL", "llama3.2:3b") if provider == "ollama" else None)
             if model and str(model) not in {"configured-at-runtime", "runtime-configured"}:
                 command.extend(["--model", str(model)])
-            command.append(str(payload["prompt"]))
+            # On Windows, codex.cmd loses lines after the first when a
+            # multiline prompt is passed as a command-line argument. Codex
+            # reads the complete prompt from stdin when the argument is `-`.
+            command.append("-")
             request_id = str(payload.get("request_id") or uuid.uuid4())
             with host_git_worktree(cwd):
                 process = subprocess.Popen(
                     command,
                     cwd=cwd,
                     text=True,
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    encoding="utf-8",
                 )
                 cancel_event = threading.Event()
                 with ACTIVE_LOCK:
@@ -131,7 +141,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     # Drain both pipes while Codex runs. Waiting on poll() first
                     # deadlocks when a task emits more than the OS pipe buffer.
-                    stdout, stderr = process.communicate(timeout=int(payload.get("timeout_seconds", 900)))
+                    stdout, stderr = process.communicate(input=str(payload["prompt"]), timeout=int(payload.get("timeout_seconds", 900)))
                 except subprocess.TimeoutExpired:
                     timed_out = True
                     process.terminate()

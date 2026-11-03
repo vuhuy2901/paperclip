@@ -99,10 +99,15 @@ export async function taskPrompt(issue: any, request: PaperclipRequest): Promise
   }
   if (issue.projectId) {
     sections.push(`Project: ${issue.project?.name ?? issue.projectId}\n${issue.project?.description ?? ""}`);
-    const query = new URLSearchParams({ projectId: issue.projectId, limit: "100", offset: "0" });
-    const projectIssues = await request(`/api/companies/${issue.companyId}/issues?${query}`);
-    const briefs = projectIssues.filter((item: any) => item.id !== issue.id && !item.assigneeAgentId && item.description && !item.parentId).slice(0, 8);
-    for (const brief of briefs) sections.push(`Project requirement (${brief.identifier ?? brief.id}):\n${brief.title}\n${String(brief.description).slice(0, 16000)}`);
+  }
+  // A project can contain several unrelated requests. Only include the source
+  // explicitly named by this task, otherwise an old brief can override scope.
+  const sourceId = String(issue.description ?? "").match(/Nguồn yêu cầu:\s*([A-Z]+-\d+)/i)?.[1];
+  if (sourceId && sourceId !== issue.identifier) {
+    const source = await request(`/api/issues/${encodeURIComponent(sourceId)}`);
+    if (source.projectId === issue.projectId) {
+      sections.push(`Source requirement (${source.identifier ?? source.id}):\n${source.title}\n${String(source.description ?? "").slice(0, 16000)}`);
+    }
   }
   if (issue.parentId) {
     const parent = await request(`/api/issues/${encodeURIComponent(issue.parentId)}`);
@@ -114,12 +119,12 @@ export async function taskPrompt(issue: any, request: PaperclipRequest): Promise
   }
   const comments = await request(`/api/issues/${encodeURIComponent(issue.id)}/comments`);
   if (comments.length) sections.push(`Task discussion:\n${comments.slice(-5).map((comment: any) => String(comment.body).slice(0, 12000)).join("\n\n")}`);
-  sections.push("Work only on the current assigned task and respect the project requirements. Other project requirements provide context, not permission to skip this task's scope or dependencies.");
+  sections.push("Work only on the current assigned task, its explicit source requirement, and completed dependencies.");
   return sections.join("\n\n");
 }
 
 export function taskResult(message: string): { status: "done" | "blocked" | "in_progress"; report: string } {
-  const match = message.match(/<paperclip-result>\s*(\{[\s\S]*?\})\s*<\/paperclip-result>/);
+  const match = message.match(/<\s*paperclip-result\s*>\s*(\{[\s\S]*?\})\s*<\/\s*paperclip-result\s*>/);
   if (!match) return { status: "in_progress", report: message };
   try {
     const payload = JSON.parse(match[1]);
