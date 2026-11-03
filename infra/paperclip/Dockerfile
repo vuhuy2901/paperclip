@@ -1,10 +1,17 @@
 FROM node:24.11-bookworm
 WORKDIR /opt/paperclip
 RUN npm install -g paperclipai@2026.1023.0
+# The Paperclip CLI package ships the upstream UI. Replace only its static UI
+# directory with the UI built from the pinned Core fork, so /issues actually
+# serves the customized IssuesList instead of the npm package's old bundle.
+COPY vendor/paperclip-core/ui/dist /opt/paperclip-core-ui-dist
+RUN rm -rf /usr/local/lib/node_modules/paperclipai/node_modules/@paperclipai/server/ui-dist \
+  && cp -a /opt/paperclip-core-ui-dist /usr/local/lib/node_modules/paperclipai/node_modules/@paperclipai/server/ui-dist
 COPY apps/paperclip-adapter /opt/ai-company-adapter
 RUN cd /opt/ai-company-adapter && npm install && npm run build
 COPY packages/paperclip-workflow-studio/package.json packages/paperclip-workflow-studio/package-lock.json packages/paperclip-workflow-studio/tsconfig.json /opt/workflow-studio/
 COPY packages/paperclip-workflow-studio/scripts /opt/workflow-studio/scripts
+COPY packages/paperclip-workflow-studio/migrations /opt/workflow-studio/migrations
 COPY packages/paperclip-workflow-studio/src /opt/workflow-studio/src
 RUN cd /opt/workflow-studio && npm ci && npm run build
 COPY apps/roles /opt/role-assets

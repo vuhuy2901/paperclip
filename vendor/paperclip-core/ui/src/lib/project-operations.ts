@@ -1,0 +1,188 @@
+import type { Issue } from "@paperclipai/shared";
+import type { RunForIssue } from "../api/activity";
+
+export const MANUAL_TASK_LABEL = "AI Company: Manual Task";
+
+export type ProjectPhase =
+  | "no-requirement"
+  | "submitted"
+  | "pm-running"
+  | "pm-failed"
+  | "tasks-generated"
+  | "workflow-running"
+  | "workflow-blocked"
+  | "waiting-approval"
+  | "completed";
+
+export type ProjectWorkflowSnapshot = {
+  binding: { templateName: string; workflow: { nodes: Array<{ id: string; data?: { kind?: string } }> } } | null;
+  activeRun?: {
+    id: string;
+    status: string;
+    inputRequirement: string;
+    startedAt: string;
+    updatedAt: string;
+    currentStepTitle?: string;
+    projectManagerAgentId?: string | null;
+    coordinatorIssueIds?: string[];
+    taskMappings?: Array<{ issueId: string; workflowNodeId: string; stageId: string; isCoordinator?: boolean }>;
+    artifacts?: Array<{ name: string }>;
+  } | null;
+  recentRuns?: Array<{ id: string; status: string; startedAt: string; finishedAt?: string | null }>;
+  monitor: Array<{
+    nodeId: string;
+    stageTitle?: string;
+    stageStatus?: string;
+    agentName?: string | null;
+    taskCount?: number;
+    runs?: Array<{ id: string; status: string; agentId: string }>;
+  }>;
+};
+
+export type ProjectTaskRow = { issue: Issue; stageId: string | null; stageName: string | null };
+
+export type ProjectOperationsModel = {
+  phase: ProjectPhase;
+  headline: string;
+  explanation: string;
+  requirement: Issue | null;
+  requirementText: string | null;
+  requirementTime: string | null;
+  tasks: ProjectTaskRow[];
+  runningCount: number;
+  completedCount: number;
+  blockedCount: number;
+  failedCount: number;
+  activeAgents: string[];
+  currentStages: string[];
+  progress: number;
+  lastActivity: string | null;
+  failedRunId: string | null;
+  failedAgentId: string | null;
+  failure: string | null;
+  canRetry: boolean;
+  journeyStep: number;
+};
+
+const isManualTask = (issue: Issue) =>
+  issue.labels?.some((label) => label.name === MANUAL_TASK_LABEL) === true;
+
+export function isProjectRequirement(issue: Issue): boolean {
+  if (isManualTask(issue)) return false;
+  return issue.originKind === "manual" || (!issue.originKind && !issue.createdByAgentId);
+}
+
+function isRealTask(issue: Issue, mappedIds: Set<string>): boolean {
+  if (mappedIds.has(issue.id) || isManualTask(issue)) return true;
+  if (issue.createdByAgentId) return true;
+  return issue.originKind === "plugin:ai-company-workflow-studio" &&
+    (issue.originId ?? "").includes(":task:");
+}
+
+function latest<T extends { createdAt?: string | Date | null }>(items: T[]): T | null {
+  return [...items].sort((a, b) =>
+    new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0] ?? null;
+}
+
+export function buildProjectOperationsModel(input: {
+  issues: Issue[];
+  workflow: ProjectWorkflowSnapshot | null;
+  requirementDetail?: Issue | null;
+  requirementRuns?: RunForIssue[];
+}): ProjectOperationsModel {
+  const { issues, workflow } = input;
+  const run = workflow?.activeRun;
+  const requirement = latest(issues.filter(isProjectRequirement));
+  const requirementText = requirement?.title ?? run?.inputRequirement ?? null;
+  const requirementTime = requirement?.createdAt
+    ? String(requirement.createdAt)
+    : run?.startedAt ?? null;
+  const mapped = new Map(
+    (run?.taskMappings ?? []).filter((item) => !item.isCoordinator).map((item) => [item.issueId, item]),
+  );
+  const mappedIds = new Set(mapped.keys());
+  const taskRows = issues.filter((issue) => isRealTask(issue, mappedIds))
+    .map((issue) => {
+      const mapping = mapped.get(issue.id);
+      const stageId = mapping?.stageId ?? mapping?.workflowNodeId ?? null;
+      const stageName = stageId
+        ? workflow?.monitor.find((stage) => stage.nodeId === stageId)?.stageTitle ?? null
+        : null;
+      return { issue, stageId, stageName };
+    })
+    .sort((a, b) => new Date(b.issue.updatedAt).getTime() - new Date(a.issue.updatedAt).getTime());
+  const activeStages = (workflow?.monitor ?? []).filter((stage) => stage.stageStatus === "running");
+  const blockedStages = (workflow?.monitor ?? []).filter((stage) => stage.stageStatus === "blocked");
+  const actualRunningStages = activeStages.filter((stage) =>
+    stage.runs?.some((item) => item.status === "running") ||
+    taskRows.some((item) => item.stageId === stage.nodeId && item.issue.activeRun?.status === "running"));
+  const currentStages = (blockedStages.length > 0 ? blockedStages : activeStages)
+    .map((stage) => stage.stageTitle ?? stage.nodeId);
+  const activeAgents = [...new Set(actualRunningStages.flatMap((stage) =>
+    stage.agentName ? [stage.agentName] : []))];
+  const runs = [...(input.requirementRuns ?? [])]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const blocker = input.requirementDetail?.executionBlocker ?? null;
+  const failedRun = blocker ? runs.find((item) => item.runId === blocker.runId) : null;
+  const newerRun = failedRun ? runs.find((item) =>
+    new Date(item.createdAt).getTime() > new Date(failedRun.createdAt).getTime()) : null;
+  const failureIsCurrent = Boolean(blocker && !newerRun);
+  const runningCount = taskRows.filter((item) => item.issue.activeRun?.status === "running").length;
+  const completedCount = taskRows.filter((item) => item.issue.status === "done").length;
+  const blockedCount = taskRows.filter((item) => item.issue.status === "blocked").length;
+  const failedCount = taskRows.filter((item) => item.issue.executionBlocker ||
+    item.issue.activeRun?.status === "failed").length;
+  let phase: ProjectPhase;
+  if (failureIsCurrent) phase = "pm-failed";
+  else if (run?.status === "completed") phase = "completed";
+  else if (run?.status === "waiting_approval") phase = "waiting-approval";
+  else if (run?.status === "failed" || blockedStages.length > 0) phase = "workflow-blocked";
+  else if (!requirementText) phase = "no-requirement";
+  else if (taskRows.length === 0 && (actualRunningStages.length > 0 || requirement?.activeRun?.status === "running" ||
+    newerRun?.status === "running")) phase = "pm-running";
+  else if (taskRows.length > 0 && run?.status === "running") phase = "workflow-running";
+  else if (taskRows.length > 0) phase = "tasks-generated";
+  else phase = "submitted";
+  const messages: Record<ProjectPhase, [string, string]> = {
+    "no-requirement": ["Bạn chưa gửi yêu cầu cho dự án.", "Giao yêu cầu đầu tiên để AI Project Manager bắt đầu lập kế hoạch."],
+    submitted: ["Đã nhận yêu cầu. Đang chờ Project Manager.", "Task sẽ xuất hiện sau khi Project Manager phân tích và phân công công việc."],
+    "pm-running": ["Project Manager đang phân tích yêu cầu.", "Theo dõi hoạt động hiện tại và mở logs để xem tiến độ."],
+    "pm-failed": ["Project Manager không thể thực thi yêu cầu, nên chưa tạo được kế hoạch và Task.", "Xem lỗi của lần chạy gần nhất, sửa kết nối nếu cần rồi thử lại."],
+    "tasks-generated": ["AI đã tạo kế hoạch và Task.", "Các Agent được phân công theo Workflow của dự án."],
+    "workflow-running": ["Các Agent đang thực hiện công việc.", "Theo dõi giai đoạn đang chạy và mở logs của từng Task."],
+    "workflow-blocked": ["Workflow đang bị chặn.", "Mở Live Monitor để xem giai đoạn và lỗi cần xử lý."],
+    "waiting-approval": ["Dự án đang chờ phê duyệt.", "Xem kết quả giai đoạn trước khi quyết định tiếp tục."],
+    completed: ["Workflow đã hoàn thành.", "Xem sản phẩm bàn giao và kết quả kiểm tra."],
+  };
+  const lastActivity = [run?.updatedAt, ...issues.map((issue) => String(issue.updatedAt))]
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
+  const hasDevelopment = taskRows.some((item) => item.stageId && item.stageId !== "pm");
+  const hasTesting = (workflow?.monitor ?? []).some((stage) =>
+    /test|qa/i.test(stage.stageTitle ?? "") && ["running", "done"].includes(stage.stageStatus ?? ""));
+  const journeyStep = phase === "completed" ? 4 : hasTesting ? 3 : hasDevelopment ? 2
+    : requirementText ? 1 : 0;
+  return {
+    phase,
+    headline: messages[phase][0],
+    explanation: messages[phase][1],
+    requirement,
+    requirementText,
+    requirementTime,
+    tasks: taskRows,
+    runningCount,
+    completedCount,
+    blockedCount,
+    failedCount,
+    activeAgents,
+    currentStages: failureIsCurrent ? currentStages.map((stage) => `${stage} · lỗi thực thi`) : currentStages,
+    progress: run?.status === "completed" ? 100 : taskRows.length > 0
+      ? Math.round(completedCount / taskRows.length * 100) : 0,
+    lastActivity,
+    failedRunId: failureIsCurrent ? blocker?.runId ?? null : null,
+    failedAgentId: failureIsCurrent ? blocker?.agentId ?? null : null,
+    failure: failureIsCurrent ? blocker?.runError ?? "Lần chạy gần nhất thất bại." : null,
+    canRetry: failureIsCurrent && blocker?.canRetry === true,
+    journeyStep,
+  };
+}

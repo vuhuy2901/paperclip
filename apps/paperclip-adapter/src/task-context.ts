@@ -1,5 +1,31 @@
 export type PaperclipRequest = (path: string, options?: { method?: string; body?: unknown }) => Promise<any>;
 
+export async function assertWorkflowExecutionAllowed(
+  issue: any,
+  ctx: any,
+  request: PaperclipRequest
+): Promise<{ allowed: true; code: string; reason: string; runId?: string }> {
+  const companyId = issue.companyId ?? ctx.agent.companyId;
+  const response = await request("/api/plugins/ai-company-workflow-studio/actions/can-execute", {
+    method: "POST",
+    body: {
+      companyId,
+      params: {
+        companyId,
+        issueId: issue.id,
+        agentId: ctx.agent.id
+      }
+    }
+  });
+  const decision = response?.data ?? response;
+  if (!decision || decision.allowed !== true) {
+    const code = String(decision?.code ?? "WORKFLOW_GATE_UNAVAILABLE");
+    const reason = String(decision?.reason ?? "Workflow Execution Gate returned no valid admission decision.");
+    throw new Error(`Workflow Execution Gate denied ${issue.identifier ?? issue.id}: [${code}] ${reason}`);
+  }
+  return decision;
+}
+
 function text(value: unknown): string {
   return typeof value === "string" && value !== "null" && value !== "undefined" ? value.trim() : "";
 }
@@ -11,11 +37,23 @@ export function explicitTaskId(ctx: any): string {
     || text(context.task?.id) || text(wake.taskId) || text(wake.issueId) || text(ctx.runtime?.taskKey);
 }
 
+/** The host stamps this context only after settling the stopped run's recovery hold. */
+export function isAdmittedRecoveryContinuation(issue: any, ctx: any): boolean {
+  const context = ctx.context ?? {};
+  const continuation = context.explicitUserContinuation;
+  return Boolean(continuation && typeof continuation.previousRunId === "string"
+    && continuation.previousRunId.length > 0
+    && continuation.previousRunId === context.previousRunId
+    && explicitTaskId(ctx) === issue.id
+    && !issue.executionBlocker);
+}
+
 export function waitingReason(issue: any, ctx: any): string | null {
   if (issue.companyId !== ctx.agent.companyId || issue.assigneeAgentId !== ctx.agent.id) {
     return "Issue is not assigned to this agent in this company.";
   }
-  if (!["todo", "in_progress", "backlog"].includes(issue.status)) return `Issue status is ${issue.status}.`;
+  if (!["todo", "in_progress", "backlog"].includes(issue.status)
+    && !(issue.status === "blocked" && isAdmittedRecoveryContinuation(issue, ctx))) return `Issue status is ${issue.status}.`;
   if (issue.project?.pausedAt) return "Project is paused.";
   const ownerRun = issue.executionRunId ?? issue.checkoutRunId;
   if (ownerRun && ownerRun !== ctx.runId) return "Issue is already owned by another run.";
@@ -54,6 +92,11 @@ export async function resolveAssignedTask(ctx: any, request: PaperclipRequest) {
 
 export async function taskPrompt(issue: any, request: PaperclipRequest): Promise<string> {
   const sections = [`Current task: ${issue.identifier ?? issue.id}\n${issue.title ?? ""}\n\n${issue.description ?? ""}`];
+  if (String(issue.originId ?? "").includes(":coordinator:")) {
+    sections.push(
+      "Coordinator responsibility: you are the AI Project Manager for this Workflow Run. Analyze the Product Owner requirement, keep the published React Flow dependency graph authoritative, and use the create-execution-tasks tool to create concrete tasks for the appropriate workflowNodeId stages. Include a stable taskKey for every task, assign only the stage's configured agent, and never use parentId or create tasks for a future stage before its dependencies are represented. Do not mark the coordinator as a business delivery task."
+    );
+  }
   if (issue.projectId) {
     sections.push(`Project: ${issue.project?.name ?? issue.projectId}\n${issue.project?.description ?? ""}`);
     const query = new URLSearchParams({ projectId: issue.projectId, limit: "100", offset: "0" });

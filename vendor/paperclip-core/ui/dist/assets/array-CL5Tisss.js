@@ -1,0 +1,1 @@
+var a=Object.defineProperty;var t=(r,e)=>a(r,"name",{value:e,configurable:!0});var n=Array.prototype.slice;function y(r){return typeof r=="object"&&"length"in r?r:Array.from(r)}t(y,"array_default");export{y as t};

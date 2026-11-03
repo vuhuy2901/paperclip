@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { explicitTaskId, resolveAssignedTask, taskPrompt, taskResult, waitingReason } from "../dist/task-context.js";
+import { assertWorkflowExecutionAllowed, explicitTaskId, resolveAssignedTask, taskPrompt, taskResult, waitingReason } from "../dist/task-context.js";
 import { createServerAdapter, execute } from "../dist/index.js";
 
 const ctx = { agent: { id: "pm", companyId: "company", name: "Test Agent" }, context: {}, runtime: {}, config: {}, runId: "run", authToken: "test-run-token" };
 const assigned = { id: "task", identifier: "AIS-3", companyId: "company", assigneeAgentId: "pm", status: "backlog", title: "Analyze and plan", blockedBy: [] };
+const isGatePath = (path) => path === "/api/plugins/ai-company-workflow-studio/actions/can-execute";
+const admitted = () => Response.json({ allowed: true, code: "NO_ACTIVE_RUN", reason: "Independent task" });
 
 test("host injects a run-scoped agent credential for task mutations", () => {
   assert.equal(createServerAdapter().supportsLocalAgentJwt, true);
@@ -36,6 +38,16 @@ test("completed blockers allow work, cancelled or unfinalized blockers do not", 
   assert.equal(waitingReason({ ...assigned, blockedBy: [{ status: "done" }] }, ctx), null);
   assert.ok(waitingReason({ ...assigned, blockedBy: [{ status: "cancelled" }] }, ctx));
   assert.ok(waitingReason({ ...assigned, blockerAttention: { pendingFinalizeBlockerIssueIds: ["other"] } }, ctx));
+});
+
+test("a blocked task resumes only with host-admitted recovery and satisfied dependencies", () => {
+  const continuationCtx = { ...ctx, context: { issueId: "task", previousRunId: "old-run", explicitUserContinuation: { previousRunId: "old-run", failedRunId: "old-run" } } };
+  const blocked = { ...assigned, status: "blocked", executionBlocker: null };
+  assert.equal(waitingReason(blocked, continuationCtx), null);
+  assert.match(waitingReason(blocked, ctx), /status is blocked/);
+  assert.match(waitingReason({ ...blocked, executionBlocker: { runId: "old-run" } }, continuationCtx), /status is blocked/);
+  assert.match(waitingReason({ ...blocked, blockedBy: [{ identifier: "AIS-4", status: "in_progress" }] }, continuationCtx), /Waiting for AIS-4/);
+  assert.match(waitingReason(blocked, { ...continuationCtx, context: { ...continuationCtx.context, previousRunId: "other" } }), /status is blocked/);
 });
 
 test("another agent, another run, paused project and terminal status are rejected", () => {
@@ -77,6 +89,22 @@ test("provider success alone does not mark the task done", () => {
   assert.equal(taskResult('<paperclip-result>{invalid}</paperclip-result>').status, "in_progress");
 });
 
+test("workflow execution gate is called with issue and agent identity and fails closed", async () => {
+  let requestBody;
+  await assertWorkflowExecutionAllowed(assigned, ctx, async (_path, options) => {
+    requestBody = options.body;
+    return { data: { allowed: true, code: "ADMITTED", reason: "ok", runId: "workflow-run" } };
+  });
+  assert.deepEqual(requestBody, {
+    companyId: "company",
+    params: { companyId: "company", issueId: "task", agentId: "pm" }
+  });
+  await assert.rejects(
+    assertWorkflowExecutionAllowed(assigned, ctx, async () => ({ allowed: false, code: "DEPENDENCY_NOT_MET", reason: "Architect is not done" })),
+    /DEPENDENCY_NOT_MET/
+  );
+});
+
 test("no assigned work ends as waiting without dispatching AI", async () => {
   const original = globalThis.fetch;
   const calls = [];
@@ -96,6 +124,7 @@ test("company Run now hands off to an issue-scoped run without cross-issue write
   globalThis.fetch = async (url, options = {}) => {
     const path = new URL(url).pathname;
     calls.push({ path, options });
+    if (isGatePath(path)) return admitted();
     if (path.endsWith("/heartbeat/invoke")) return Response.json({ id: "scoped-run", status: "queued" });
     return Response.json(path.includes("/companies/") ? [assigned] : assigned);
   };
@@ -103,10 +132,9 @@ test("company Run now hands off to an issue-scoped run without cross-issue write
     const result = await execute(ctx);
     assert.equal(result.exitCode, 0);
     assert.equal(result.resultJson.scopedRunId, "scoped-run");
-    const mutation = calls.filter((call) => call.options.method === "POST");
-    assert.equal(mutation.length, 1);
-    assert.equal(mutation[0].path, "/api/agents/pm/heartbeat/invoke");
-    assert.equal(JSON.parse(mutation[0].options.body).payload.issueId, "task");
+    const heartbeat = calls.find((call) => call.path === "/api/agents/pm/heartbeat/invoke");
+    assert.equal(JSON.parse(heartbeat.options.body).payload.issueId, "task");
+    assert.ok(calls.some((call) => isGatePath(call.path)), "gate must run before heartbeat scheduling");
     assert.ok(!calls.some((call) => call.path.endsWith("/checkout") || call.path === "/run"));
   } finally { globalThis.fetch = original; }
 });
@@ -118,7 +146,9 @@ test("real task lifecycle checks out, posts output and updates only its own issu
     const path = new URL(url).pathname;
     const body = options.body ? JSON.parse(options.body) : null;
     calls.push({ path, options, body });
+    if (isGatePath(path)) return admitted();
     if (path === "/run") return Response.json({ status: "completed", events: [{ type: "item.completed", item: { type: "agent_message", text: 'Completed acceptance criteria\n<paperclip-result>{"status":"done"}</paperclip-result>' } }] });
+    if (path === "/health") return Response.json({ status: "ok" });
     if (path.includes("/companies/")) return Response.json([assigned]);
     if (path.endsWith("/comments")) return Response.json(options.method === "POST" ? { id: "comment" } : []);
     return Response.json(assigned);
@@ -131,6 +161,8 @@ test("real task lifecycle checks out, posts output and updates only its own issu
     assert.equal(checkout.body.agentId, "pm");
     assert.equal(checkout.options.headers["x-paperclip-run-id"], "run");
     assert.equal(checkout.options.headers.authorization, "Bearer test-run-token");
+    assert.ok(calls.findIndex((call) => isGatePath(call.path)) < calls.findIndex((call) => call.path.endsWith("/checkout")), "gate must run before checkout");
+    assert.ok(calls.findIndex((call) => call.path === "/health") < calls.findIndex((call) => call.path.endsWith("/checkout")), "gateway health must pass before checkout");
     assert.equal(calls.filter((call) => call.path.endsWith("/comments") && call.options.method === "POST").length, 2);
     const update = calls.find((call) => call.options.method === "PATCH");
     assert.equal(update.path, "/api/issues/task");
@@ -138,10 +170,29 @@ test("real task lifecycle checks out, posts output and updates only its own issu
   } finally { globalThis.fetch = original; }
 });
 
+test("a workflow gate rejection prevents direct checkout and model execution", async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(url).pathname;
+    calls.push({ path, options });
+    if (isGatePath(path)) return Response.json({ allowed: false, code: "DEPENDENCY_NOT_MET", reason: "Architecture is not done" });
+    return Response.json(assigned);
+  };
+  try {
+    const result = await execute({ ...ctx, context: { issueId: "task" } });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.summary, /DEPENDENCY_NOT_MET/);
+    assert.ok(!calls.some((call) => call.path.endsWith("/checkout")));
+    assert.ok(!calls.some((call) => call.path === "/run"));
+  } finally { globalThis.fetch = original; }
+});
+
 test("a rejected task wake is never presented as successfully scheduled", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const path = new URL(url).pathname;
+    if (isGatePath(path)) return admitted();
     if (path.endsWith("/heartbeat/invoke")) return Response.json({ status: "skipped" });
     return Response.json(path.includes("/companies/") ? [assigned] : assigned);
   };
@@ -158,7 +209,9 @@ test("gateway failure is reported without marking a task done", async () => {
   globalThis.fetch = async (url, options = {}) => {
     const path = new URL(url).pathname;
     calls.push({ path, options });
+    if (isGatePath(path)) return admitted();
     if (path === "/run") return Response.json({ status: "failed", summary: "Model unavailable" });
+    if (path === "/health") return Response.json({ status: "ok" });
     if (path.includes("/companies/")) return Response.json([assigned]);
     if (path.endsWith("/comments")) return Response.json(options.method === "POST" ? { id: "comment" } : []);
     return Response.json(assigned);
@@ -175,7 +228,9 @@ test("a model-reported blocker includes Paperclip's required unblock descriptor"
   let update;
   globalThis.fetch = async (url, options = {}) => {
     const path = new URL(url).pathname;
+    if (isGatePath(path)) return admitted();
     if (options.method === "PATCH") update = JSON.parse(options.body);
+    if (path === "/health") return Response.json({ status: "ok" });
     if (path === "/run") return Response.json({ status: "completed", events: [{ type: "item.completed", item: { type: "agent_message", text: 'Missing project codebase\n<paperclip-result>{"status":"blocked"}</paperclip-result>' } }] });
     if (path.endsWith("/comments")) return Response.json(options.method === "POST" ? { id: "comment" } : []);
     return Response.json(assigned);
@@ -187,5 +242,26 @@ test("a model-reported blocker includes Paperclip's required unblock descriptor"
     assert.equal(update.status, "blocked");
     assert.equal(update.unblockDescriptor.owner, "board");
     assert.ok(update.unblockDescriptor.action.trim());
+  } finally { globalThis.fetch = original; }
+});
+
+test("unreachable gateway fails before checkout, comments or a model request", async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(url).pathname;
+    calls.push({ path, method: options.method });
+    if (isGatePath(path)) return admitted();
+    if (path === "/health") throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+    if (path.endsWith("/comments")) return Response.json([]);
+    return Response.json(assigned);
+  };
+  try {
+    const result = await execute({ ...ctx, context: { issueId: "task" } });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.summary, /gateway .*unavailable before task execution.*ECONNREFUSED/);
+    assert.equal(result.resultJson.failurePhase, "gateway_health");
+    assert.equal(result.resultJson.gatewaySubmitted, false);
+    assert.ok(!calls.some(call => call.path === "/run" || call.path.endsWith("/checkout") || call.method === "PATCH" || (call.path.endsWith("/comments") && call.method === "POST")));
   } finally { globalThis.fetch = original; }
 });

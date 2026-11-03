@@ -370,6 +370,20 @@ test("TEST 14 — Multi-issue node: not complete until all required issues done"
   assert.equal(notMajority.completed, false, "majority policy: 1/3 done is not majority");
 });
 
+test("TEST 14b — every issue mapped to a multi-issue node passes the same stage gate", () => {
+  const backend = { ...makeNode("backend", "task", "issue-auth", "agent-backend"), status: "ready" };
+  backend.issueIds = ["issue-auth", "issue-orders"];
+  const run = makeRun({
+    nodeExecutionStates: { backend },
+    workflowSnapshot: {
+      nodes: [{ id: "backend", data: { kind: "task", agentId: "agent-backend", executionPolicy: "paperclip" } }],
+      edges: [],
+    },
+  });
+  const decision = canExecute({ run, nodeId: "backend", issueId: "issue-orders", agentId: "agent-backend" });
+  assert.equal(decision.allowed, true, "secondary stage issue must be admitted when the stage is ready");
+});
+
 // ─── TEST 15: Stopped run prevents new dispatches ────────────────────────────
 test("TEST 15 — Stopped (cancelled) run denies all new execution", () => {
   const run = makeRun({

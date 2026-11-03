@@ -1,0 +1,1 @@
+var n=Object.defineProperty;var a=(e,t)=>n(e,"name",{value:t,configurable:!0});function s(e,t){switch(arguments.length){case 0:break;case 1:this.range(e);break;default:this.range(t).domain(e)}return this}a(s,"initRange");export{s as t};

@@ -90,15 +90,27 @@ export function canExecute(params: CanExecuteParams): GateDecision {
   if (!nodeState) {
     return denied("NODE_NOT_IN_SNAPSHOT", `Node "${nodeId}" has no execution state in Run ${run.id}.`);
   }
-  if (!nodeState.issueId || nodeState.issueId !== issueId) {
+  const mappedIssueIds = nodeState.issueIds?.length
+    ? nodeState.issueIds
+    : (nodeState.issueId ? [nodeState.issueId] : []);
+  if (!mappedIssueIds.includes(issueId)) {
     return denied(
       "ISSUE_NOT_MAPPED_TO_NODE",
       `Issue ${issueId} is not mapped to node "${nodeState.title}" (${nodeId}) in Run ${run.id}. ` +
-      `Mapped issue is: ${nodeState.issueId ?? "none"}.`
+      `Mapped issues are: ${mappedIssueIds.length ? mappedIssueIds.join(", ") : "none"}.`
     );
   }
 
-  // 5. Agent authorisation — only the assigned agent may execute a task node
+  // 5. Human approval nodes are never executable by an AI agent. Approval is
+  // admitted only through the dedicated PO decision action.
+  if (snapshotNode.data.kind === "approval" || snapshotNode.data.executionPolicy === "human") {
+    return denied(
+      "APPROVAL_NOT_GRANTED",
+      `Node "${nodeState.title}" is a human approval gate. No AI agent may execute or self-approve it; an explicit Product Owner decision is required.`
+    );
+  }
+
+  // 6. Agent authorisation — only the assigned agent may execute a task node
   if (snapshotNode.data.kind === "task" && snapshotNode.data.agentId && snapshotNode.data.agentId !== agentId) {
     return denied(
       "AGENT_NOT_AUTHORISED",
@@ -107,7 +119,7 @@ export function canExecute(params: CanExecuteParams): GateDecision {
     );
   }
 
-  // 6. Node must not already be done or running by a different run
+  // 7. Node must not already be terminal
   const terminalStatuses: NodeExecutionStatus[] = ["done", "skipped", "failed"];
   if (terminalStatuses.includes(nodeState.status)) {
     return denied(
@@ -122,7 +134,7 @@ export function canExecute(params: CanExecuteParams): GateDecision {
     // but we log and allow here — the real guard is Paperclip's checkout lock.
   }
 
-  // 7. Approval gate check
+  // 8. Approval gate state check (defence in depth for legacy snapshots)
   if (nodeState.status === "waiting_approval") {
     return denied(
       "APPROVAL_NOT_GRANTED",
@@ -131,7 +143,7 @@ export function canExecute(params: CanExecuteParams): GateDecision {
     );
   }
 
-  // 8. Upstream dependency check (AND-join semantics)
+  // 9. Upstream dependency check (AND-join semantics)
   const incomingEdges = run.workflowSnapshot.edges.filter((e) => e.target === nodeId);
   const blockerNodeIds = incomingEdges.map((e) => e.source);
   const unmetBlockers = blockerNodeIds.filter((predId) => {
@@ -147,7 +159,7 @@ export function canExecute(params: CanExecuteParams): GateDecision {
     );
   }
 
-  // 9. Concurrency guard
+  // 10. Concurrency guard
   const runningCount = Object.values(run.nodeExecutionStates).filter(
     (s) => s.status === "running"
   ).length;
@@ -179,7 +191,7 @@ export function findIssueOwnership(
   for (const run of runs) {
     if (!activeStatuses.includes(run.status)) continue;
     for (const [nodeId, state] of Object.entries(run.nodeExecutionStates)) {
-      if (state.issueId === issueId) {
+      if (state.issueId === issueId || state.issueIds?.includes(issueId)) {
         return { run, nodeId };
       }
     }

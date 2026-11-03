@@ -21,7 +21,6 @@ export type WorkflowNodeData = {
   lastGateReason?: string | null;
   [key: string]: unknown;
 };
-
 export type WorkflowNode = {
   id: string;
   type: "workflowNode";
@@ -120,8 +119,18 @@ export type MonitorRun = {
 export type MonitorNode = {
   nodeId: string;
   issue: PaperclipIssue | null;
+  /** All execution issues mapped to this workflow stage. */
+  issues?: PaperclipIssue[];
   blockedBy: Array<{ id: string; identifier?: string | null; title?: string }>;
   runs: MonitorRun[];
+  stageTitle?: string;
+  stageStatus?: NodeExecutionStatus;
+  agentId?: string | null;
+  agentName?: string | null;
+  taskCount?: number;
+  completedTaskCount?: number;
+  dependencyNodeIds?: string[];
+  elapsedMs?: number | null;
 };
 
 export type BootstrapData = {
@@ -200,6 +209,8 @@ export type NodeExecutionState = {
   /** All issues mapped to this node (multi-issue support — §14). */
   issueIds: string[];
   issueIdentifiers: string[];
+  /** True only for the optional PM coordinator issue that starts task planning. */
+  isCoordinator?: boolean;
   /** Completion policy for multi-issue nodes. */
   completionPolicy: NodeCompletionPolicy;
   agentId: string | null;
@@ -259,12 +270,30 @@ export type WorkflowRunRecord = {
   pausedAt: string | null;
   nodeExecutionStates: Record<string, NodeExecutionState>;
   relatedIssueIds: string[];
+  /** Explicit Run → Stage → Execution Task mapping. Legacy runs may omit this field. */
+  taskMappings?: WorkflowTaskMapping[];
+  coordinatorIssueIds?: string[];
+  projectManagerAgentId?: string | null;
   executionHistory: WorkflowRunHistoryEntry[];
   workflowSnapshot: WorkflowDefinition;
   artifacts?: WorkflowRunArtifact[];
   currentStepTitle?: string;
   totalTokens?: number;
   updatedAt: string;
+};
+
+export type WorkflowTaskMapping = {
+  companyId: string;
+  projectId: string;
+  workflowRunId: string;
+  workflowNodeId: string;
+  /** Alias kept explicit for consumers that call a workflow node a stage. */
+  stageId: string;
+  issueId: string;
+  assigneeAgentId: string | null;
+  taskKey: string;
+  isCoordinator?: boolean;
+  createdAt: string;
 };
 
 export type WorkflowRunSummary = {
@@ -295,3 +324,142 @@ export type PreflightCheckResult = {
   ok: boolean;
   checks: PreflightCheckItem[];
 };
+
+export type ProjectPortfolioActiveRun = {
+  id: string;
+  status: WorkflowRunStatus;
+  progress: number;
+  completedSteps: number;
+  totalSteps: number;
+  startedAt: string;
+  currentStages: string[];
+  activeAgents: Array<{ id: string; name: string; role?: string }>;
+  waitingOrBlockedReason: string | null;
+  lastActivityAt: string;
+  lastActivitySummary?: string;
+};
+
+export type ProjectPortfolioItem = {
+  projectId: string;
+  projectName: string;
+  projectDescription?: string | null;
+  projectStatus: string;
+  workflowBinding: {
+    templateId: string;
+    templateName: string;
+    templateVersion: number;
+    status: WorkflowStatus;
+    totalTasks: number;
+  } | null;
+  activeRun: ProjectPortfolioActiveRun | null;
+  latestRunSummary?: WorkflowRunSummary | null;
+  taskCount: number;
+  completedTaskCount: number;
+  lastUpdatedAt: string;
+};
+
+export type ProjectPortfolioData = {
+  companyId: string;
+  items: ProjectPortfolioItem[];
+  workflows: WorkflowIndexEntry[];
+  agents: PaperclipAgent[];
+};
+
+export type IntelligenceRange = "24h" | "7d" | "30d";
+
+export type IntelligenceKpis = {
+  totalProjects: number;
+  activeProjects: number;
+  completedProjects: number;
+  runningAgents: number;
+  totalAgents: number;
+  activeWorkflowRuns: number;
+  tasksInProgress: number;
+  failedRuns: number;
+  pendingApprovals: number;
+  totalRuns: number;
+  successfulRuns: number;
+  eligibleTerminalRuns: number;
+  totalRuntimeMs: number | null;
+  totalTokens: number | null;
+  reportedCostCents: number | null;
+  costCoverage: "reported" | "subscription" | "unknown" | "none";
+};
+
+export type IntelligenceAgentRow = {
+  agentId: string;
+  name: string;
+  role: string;
+  status: string;
+  totalRuns: number;
+  successfulRuns: number;
+  failedRuns: number;
+  successRate: number | null;
+  totalRuntimeMs: number | null;
+  averageRunDurationMs: number | null;
+  p95RunDurationMs: number | null;
+  completedTasks: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedInputTokens: number | null;
+  reportedCostCents: number | null;
+  lastActiveAt: string | null;
+  currentRunId: string | null;
+};
+
+export type IntelligenceProjectRow = {
+  projectId: string;
+  name: string;
+  status: string;
+  workflowName: string | null;
+  runStatus: WorkflowRunStatus | null;
+  progress: number | null;
+  currentStages: string[];
+  activeAgents: string[];
+  completedTasks: number;
+  pendingTasks: number;
+  blockedTasks: number;
+  lastActivityAt: string | null;
+  blockedReason: string | null;
+};
+
+export type IntelligenceRunRow = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  projectId: string | null;
+  projectName: string | null;
+  issueId: string | null;
+  issueIdentifier: string | null;
+  status: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+  errorCode: string | null;
+  error: string | null;
+};
+
+export type IntelligenceDailyPoint = {
+  date: string;
+  runs: number;
+  runtimeMs: number;
+  failures: number;
+};
+
+export type CompanyIntelligenceData = {
+  companyId: string;
+  range: IntelligenceRange;
+  generatedAt: string;
+  kpis: IntelligenceKpis;
+  agents: IntelligenceAgentRow[];
+  projects: IntelligenceProjectRow[];
+  recentRuns: IntelligenceRunRow[];
+  daily: IntelligenceDailyPoint[];
+  dataQuality: {
+    runRowsSampled: number;
+    costsAvailable: boolean;
+    qualityMetricsAvailable: false;
+    note: string;
+  };
+};
+

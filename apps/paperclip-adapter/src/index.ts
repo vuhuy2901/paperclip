@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import { explicitTaskId, resolveAssignedTask, taskPrompt, taskResult, type PaperclipRequest } from "./task-context.js";
+import { assertWorkflowExecutionAllowed, explicitTaskId, isAdmittedRecoveryContinuation, resolveAssignedTask, taskPrompt, taskResult, type PaperclipRequest } from "./task-context.js";
 
 const execFileAsync = promisify(execFile);
 export const type = "ai_company_external";
@@ -221,6 +221,9 @@ export async function execute(ctx: any) {
   };
   let issue: any = null;
   let checkedOut = false;
+  let phase = "paperclip";
+  let gatewaySubmitted = false;
+  const gateway = (process.env.CODEX_GATEWAY_URL ?? "http://host.docker.internal:8400").replace(/\/$/, "");
   try {
     const resolved = await resolveAssignedTask(ctx, request);
     if (!resolved.issue) {
@@ -230,6 +233,10 @@ export async function execute(ctx: any) {
     }
     issue = resolved.issue;
     taskId = issue.id;
+    // This is the last backend admission check before either scheduling an
+    // issue-scoped run or checking the issue out. Paperclip dependencies are
+    // useful defence in depth, but the published run snapshot is authoritative.
+    await assertWorkflowExecutionAllowed(issue, ctx, request);
     // A company-scoped Run now cannot write to a task thread. Start a proper
     // issue-scoped run so Paperclip owns attribution, locks and access checks.
     if (!resolved.explicit) {
@@ -258,10 +265,19 @@ export async function execute(ctx: any) {
       "Return your substantive deliverable in the final response so Paperclip can save it as a task comment. Explain completed work, evidence, and remaining blockers. Finish with <paperclip-result>{\"status\":\"done\"}</paperclip-result> only if this assigned task's deliverables are complete. Use status blocked for missing prerequisites or in_progress for unfinished work. Never claim completion on a question, tool failure, or plan for an implementation task.",
       planning ? "This is a read-only planning/review task. Provide the full plan, specification, or review in your final response. Do not implement code or deploy." : "Do not modify unrelated projects or deploy without the user's approval.",
     ].filter(Boolean).join("\n\n");
-    await request(`/api/issues/${taskId}/checkout`, { method: "POST", body: { agentId: ctx.agent.id, expectedStatuses: ["todo", "in_progress", "backlog"] } });
+    // Refuse an unavailable runtime before checkout or posting a started comment.
+    phase = "gateway_health";
+    const health = await fetch(`${gateway}/health`, { signal: AbortSignal.timeout(5000) });
+    if (!health.ok || (await health.json() as { status?: string }).status !== "ok") {
+      throw new Error(`Gateway health check failed (HTTP ${health.status}).`);
+    }
+    phase = "paperclip";
+    const expectedStatuses = ["todo", "in_progress", "backlog"];
+    if (issue.status === "blocked" && isAdmittedRecoveryContinuation(issue, ctx)) expectedStatuses.push("blocked");
+    await request(`/api/issues/${taskId}/checkout`, { method: "POST", body: { agentId: ctx.agent.id, expectedStatuses } });
     checkedOut = true;
     await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: `${ctx.agent.name} started ${issue.identifier}.\n\nRun: ${ctx.runId}\nModel: ${ctx.config?.model ?? "runtime default"}\nProject requirements and dependencies loaded.`, } });
-    const gateway = (process.env.CODEX_GATEWAY_URL ?? "http://host.docker.internal:8400").replace(/\/$/, "");
+    phase = "gateway_run";
     ctx.onDispatch?.();
     const response = await fetch(`${gateway}/run`, {
       method: "POST",
@@ -270,7 +286,9 @@ export async function execute(ctx: any) {
       signal: ctx.signal,
     });
     if (!response.ok) throw new Error(`Codex gateway returned HTTP ${response.status}`);
+    gatewaySubmitted = true;
     const body = await response.json() as { status?: string; summary?: string; events?: Array<{ type?: string; item?: { type?: string; text?: string } }> };
+    phase = "paperclip_result";
     const assistantText = body.events?.filter((event) => event.type === "item.completed" && event.item?.type === "agent_message").map((event) => event.item?.text ?? "").filter(Boolean).at(-1);
     const summary = assistantText || body.summary || "Codex gateway returned no summary";
     await ctx.onLog?.("stdout", `${summary}\n`);
@@ -284,12 +302,15 @@ export async function execute(ctx: any) {
     }
     return executionResult(body.status === "completed", outcome.report.slice(0, 4000), { issueId: taskId, issueIdentifier: issue.identifier, taskStatus: body.status === "completed" ? outcome.status : "in_progress", gatewayStatus: body.status, model: ctx.config?.model ?? null, eventCount: body.events?.length ?? 0 });
   } catch (error: any) {
-    const summary = `Task execution failed: ${String(error?.message ?? error).slice(0, 500)}`;
+    const connectionCode = String(error?.cause?.code ?? "");
+    const summary = phase === "gateway_health" || phase === "gateway_run"
+      ? `Task execution failed: Codex gateway ${new URL(gateway).host} ${phase === "gateway_health" ? "is unavailable before task execution" : "request failed"} (${connectionCode || String(error?.message ?? error)}). ${phase === "gateway_health" ? "Start the host gateway, then retry this task." : "Inspect the previous run before retrying; the request outcome may be uncertain."}`
+      : `Task execution failed: ${String(error?.message ?? error).slice(0, 500)}`;
     await ctx.onLog?.("stderr", `${summary}\n`);
     if (issue && taskId && checkedOut) {
       try { await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: summary } }); } catch { /* Preserve the original error if reporting also fails. */ }
     }
-    return executionResult(false, summary, { issueId: taskId || null });
+    return executionResult(false, summary, { issueId: taskId || null, failurePhase: phase, connectionCode: connectionCode || null, gatewaySubmitted });
   }
 }
 

@@ -1,0 +1,1 @@
+var t=Object.defineProperty;var o=(r,a)=>t(r,"name",{value:a,configurable:!0});import{at as n,ot as s}from"./chunk-DU6HZSFF-mLZ_DAj9.js";var p=o((r,a)=>s.lang.round(n.parse(r)[a]),"channel");export{p as t};

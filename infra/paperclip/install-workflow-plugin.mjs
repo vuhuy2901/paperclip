@@ -1,5 +1,6 @@
 const baseUrl = "http://127.0.0.1:3101";
 const pluginPath = "/opt/workflow-studio";
+const expectedVersion = "0.5.0";
 const deadline = Date.now() + 120_000;
 
 async function waitForPaperclip() {
@@ -21,14 +22,14 @@ const listResponse = await fetch(`${baseUrl}/api/plugins`);
 if (!listResponse.ok) throw new Error(`Could not inspect installed plugins (${listResponse.status})`);
 const installed = await listResponse.json();
 let plugin = installed.find((item) => item.pluginKey === "ai-company-workflow-studio");
-if (!plugin) {
+if (!plugin || plugin.version !== expectedVersion) {
   const response = await fetch(`${baseUrl}/api/plugins/install`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ packageName: pluginPath, isLocalPath: true })
   });
   const body = await response.text();
-  if (!response.ok) throw new Error(`Workflow Studio install failed (${response.status}): ${body}`);
+  if (!response.ok) throw new Error(`Workflow Studio install/upgrade failed (${response.status}): ${body}`);
   plugin = JSON.parse(body);
 }
 if (plugin.status === "upgrade_pending") {

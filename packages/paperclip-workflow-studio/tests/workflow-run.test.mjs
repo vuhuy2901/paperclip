@@ -36,6 +36,22 @@ test("Workflow DAG validation detects cycles correctly", () => {
   assert.equal(hasCycleIssue, true, "Must flag cycle error code");
 });
 
+test("Publishing validation refuses conditional branches without a trusted backend evaluator", () => {
+  const template = createLifecycleTemplate("comp-1", []);
+  template.nodes = [
+    { id: "start", type: "workflowNode", position: { x: 0, y: 0 }, data: { kind: "start", title: "Start", executionPolicy: "visual-only" } },
+    { id: "condition", type: "workflowNode", position: { x: 100, y: 0 }, data: { kind: "condition", title: "Choose branch", executionPolicy: "visual-only" } },
+    { id: "end", type: "workflowNode", position: { x: 200, y: 0 }, data: { kind: "end", title: "End", executionPolicy: "visual-only" } },
+  ];
+  template.edges = [
+    { id: "e1", source: "start", target: "condition" },
+    { id: "e2", source: "condition", target: "end" },
+  ];
+  const validation = validateGraph(template);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.issues.some((issue) => issue.code === "condition_not_executable"));
+});
+
 test("Lifecycle template maps the standard 8 AI agents in correct DAG sequence", () => {
   const agents = [
     { id: "ag-pm", name: "Alex PM", role: "Project Manager", title: "Project Manager", status: "active", icon: null, adapterType: "gemini", adapterConfig: { model: "gemini-1.5-pro" } },

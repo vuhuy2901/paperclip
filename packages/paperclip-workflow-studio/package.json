@@ -1,6 +1,6 @@
 {
   "name": "@ai-company/paperclip-workflow-studio",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Paperclip-native visual workflow designer and monitor",
   "type": "module",
   "private": true,

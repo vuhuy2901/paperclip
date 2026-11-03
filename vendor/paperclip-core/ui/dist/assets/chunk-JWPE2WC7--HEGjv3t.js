@@ -1,0 +1,1 @@
+var t=Object.defineProperty;var i=(c,e)=>t(c,"name",{value:e,configurable:!0});import{n as o}from"./chunk-Y2CYZVJY-OvsAdhaO.js";function l(c,e){c.accDescr&&e.setAccDescription?.(c.accDescr),c.accTitle&&e.setAccTitle?.(c.accTitle),c.title&&e.setDiagramTitle?.(c.title)}i(l,"populateCommonDb");o(l,"populateCommonDb");export{l as t};

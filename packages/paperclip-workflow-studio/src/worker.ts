@@ -15,11 +15,22 @@ import {
 } from "./execution-gate.js";
 import type {
   BootstrapData,
+  CompanyIntelligenceData,
+  IntelligenceAgentRow,
+  IntelligenceDailyPoint,
+  IntelligenceProjectRow,
+  IntelligenceRange,
+  IntelligenceRunRow,
   MonitorNode,
   NodeExecutionState,
   NodeExecutionStatus,
+  PaperclipIssue,
+  PaperclipAgent,
   PreflightCheckItem,
   PreflightCheckResult,
+  ProjectPortfolioActiveRun,
+  ProjectPortfolioData,
+  ProjectPortfolioItem,
   ProjectWorkflowBinding,
   ProjectWorkflowData,
   ValidationIssue,
@@ -33,7 +44,8 @@ import type {
   WorkflowRunRecord,
   WorkflowRunSettings,
   WorkflowRunStatus,
-  WorkflowRunSummary
+  WorkflowRunSummary,
+  WorkflowTaskMapping
 } from "./types.js";
 
 const INDEX_KEY = "workflow-index";
@@ -41,11 +53,6 @@ const NAMESPACE = "workflow-studio";
 const PROJECT_BINDING_KEY = "project-workflow-binding";
 const RUNS_INDEX_KEY = "workflow-runs-index";
 const GATE_AUDIT_KEY = "workflow-gate-audit";
-
-// Per-run idempotency: track the set of issueIds for which a wakeup was
-// already sent in the current stepWorkflowRun invocation so we never send
-// two heartbeat requests for the same issue in one step cycle.
-const activeStepSessions = new Map<string, Set<string>>();
 
 function requiredString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${name} is required`);
@@ -88,7 +95,46 @@ async function readWorkflow(ctx: PluginContext, companyId: string, workflowId: s
     namespace: NAMESPACE,
     stateKey: workflowKey(workflowId)
   });
-  return value && typeof value === "object" ? value as WorkflowDefinition : null;
+  if (value && typeof value === "object") return value as WorkflowDefinition;
+
+  // Fallback 1: check project workflow bindings in this company
+  try {
+    const projects = await ctx.projects.list({ companyId, limit: 200, offset: 0 });
+    if (Array.isArray(projects)) {
+      for (const project of projects) {
+        const binding = await readProjectBinding(ctx, project.id);
+        if (binding?.workflow && binding.workflow.id === workflowId) {
+          await ctx.state.set(
+            { scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: workflowKey(workflowId) },
+            binding.workflow
+          );
+          return binding.workflow;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Fallback 2: check workflow run snapshots in this company
+  try {
+    const runs = await readRunsIndex(ctx, companyId);
+    const candidate = runs.find((r) => r.workflowId === workflowId);
+    if (candidate) {
+      const runRecord = await readRun(ctx, companyId, candidate.id);
+      if (runRecord?.workflowSnapshot && runRecord.workflowSnapshot.id === workflowId) {
+        await ctx.state.set(
+          { scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: workflowKey(workflowId) },
+          runRecord.workflowSnapshot
+        );
+        return runRecord.workflowSnapshot;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
 }
 
 function indexEntry(workflow: WorkflowDefinition): WorkflowIndexEntry {
@@ -145,9 +191,41 @@ async function readRun(ctx: PluginContext, companyId: string, runId: string): Pr
   return value && typeof value === "object" ? (value as WorkflowRunRecord) : null;
 }
 
+async function resolveActiveIssueOwnership(
+  ctx: PluginContext,
+  companyId: string,
+  issueId: string,
+  requestedRunId?: string | null
+): Promise<{ run: WorkflowRunRecord; nodeId: string } | null> {
+  const activeStatuses: WorkflowRunStatus[] = ["pending", "running", "waiting_approval", "paused"];
+  const candidates: Array<{ run: WorkflowRunRecord; nodeId: string }> = [];
+  const summaries = await readRunsIndex(ctx, companyId);
+
+  for (const summary of summaries) {
+    if (!activeStatuses.includes(summary.status)) continue;
+    if (requestedRunId && summary.id !== requestedRunId) continue;
+    const run = await readRun(ctx, companyId, summary.id);
+    if (!run) continue;
+    for (const [nodeId, state] of Object.entries(run.nodeExecutionStates)) {
+      const mapped = state.issueIds?.length ? state.issueIds : (state.issueId ? [state.issueId] : []);
+      if (mapped.includes(issueId)) candidates.push({ run, nodeId });
+    }
+  }
+
+  if (candidates.length > 1) {
+    throw new Error(`Workflow ownership conflict: issue ${issueId} is mapped to multiple active run nodes.`);
+  }
+  return candidates[0] ?? null;
+}
+
 function runSummary(run: WorkflowRunRecord): WorkflowRunSummary {
-  const totalTasks = Object.values(run.nodeExecutionStates).filter((s) => s.kind === "task" || s.kind === "approval").length;
-  const completedTasks = Object.values(run.nodeExecutionStates).filter((s) => (s.kind === "task" || s.kind === "approval") && s.status === "done").length;
+  const mappings = (run.taskMappings ?? []).filter((mapping) => !mapping.isCoordinator);
+  const totalTasks = mappings.length > 0
+    ? mappings.length
+    : Object.values(run.nodeExecutionStates).filter((s) => (s.kind === "task" || s.kind === "approval") && !s.isCoordinator && s.issueIds.length > 0).length;
+  const completedTasks = mappings.length > 0
+    ? mappings.filter((mapping) => run.nodeExecutionStates[mapping.workflowNodeId]?.status === "done").length
+    : Object.values(run.nodeExecutionStates).filter((s) => (s.kind === "task" || s.kind === "approval") && !s.isCoordinator && s.status === "done").length;
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : (run.status === "completed" ? 100 : 0);
   return {
     id: run.id,
@@ -179,18 +257,325 @@ async function persistRun(ctx: PluginContext, run: WorkflowRunRecord): Promise<v
   await writeRunsIndex(ctx, run.companyId, next);
 }
 
+type IntelligenceRunDbRow = {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  project_id: string | null;
+  project_name: string | null;
+  issue_id: string | null;
+  issue_identifier: string | null;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  error_code: string | null;
+  error: string | null;
+};
+
+type IntelligenceCostDbRow = {
+  agent_id: string | null;
+  input_tokens: string | number | null;
+  output_tokens: string | number | null;
+  cached_input_tokens: string | number | null;
+  cost_cents: string | number | null;
+  event_count: string | number;
+  subscription_events: string | number;
+  unknown_events: string | number;
+};
+
+function numericValue(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function selectedRange(value: unknown): IntelligenceRange {
+  return value === "24h" || value === "7d" || value === "30d" ? value : "7d";
+}
+
+function durationMs(startedAt: string | null, finishedAt: string | null, now: number): number | null {
+  if (!startedAt) return null;
+  const start = Date.parse(startedAt);
+  const end = finishedAt ? Date.parse(finishedAt) : now;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return end - start;
+}
+
+function percentile(values: number[], percentileRank: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * percentileRank) - 1));
+  return sorted[index] ?? null;
+}
+
+async function readCompanyIntelligence(
+  ctx: PluginContext,
+  companyId: string,
+  requestedRange: unknown,
+): Promise<CompanyIntelligenceData> {
+  const range = selectedRange(requestedRange);
+  const now = Date.now();
+  const windowMs = range === "24h" ? 24 * 60 * 60 * 1000 : range === "30d" ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const since = new Date(now - windowMs).toISOString();
+
+  // This is metadata-only, bounded to the selected window. Logs and stdout are
+  // deliberately excluded; the dashboard links to the existing run/log views.
+  const runRows = await ctx.db.query<IntelligenceRunDbRow>(
+    `SELECT r.id::text AS id,
+            r.agent_id::text AS agent_id,
+            a.name AS agent_name,
+            i.project_id::text AS project_id,
+            p.name AS project_name,
+            r.issue_id::text AS issue_id,
+            i.identifier AS issue_identifier,
+            r.status,
+            r.started_at::text AS started_at,
+            r.finished_at::text AS finished_at,
+            r.created_at::text AS created_at,
+            r.error_code,
+            r.error
+       FROM public.heartbeat_runs r
+       JOIN public.agents a ON a.id = r.agent_id AND a.company_id = r.company_id
+       LEFT JOIN public.issues i ON i.id = r.issue_id AND i.company_id = r.company_id
+       LEFT JOIN public.projects p ON p.id = i.project_id AND p.company_id = r.company_id
+      WHERE r.company_id = $1 AND r.created_at >= $2
+      ORDER BY r.created_at DESC
+      LIMIT 5000`,
+    [companyId, since],
+  );
+  const costRows = await ctx.db.query<IntelligenceCostDbRow>(
+    `SELECT agent_id::text AS agent_id,
+            COALESCE(SUM(input_tokens), 0)::text AS input_tokens,
+            COALESCE(SUM(output_tokens), 0)::text AS output_tokens,
+            COALESCE(SUM(cached_input_tokens), 0)::text AS cached_input_tokens,
+            SUM(cost_cents)::text AS cost_cents,
+            COUNT(*)::text AS event_count,
+            COUNT(*) FILTER (WHERE billing_type = 'subscription_included')::text AS subscription_events,
+            COUNT(*) FILTER (WHERE billing_type = 'unknown')::text AS unknown_events
+       FROM public.cost_events
+      WHERE company_id = $1 AND occurred_at >= $2
+      GROUP BY agent_id`,
+    [companyId, since],
+  );
+
+  const [agents, projects, issues, approvals, workflowRuns] = await Promise.all([
+    ctx.agents.list({ companyId, limit: 200, offset: 0 }),
+    ctx.projects.list({ companyId, limit: 200, offset: 0 }),
+    ctx.issues.list({ companyId, limit: 5000, offset: 0 }),
+    ctx.approvals.list({ companyId, status: "pending" }),
+    readRunsIndex(ctx, companyId),
+  ]);
+
+  const costsByAgent = new Map<string, IntelligenceCostDbRow>();
+  for (const row of costRows) if (row.agent_id) costsByAgent.set(row.agent_id, row);
+  const runsByAgent = new Map<string, IntelligenceRunDbRow[]>();
+  const dailyMap = new Map<string, IntelligenceDailyPoint>();
+  const terminalStatuses = new Set(["succeeded", "failed", "timed_out", "cancelled", "interrupted"]);
+  const successStatuses = new Set(["succeeded", "completed"]);
+  let totalRuntimeMs = 0;
+  let validRuntimeCount = 0;
+  let totalTokens = 0;
+  let tokenCount = 0;
+  let failedRuns = 0;
+  let successfulRuns = 0;
+  let eligibleTerminalRuns = 0;
+
+  for (const row of runRows) {
+    const list = runsByAgent.get(row.agent_id) ?? [];
+    list.push(row);
+    runsByAgent.set(row.agent_id, list);
+    if (terminalStatuses.has(row.status)) eligibleTerminalRuns += 1;
+    if (successStatuses.has(row.status)) successfulRuns += 1;
+    if (["failed", "timed_out", "interrupted"].includes(row.status)) failedRuns += 1;
+    const runtime = durationMs(row.started_at, row.finished_at, now);
+    if (runtime !== null) {
+      totalRuntimeMs += runtime;
+      validRuntimeCount += 1;
+    }
+    const day = (row.started_at ?? row.created_at).slice(0, 10);
+    const point = dailyMap.get(day) ?? { date: day, runs: 0, runtimeMs: 0, failures: 0 };
+    point.runs += 1;
+    if (runtime !== null) point.runtimeMs += runtime;
+    if (["failed", "timed_out", "interrupted"].includes(row.status)) point.failures += 1;
+    dailyMap.set(day, point);
+  }
+
+  const issuesByAgent = new Map<string, number>();
+  for (const issue of issues) {
+    if (issue.assigneeAgentId && issue.status === "done" && issue.completedAt && new Date(issue.completedAt).getTime() >= Date.parse(since)) {
+      issuesByAgent.set(issue.assigneeAgentId, (issuesByAgent.get(issue.assigneeAgentId) ?? 0) + 1);
+    }
+  }
+
+  const agentRows: IntelligenceAgentRow[] = agents.map((agent) => {
+    const agentRuns = runsByAgent.get(agent.id) ?? [];
+    const durations = agentRuns
+      .map((run) => durationMs(run.started_at, run.finished_at, now))
+      .filter((value): value is number => value !== null);
+    const terminal = agentRuns.filter((run) => terminalStatuses.has(run.status));
+    const successes = agentRuns.filter((run) => successStatuses.has(run.status)).length;
+    const costs = costsByAgent.get(agent.id);
+    const inputTokens = costs ? numericValue(costs.input_tokens) : null;
+    const outputTokens = costs ? numericValue(costs.output_tokens) : null;
+    const cachedInputTokens = costs ? numericValue(costs.cached_input_tokens) : null;
+    if (costs && (inputTokens || outputTokens)) {
+      totalTokens += (inputTokens ?? 0) + (outputTokens ?? 0);
+      tokenCount += 1;
+    }
+    const activeRun = agentRuns.find((run) => ["queued", "running"].includes(run.status));
+    const lastActiveAt = agentRuns[0]?.finished_at ?? agentRuns[0]?.started_at ?? agentRuns[0]?.created_at ?? null;
+    return {
+      agentId: agent.id,
+      name: agent.name,
+      role: agent.role,
+      status: agent.status,
+      totalRuns: agentRuns.length,
+      successfulRuns: successes,
+      failedRuns: agentRuns.filter((run) => ["failed", "timed_out", "interrupted"].includes(run.status)).length,
+      successRate: terminal.length > 0 ? Math.round((successes / terminal.length) * 1000) / 10 : null,
+      totalRuntimeMs: durations.length > 0 ? durations.reduce((sum, value) => sum + value, 0) : null,
+      averageRunDurationMs: durations.length > 0 ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : null,
+      p95RunDurationMs: percentile(durations, 0.95),
+      completedTasks: issuesByAgent.get(agent.id) ?? 0,
+      inputTokens,
+      outputTokens,
+      cachedInputTokens,
+      reportedCostCents: costs?.cost_cents == null ? null : numericValue(costs.cost_cents),
+      lastActiveAt,
+      currentRunId: activeRun?.id ?? null,
+    };
+  }).sort((a, b) => (b.totalRuntimeMs ?? -1) - (a.totalRuntimeMs ?? -1));
+
+  const workflowRunByProject = new Map<string, WorkflowRunSummary[]>();
+  for (const run of workflowRuns) {
+    const list = workflowRunByProject.get(run.projectId) ?? [];
+    list.push(run);
+    workflowRunByProject.set(run.projectId, list);
+  }
+  const activeWorkflowStatuses = new Set<WorkflowRunStatus>(["pending", "running", "waiting_approval", "paused"]);
+  const projectRows: IntelligenceProjectRow[] = [];
+  for (const project of projects) {
+    const projectIssues = issues.filter((issue) => issue.projectId === project.id);
+    const projectRuns = workflowRunByProject.get(project.id) ?? [];
+    const activeSummary = projectRuns.find((run) => activeWorkflowStatuses.has(run.status));
+    const latestSummary = projectRuns[0] ?? null;
+    let currentStages: string[] = [];
+    let blockedReason: string | null = null;
+    if (activeSummary) {
+      const activeRun = await readRun(ctx, companyId, activeSummary.id);
+      if (activeRun) {
+        const states = Object.values(activeRun.nodeExecutionStates);
+        currentStages = states.filter((state) => ["running", "waiting_approval"].includes(state.status)).map((state) => state.title);
+        const blocked = states.find((state) => state.status === "blocked");
+        blockedReason = blocked?.lastGateReason ?? null;
+      }
+    }
+    const activeAgents = [...new Set(projectIssues.filter((issue) => issue.status === "in_progress" && issue.assigneeAgentId).map((issue) => issue.assigneeAgentId!))]
+      .map((id) => agents.find((agent) => agent.id === id)?.name ?? id);
+    projectRows.push({
+      projectId: project.id,
+      name: project.name,
+      status: project.status,
+      workflowName: activeSummary?.workflowName ?? latestSummary?.workflowName ?? null,
+      runStatus: activeSummary?.status ?? latestSummary?.status ?? null,
+      progress: activeSummary?.progress ?? latestSummary?.progress ?? null,
+      currentStages,
+      activeAgents,
+      completedTasks: projectIssues.filter((issue) => issue.status === "done").length,
+      pendingTasks: projectIssues.filter((issue) => !["done", "cancelled"].includes(issue.status)).length,
+      blockedTasks: projectIssues.filter((issue) => issue.status === "blocked").length,
+      lastActivityAt: latestSummary?.finishedAt ?? latestSummary?.startedAt ?? null,
+      blockedReason,
+    });
+  }
+
+  const costEventCount = costRows.reduce((sum, row) => sum + numericValue(row.event_count), 0);
+  const subscriptionEventCount = costRows.reduce((sum, row) => sum + numericValue(row.subscription_events), 0);
+  const unknownEventCount = costRows.reduce((sum, row) => sum + numericValue(row.unknown_events), 0);
+  const reportedCostCents = costRows.reduce((sum, row) => sum + (row.cost_cents == null ? 0 : numericValue(row.cost_cents)), 0);
+  const costCoverage = costEventCount === 0
+    ? "none"
+    : subscriptionEventCount === costEventCount
+      ? "subscription"
+      : unknownEventCount > 0 && reportedCostCents === 0
+        ? "unknown"
+        : "reported";
+  const activeWorkflowRuns = workflowRuns.filter((run) => activeWorkflowStatuses.has(run.status));
+  const completedProjects = projectRows.filter((project) => project.runStatus === "completed" || ["completed", "done"].includes(project.status)).length;
+  const activeProjects = projectRows.filter((project) => project.runStatus && activeWorkflowStatuses.has(project.runStatus)).length;
+  const runningAgents = agentRows.filter((agent) => agent.currentRunId || ["running", "busy"].includes(agent.status)).length;
+  const recentRuns: IntelligenceRunRow[] = runRows.slice(0, 30).map((row) => ({
+    id: row.id,
+    agentId: row.agent_id,
+    agentName: row.agent_name,
+    projectId: row.project_id,
+    projectName: row.project_name,
+    issueId: row.issue_id,
+    issueIdentifier: row.issue_identifier,
+    status: row.status,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    durationMs: durationMs(row.started_at, row.finished_at, now),
+    errorCode: row.error_code,
+    error: row.error,
+  }));
+
+  return {
+    companyId,
+    range,
+    generatedAt: new Date(now).toISOString(),
+    kpis: {
+      totalProjects: projects.length,
+      activeProjects,
+      completedProjects,
+      runningAgents,
+      totalAgents: agents.length,
+      activeWorkflowRuns: activeWorkflowRuns.length,
+      tasksInProgress: issues.filter((issue) => issue.status === "in_progress").length,
+      failedRuns,
+      pendingApprovals: approvals.length,
+      totalRuns: runRows.length,
+      successfulRuns,
+      eligibleTerminalRuns,
+      totalRuntimeMs: validRuntimeCount > 0 ? totalRuntimeMs : null,
+      totalTokens: tokenCount > 0 ? totalTokens : null,
+      reportedCostCents: costEventCount > 0 ? reportedCostCents : null,
+      costCoverage,
+    },
+    agents: agentRows,
+    projects: projectRows,
+    recentRuns,
+    daily: [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    dataQuality: {
+      runRowsSampled: runRows.length,
+      costsAvailable: costEventCount > 0,
+      qualityMetricsAvailable: false,
+      note: "Reliability and runtime use recorded heartbeat timestamps. Acceptance quality, reopened work, and idle time are not inferred without source evidence.",
+    },
+  };
+}
+
 export function validateGraph(workflow: WorkflowDefinition): ValidationResult {
   const issues: ValidationIssue[] = [];
   const nodeIds = new Set<string>();
+  if (workflow.nodes.length === 0) {
+    issues.push({ level: "error", code: "empty_graph", message: "Workflow must contain at least one node." });
+  }
   for (const node of workflow.nodes) {
     if (nodeIds.has(node.id)) issues.push({ level: "error", code: "duplicate_node", message: `Duplicate node ${node.id}`, nodeId: node.id });
     nodeIds.add(node.id);
     if (!node.data.title.trim()) issues.push({ level: "error", code: "missing_title", message: "Node title is required", nodeId: node.id });
     if (node.data.kind === "task" && !node.data.agentId) {
-      issues.push({ level: "warning", code: "missing_agent", message: `${node.data.title} has no Paperclip agent assigned`, nodeId: node.id });
+      issues.push({ level: "error", code: "missing_agent", message: `${node.data.title} has no Paperclip agent assigned`, nodeId: node.id });
+    }
+    if (node.data.kind === "task" && node.data.executionPolicy !== "paperclip") {
+      issues.push({ level: "error", code: "invalid_task_policy", message: `${node.data.title} must use Paperclip execution policy.`, nodeId: node.id });
+    }
+    if (node.data.kind === "approval" && node.data.executionPolicy !== "human") {
+      issues.push({ level: "error", code: "invalid_approval_policy", message: `${node.data.title} must use human approval policy.`, nodeId: node.id });
     }
     if (node.data.kind === "condition") {
-      issues.push({ level: "warning", code: "condition_visual_only", message: `${node.data.title} is visual-only. Paperclip IF/ELSE execution is not enabled.`, nodeId: node.id });
+      issues.push({ level: "error", code: "condition_not_executable", message: `${node.data.title} uses conditional branching, which has no trusted backend evaluator yet. Publishing is refused.`, nodeId: node.id });
     }
   }
 
@@ -226,8 +611,16 @@ export function validateGraph(workflow: WorkflowDefinition): ValidationResult {
     }
   }
   if (visited !== nodeIds.size) issues.push({ level: "error", code: "cycle", message: "Workflow contains a circular dependency" });
-  if (!workflow.nodes.some((node) => node.data.kind === "start")) issues.push({ level: "warning", code: "missing_start", message: "Workflow has no Start node" });
-  if (!workflow.nodes.some((node) => node.data.kind === "end")) issues.push({ level: "warning", code: "missing_end", message: "Workflow has no End node" });
+  const starts = workflow.nodes.filter((node) => node.data.kind === "start");
+  const ends = workflow.nodes.filter((node) => node.data.kind === "end");
+  if (starts.length !== 1) issues.push({ level: "error", code: "invalid_start_count", message: `Workflow must contain exactly one Start node (found ${starts.length}).` });
+  if (ends.length !== 1) issues.push({ level: "error", code: "invalid_end_count", message: `Workflow must contain exactly one End node (found ${ends.length}).` });
+  if (starts.length === 1 && workflow.edges.some((edge) => edge.target === starts[0].id)) {
+    issues.push({ level: "error", code: "start_has_predecessor", message: "Start node cannot have incoming dependencies.", nodeId: starts[0].id });
+  }
+  if (ends.length === 1 && workflow.edges.some((edge) => edge.source === ends[0].id)) {
+    issues.push({ level: "error", code: "end_has_successor", message: "End node cannot have outgoing dependencies.", nodeId: ends[0].id });
+  }
   return { valid: !issues.some((issue) => issue.level === "error"), issues };
 }
 
@@ -330,7 +723,7 @@ async function saveDraft(ctx: PluginContext, companyId: string, submitted: Workf
     createdAt: current?.createdAt ?? now,
     updatedAt: now,
     publishedAt: null,
-    nodes: submitted.nodes.map((node) => ({ ...node, data: { ...node.data, issueId: null, issueIdentifier: null, status: "draft" } })),
+    nodes: submitted.nodes.map((node) => ({ ...node, data: { ...node.data, issueId: null, issueIdentifier: null, issueIds: [], status: "draft" } })),
     publishedIssueIds: [],
     publishedDependencies: {}
   };
@@ -340,6 +733,33 @@ async function saveDraft(ctx: PluginContext, companyId: string, submitted: Workf
 
 function taskNodes(workflow: WorkflowDefinition): WorkflowNode[] {
   return workflow.nodes.filter((node) => node.data.kind === "task" || node.data.kind === "approval");
+}
+
+function stateIssueIds(state: NodeExecutionState | undefined): string[] {
+  if (!state) return [];
+  return [...new Set(state.issueIds.length > 0 ? state.issueIds : (state.issueId ? [state.issueId] : []))];
+}
+
+function isRunGeneratedIssue(issue: unknown): boolean {
+  const value = issue as { originKind?: string | null; originId?: string | null } | null;
+  return value?.originKind === "plugin:ai-company-workflow-studio"
+    && typeof value.originId === "string"
+    && value.originId.startsWith("workflow-run:");
+}
+
+function entryTaskNode(workflow: WorkflowDefinition): WorkflowNode | null {
+  const incoming = new Map<string, string[]>();
+  for (const node of workflow.nodes) incoming.set(node.id, []);
+  for (const edge of workflow.edges) incoming.get(edge.target)?.push(edge.source);
+  const byId = new Map(workflow.nodes.map((node) => [node.id, node]));
+  const candidates = taskNodes(workflow).filter((node) => {
+    const parents = incoming.get(node.id) ?? [];
+    return parents.length === 0 || parents.every((id) => {
+      const kind = byId.get(id)?.data.kind;
+      return kind === "start" || kind === "parallel" || kind === "join" || kind === "condition";
+    });
+  });
+  return candidates.find((node) => node.data.requiredRole === "project-manager") ?? candidates[0] ?? null;
 }
 
 function desiredDependencies(workflow: WorkflowDefinition): Record<string, string[]> {
@@ -365,24 +785,168 @@ function desiredDependencies(workflow: WorkflowDefinition): Record<string, strin
   return result;
 }
 
-async function monitorWorkflow(ctx: PluginContext, workflow: WorkflowDefinition): Promise<MonitorNode[]> {
+async function monitorWorkflow(ctx: PluginContext, workflow: WorkflowDefinition, run?: WorkflowRunRecord | null): Promise<MonitorNode[]> {
   return await Promise.all(workflow.nodes.map(async (node): Promise<MonitorNode> => {
-    if (!node.data.issueId) return { nodeId: node.id, issue: null, blockedBy: [], runs: [] };
-    const issue = await ctx.issues.get(node.data.issueId, workflow.companyId);
-    if (!issue) return { nodeId: node.id, issue: null, blockedBy: [], runs: [] };
-    const relations = await ctx.issues.relations.get(issue.id, workflow.companyId);
-    let runs: MonitorNode["runs"] = [];
-    try {
-      const summary = await ctx.issues.summaries.getOrchestration({ issueId: issue.id, companyId: workflow.companyId, includeSubtree: false });
-      runs = summary.runs.map((run) => ({
-        id: run.id, status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt,
-        error: run.error, agentId: run.agentId
-      }));
-    } catch {
-      runs = [];
+    const state = run?.nodeExecutionStates[node.id];
+    const issueIds = stateIssueIds(state).length > 0
+      ? stateIssueIds(state)
+      : [...new Set([...(node.data.issueId ? [node.data.issueId] : []), ...(node.data.issueIds ?? [])])];
+    const issues = (await Promise.all(issueIds.map((id) => ctx.issues.get(id, workflow.companyId))))
+      .filter(Boolean) as unknown as PaperclipIssue[];
+    const runs: MonitorNode["runs"] = [];
+    const blockedBy: MonitorNode["blockedBy"] = [];
+    for (const issue of issues) {
+      try {
+        const relations = await ctx.issues.relations.get(issue.id, workflow.companyId);
+        for (const blocker of relations.blockedBy) {
+          if (!blockedBy.some((item) => item.id === blocker.id)) blockedBy.push(blocker);
+        }
+      } catch { /* transient monitor read */ }
+      try {
+        const summary = await ctx.issues.summaries.getOrchestration({ issueId: issue.id, companyId: workflow.companyId, includeSubtree: false });
+        runs.push(...summary.runs.map((item) => ({
+          id: item.id, status: item.status, startedAt: item.startedAt, finishedAt: item.finishedAt,
+          error: item.error, agentId: item.agentId
+        })));
+      } catch { /* transient monitor read */ }
     }
-    return { nodeId: node.id, issue: issue as unknown as MonitorNode["issue"], blockedBy: relations.blockedBy, runs };
+    const completedTaskCount = issues.filter((issue) => issue.status === "done").length;
+    const startedAt = state?.startedAt ? Date.parse(state.startedAt) : NaN;
+    const finishedAt = state?.finishedAt ? Date.parse(state.finishedAt) : NaN;
+    return {
+      nodeId: node.id,
+      issue: issues.find((item) => !state?.isCoordinator && item.id !== state?.issueId) ?? issues[0] ?? null,
+      issues,
+      blockedBy,
+      runs,
+      stageTitle: state?.title ?? node.data.title,
+      stageStatus: state?.status,
+      agentId: state?.agentId ?? node.data.agentId,
+      agentName: state?.agentName ?? node.data.agentName,
+      taskCount: issues.length,
+      completedTaskCount,
+      dependencyNodeIds: state?.blockedByNodeIds ?? [],
+      elapsedMs: Number.isFinite(startedAt) ? Math.max(0, (Number.isFinite(finishedAt) ? finishedAt : Date.now()) - startedAt) : null
+    };
   }));
+}
+
+type StageTaskInput = {
+  taskKey: string;
+  title: string;
+  description?: string;
+  priority?: string;
+  assigneeAgentId?: string | null;
+};
+
+async function createStageExecutionTasks(
+  ctx: PluginContext,
+  companyId: string,
+  runId: string,
+  nodeId: string,
+  rawTasks: unknown,
+  actor: { actorUserId?: string | null; actorAgentId?: string | null; actorRunId?: string | null }
+) {
+  const run = await readRun(ctx, companyId, runId);
+  if (!run || !["running", "waiting_approval", "paused"].includes(run.status)) {
+    throw new Error("Execution tasks can only be created for an active Workflow Run.");
+  }
+  const state = run.nodeExecutionStates[nodeId];
+  const stage = run.workflowSnapshot.nodes.find((node) => node.id === nodeId);
+  if (!state || !stage || stage.data.kind !== "task") throw new Error("Target workflow stage must be an AI task node.");
+  if (state.isCoordinator) throw new Error("The coordinator stage is not a business execution stage.");
+  if (actor.actorAgentId && actor.actorAgentId !== run.projectManagerAgentId) {
+    throw new Error("Only the AI Project Manager assigned to this Workflow Run may create execution tasks.");
+  }
+  if (!Array.isArray(rawTasks) || rawTasks.length === 0) throw new Error("tasks must contain at least one execution task.");
+  if (rawTasks.length > 50) throw new Error("A single stage may receive at most 50 execution tasks.");
+
+  const tasks: StageTaskInput[] = rawTasks.map((item, index) => {
+    if (!item || typeof item !== "object") throw new Error(`tasks[${index}] must be an object.`);
+    const value = item as Record<string, unknown>;
+    const taskKey = requiredString(value.taskKey, `tasks[${index}].taskKey`);
+    const title = requiredString(value.title, `tasks[${index}].title`);
+    if (taskKey.length > 120 || title.length > 240) throw new Error(`tasks[${index}] exceeds the allowed length.`);
+    const assigneeAgentId = optionalString(value.assigneeAgentId);
+    if (assigneeAgentId && assigneeAgentId !== state.agentId) {
+      throw new Error(`Task ${taskKey} must use the agent assigned to stage "${state.title}".`);
+    }
+    return {
+      taskKey,
+      title,
+      description: typeof value.description === "string" ? value.description : undefined,
+      priority: typeof value.priority === "string" ? value.priority : undefined,
+      assigneeAgentId
+    };
+  });
+  if (new Set(tasks.map((task) => task.taskKey)).size !== tasks.length) {
+    throw new Error("taskKey must be unique within a stage request.");
+  }
+
+  const mappings = run.taskMappings ?? (run.taskMappings = []);
+  const existingKeys = new Set(mappings.filter((item) => item.workflowRunId === runId && item.workflowNodeId === nodeId).map((item) => item.taskKey));
+  const predecessorIssueIds = state.blockedByNodeIds.flatMap((predecessorId) => stateIssueIds(run.nodeExecutionStates[predecessorId]));
+  const predecessorDone = state.blockedByNodeIds.every((predecessorId) => run.nodeExecutionStates[predecessorId]?.status === "done");
+  const created: Array<{ taskKey: string; issue: PaperclipIssue; mapping: WorkflowTaskMapping; idempotent: boolean }> = [];
+  for (const task of tasks) {
+    const existing = mappings.find((item) => item.workflowRunId === runId && item.workflowNodeId === nodeId && item.taskKey === task.taskKey);
+    if (existing) {
+      const issue = await ctx.issues.get(existing.issueId, companyId);
+      if (issue) created.push({ taskKey: task.taskKey, issue: issue as unknown as PaperclipIssue, mapping: existing, idempotent: true });
+      continue;
+    }
+    if (existingKeys.has(task.taskKey)) continue;
+    const issue = await ctx.issues.create({
+      companyId,
+      projectId: run.projectId,
+      title: task.title,
+      description: task.description ?? `Execution task for workflow stage "${state.title}".\n\nRun: ${runId}`,
+      status: predecessorDone ? "todo" : "backlog",
+      priority: (task.priority ?? stage.data.priority) as Issue["priority"],
+      assigneeAgentId: task.assigneeAgentId ?? state.agentId ?? undefined,
+      originKind: "plugin:ai-company-workflow-studio",
+      originId: `workflow-run:${runId}:node:${nodeId}:task:${task.taskKey}`,
+      originRunId: runId,
+      blockedByIssueIds: predecessorIssueIds,
+      actor
+    });
+    const mapping: WorkflowTaskMapping = {
+      companyId,
+      projectId: run.projectId,
+      workflowRunId: runId,
+      workflowNodeId: nodeId,
+      stageId: nodeId,
+      issueId: issue.id,
+      assigneeAgentId: issue.assigneeAgentId ?? state.agentId,
+      taskKey: task.taskKey,
+      createdAt: new Date().toISOString()
+    };
+    mappings.push(mapping);
+    if (!state.issueIds.includes(issue.id)) state.issueIds.push(issue.id);
+    if (issue.identifier && !state.issueIdentifiers.includes(issue.identifier)) state.issueIdentifiers.push(issue.identifier);
+    if (!state.issueId) {
+      state.issueId = issue.id;
+      state.issueIdentifier = issue.identifier ?? null;
+    }
+    if (!run.relatedIssueIds.includes(issue.id)) run.relatedIssueIds.push(issue.id);
+    created.push({ taskKey: task.taskKey, issue: issue as unknown as PaperclipIssue, mapping, idempotent: false });
+  }
+  if (state.status === "blocked" && predecessorDone && state.issueIds.length > 0) {
+    state.status = "ready";
+    state.lastGateCode = "TASKS_MAPPED";
+    state.lastGateReason = "Execution tasks mapped; stage will dispatch only after all predecessor stages are done.";
+  }
+  const now = new Date().toISOString();
+  run.updatedAt = now;
+  run.executionHistory.push({
+    id: randomUUID(), timestamp: now, level: "tool",
+    message: `Mapped ${created.length} execution task(s) to stage "${state.title}". Existing task keys were reused idempotently.`,
+    nodeId,
+    agentId: actor.actorAgentId ?? undefined,
+    payload: { taskKeys: created.map((item) => item.taskKey), predecessorDone }
+  });
+  await persistRun(ctx, run);
+  return { workflowRunId: runId, workflowNodeId: nodeId, stage: state.title, tasks: created };
 }
 
 async function publishWorkflowInstance(
@@ -406,39 +970,15 @@ async function publishWorkflowInstance(
     actorRunId: actionContext.actor.runId
   };
 
+  // Publishing stores the executable graph only. It must never materialize a
+  // fixed set of project tasks. The AI Project Manager creates execution
+  // tasks when a Product Owner starts a run, using the requirement as input.
   for (const node of taskNodes(working)) {
-    let issue: Issue | null = null;
-    if (node.data.issueId) {
-      issue = await ctx.issues.get(node.data.issueId, companyId);
-      if (!issue) throw new Error(`Linked issue for ${node.data.title} no longer exists`);
-      if (issue.projectId !== working.projectId) throw new Error(`${issue.identifier ?? issue.id} belongs to another project`);
-      if (issue.status === "in_progress") throw new Error(`${issue.identifier ?? issue.id} is running. Dependency edits are blocked until it stops.`);
-      issue = await ctx.issues.update(issue.id, {
-        title: node.data.title,
-        description: node.data.description,
-        priority: node.data.priority as Issue["priority"],
-        assigneeAgentId: node.data.kind === "task" ? node.data.agentId : null,
-        assigneeUserId: node.data.kind === "approval" ? actionContext.actor.userId : null
-      }, companyId, actor);
-      operations.push({ type: "issue.updated", nodeId: node.id, issueId: issue.id, ok: true });
-    } else {
-      issue = await ctx.issues.create({
-        companyId,
-        projectId: working.projectId ?? undefined,
-        title: node.data.title,
-        description: node.data.description,
-        status: "backlog",
-        priority: node.data.priority as Issue["priority"],
-        assigneeAgentId: node.data.kind === "task" ? node.data.agentId ?? undefined : undefined,
-        assigneeUserId: node.data.kind === "approval" ? actionContext.actor.userId : null,
-        originKind: "plugin:ai-company-workflow-studio",
-        originId: `workflow:${working.id}:node:${node.id}`,
-        actor
-      });
-      node.data.issueId = issue.id;
-      node.data.issueIdentifier = issue.identifier;
-      operations.push({ type: "issue.created", nodeId: node.id, issueId: issue.id, ok: true });
-    }
+    if (!node.data.issueId) continue;
+    const issue = await ctx.issues.get(node.data.issueId, companyId);
+    if (!issue) throw new Error(`Linked issue for ${node.data.title} no longer exists`);
+    if (issue.projectId !== working.projectId) throw new Error(`${issue.identifier ?? issue.id} belongs to another project`);
+    if (issue.status === "in_progress") throw new Error(`${issue.identifier ?? issue.id} is running. Dependency edits are blocked until it stops.`);
     node.data.status = issue.status;
     node.data.issueIdentifier = issue.identifier;
   }
@@ -650,12 +1190,14 @@ async function startProjectWorkflow(
   }
 
   const runs = await readRunsIndex(ctx, companyId);
-  const activeExisting = runs.find((r) => r.projectId === projectId && (r.status === "running" || r.status === "waiting_approval"));
+  const activeExisting = runs.find((r) =>
+    r.projectId === projectId && ["pending", "running", "waiting_approval", "paused"].includes(r.status)
+  );
   if (activeExisting) {
     throw new Error(`Project "${project.name}" already has an active workflow run (${activeExisting.id}). Pause or stop the active run before starting a new one.`);
   }
 
-  if (workflow.status !== "published" || !workflow.publishedIssueIds?.length || workflow.projectId !== projectId) {
+  if (workflow.status !== "published" || workflow.projectId !== projectId) {
     const instance: WorkflowDefinition = {
       ...structuredClone(workflow),
       projectId,
@@ -682,6 +1224,15 @@ async function startProjectWorkflow(
     workflow = pubResult.workflow;
   }
 
+  // A workflow definition is not a task backlog. Starting a run creates only
+  // an optional coordinator issue for the entry Project Manager stage; the PM
+  // creates real execution tasks through create-execution-tasks after reading
+  // the Product Owner requirement.
+  const executionActor = {
+    actorUserId: actionContext.actor.userId,
+    actorAgentId: actionContext.actor.agentId,
+    actorRunId: actionContext.actor.runId
+  };
   const runId = `run_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
   const now = new Date().toISOString();
   const maxConcurrent = Math.max(1, Math.min(8, Number(settings?.maxConcurrentAgents) || 2));
@@ -697,10 +1248,65 @@ async function startProjectWorkflow(
   for (const n of workflow.nodes) incomingMap.set(n.id, []);
   for (const e of workflow.edges) incomingMap.get(e.target)?.push(e.source);
 
+  // Existing workflow snapshots may contain issues created by the previous
+  // fixed-node implementation. Keep those Issues untouched, but do not reuse
+  // them as business tasks in a new run.
+  const legacyIssueIdsByNode = new Map<string, string[]>();
+  for (const node of workflow.nodes) {
+    const candidateIds = [...new Set([...(node.data.issueId ? [node.data.issueId] : []), ...(node.data.issueIds ?? [])])];
+    const validIds: string[] = [];
+    for (const issueId of candidateIds) {
+      const issue = await ctx.issues.get(issueId, companyId);
+      if (issue && !isRunGeneratedIssue(issue)) validIds.push(issueId);
+    }
+    legacyIssueIdsByNode.set(node.id, validIds);
+  }
+
+  const coordinatorNode = entryTaskNode(workflow);
+  const coordinatorIssueIds: string[] = [];
+  const taskMappings: WorkflowTaskMapping[] = [];
+  if (coordinatorNode?.data.agentId) {
+    const coordinator = await ctx.issues.create({
+      companyId,
+      projectId,
+      title: `Plan execution tasks: ${cleanReq.slice(0, 96)}`,
+      description: [
+        "You are the AI Project Manager coordinator for this Workflow Run.",
+        `Workflow Run: ${runId}`,
+        `Workflow Stage: ${coordinatorNode.id} (${coordinatorNode.data.title})`,
+        "Analyze the Product Owner requirement and call the create-execution-tasks tool with the concrete work items for this stage.",
+        "Do not create parent/child issues and do not create tasks for future stages."
+      ].join("\n"),
+      status: "todo",
+      priority: coordinatorNode.data.priority as Issue["priority"],
+      assigneeAgentId: coordinatorNode.data.agentId,
+      originKind: "plugin:ai-company-workflow-studio",
+      originId: `workflow-run:${runId}:coordinator:${coordinatorNode.id}`,
+      originRunId: runId,
+      actor: executionActor
+    });
+    coordinatorIssueIds.push(coordinator.id);
+    taskMappings.push({
+      companyId,
+      projectId,
+      workflowRunId: runId,
+      workflowNodeId: coordinatorNode.id,
+      stageId: coordinatorNode.id,
+      issueId: coordinator.id,
+      assigneeAgentId: coordinatorNode.data.agentId,
+      taskKey: "__coordinator__",
+      isCoordinator: true,
+      createdAt: now
+    });
+  }
+
   const nodeExecutionStates: Record<string, NodeExecutionState> = {};
   for (const node of workflow.nodes) {
-    const primaryIssueId = node.data.issueId ?? null;
-    const primaryIdentifier = node.data.issueIdentifier ?? null;
+    const legacyIssueIds = legacyIssueIdsByNode.get(node.id) ?? [];
+    const coordinatorIds = coordinatorNode?.id === node.id ? coordinatorIssueIds : [];
+    const mappedIssueIds = [...new Set([...legacyIssueIds, ...coordinatorIds])];
+    const primaryIssueId = mappedIssueIds[0] ?? null;
+    const primaryIdentifier = mappedIssueIds.length > 0 ? (node.data.issueIdentifier ?? null) : null;
     nodeExecutionStates[node.id] = {
       nodeId: node.id,
       kind: node.data.kind,
@@ -708,9 +1314,10 @@ async function startProjectWorkflow(
       status: node.data.kind === "start" ? "done" : "pending",
       issueId: primaryIssueId,
       issueIdentifier: primaryIdentifier,
-      issueIds: primaryIssueId ? [primaryIssueId] : [],
+      issueIds: mappedIssueIds,
       issueIdentifiers: primaryIdentifier ? [primaryIdentifier] : [],
       completionPolicy: "all_required",
+      isCoordinator: coordinatorIds.length > 0,
       agentId: node.data.agentId ?? null,
       agentName: node.data.agentName ?? null,
       agentRole: node.data.agentRole ?? null,
@@ -740,21 +1347,10 @@ async function startProjectWorkflow(
     }
   ];
 
-  const relatedIssueIds: string[] = [];
-  for (const node of workflow.nodes) {
-    if (node.data.issueId) {
-      relatedIssueIds.push(node.data.issueId);
-      try {
-        await ctx.issues.createComment(
-          node.data.issueId,
-          `## 🚀 Workflow Run: ${runId}\n**Product Owner Requirement:**\n${cleanReq}\n\n*Assigned Step:* ${node.data.title}`,
-          companyId
-        );
-      } catch {
-        // Comment creation best-effort
-      }
-    }
-  }
+  const relatedIssueIds: string[] = [...new Set([
+    ...[...legacyIssueIdsByNode.values()].flat(),
+    ...coordinatorIssueIds
+  ])];
 
   for (const node of workflow.nodes) {
     if (node.data.kind === "start") continue;
@@ -762,53 +1358,15 @@ async function startProjectWorkflow(
     const allPredDone = incoming.every((predId) => nodeExecutionStates[predId]?.status === "done");
     if (allPredDone) {
       if (node.data.kind === "task") {
-        nodeExecutionStates[node.id].status = "ready";
+        nodeExecutionStates[node.id].status = nodeExecutionStates[node.id].issueIds.length > 0 ? "ready" : "blocked";
+        if (nodeExecutionStates[node.id].status === "blocked") {
+          nodeExecutionStates[node.id].lastGateCode = "NO_STAGE_TASKS";
+          nodeExecutionStates[node.id].lastGateReason = "Waiting for the AI Project Manager to create execution tasks for this stage.";
+        }
       } else if (node.data.kind === "parallel") {
         nodeExecutionStates[node.id].status = "done";
         nodeExecutionStates[node.id].finishedAt = now;
       }
-    }
-  }
-
-  let activeCount = 0;
-  let firstStepTitle = "";
-  for (const node of workflow.nodes) {
-    if (nodeExecutionStates[node.id]?.status === "ready" && activeCount < runSettings.maxConcurrentAgents) {
-      nodeExecutionStates[node.id].status = "running";
-      nodeExecutionStates[node.id].startedAt = now;
-      activeCount += 1;
-      if (!firstStepTitle) firstStepTitle = node.data.title;
-
-      if (node.data.issueId) {
-        try {
-          await ctx.issues.requestWakeup(
-            node.data.issueId,
-            companyId,
-            {
-              reason: `Workflow run ${runId} started - executing initial step ${node.data.title}`,
-              actorUserId: actionContext.actor.userId ?? undefined
-            }
-          );
-        } catch (wakeupErr) {
-          history.push({
-            id: randomUUID(),
-            timestamp: new Date().toISOString(),
-            level: "warn",
-            message: `Could not send wakeup request for ${node.data.title}: ${asMessage(wakeupErr)}`,
-            nodeId: node.id
-          });
-        }
-      }
-
-      history.push({
-        id: randomUUID(),
-        timestamp: new Date().toISOString(),
-        level: "action",
-        message: `Step 1 started: ${node.data.title} assigned to ${node.data.agentName ?? 'AI Agent'}. (Concurrency: ${activeCount}/${runSettings.maxConcurrentAgents})`,
-        nodeId: node.id,
-        agentId: node.data.agentId ?? undefined,
-        issueId: node.data.issueId ?? undefined
-      });
     }
   }
 
@@ -829,9 +1387,12 @@ async function startProjectWorkflow(
     pausedAt: null,
     nodeExecutionStates,
     relatedIssueIds,
+    taskMappings,
+    coordinatorIssueIds,
+    projectManagerAgentId: coordinatorNode?.data.agentId ?? null,
     executionHistory: history,
-    workflowSnapshot: workflow,
-    currentStepTitle: firstStepTitle || "Starting workflow",
+    workflowSnapshot: structuredClone(workflow),
+    currentStepTitle: "Starting workflow",
     updatedAt: now
   };
 
@@ -844,7 +1405,10 @@ async function startProjectWorkflow(
     metadata: { runId, projectId, requirement: cleanReq.slice(0, 100) }
   });
 
-  return { run: runRecord };
+  // All dispatches, including the very first one, must pass through the same
+  // server-side gate. Persist the immutable snapshot before requesting any
+  // wakeup so an issue-scoped adapter can resolve ownership without a race.
+  return stepWorkflowRun(ctx, companyId, runId, actionContext);
 }
 
 async function stepWorkflowRun(
@@ -999,6 +1563,13 @@ async function stepWorkflowRun(
 
         if (node.data.kind === "task") {
           if (state.status === "pending" || state.status === "blocked") {
+            if (stateIssueIds(state).length === 0) {
+              state.status = "blocked";
+              state.lastGateCode = "NO_STAGE_TASKS";
+              state.lastGateReason = "Waiting for the AI Project Manager to create execution tasks for this stage.";
+              modified = true;
+              continue;
+            }
             state.status = "ready";
             modified = true;
             progressed = true;
@@ -1067,7 +1638,15 @@ async function stepWorkflowRun(
       const primaryIssueId = state.issueId;
       const primaryAgentId = state.agentId ?? "";
 
-      if (primaryIssueId && primaryAgentId) {
+      if (!primaryIssueId || stateIssueIds(state).length === 0) {
+        state.status = "blocked";
+        state.lastGateCode = "NO_STAGE_TASKS";
+        state.lastGateReason = "No execution tasks are mapped to this stage yet.";
+        modified = true;
+        continue;
+      }
+
+      if (primaryAgentId) {
         const gate = canExecute({ run, nodeId: node.id, issueId: primaryIssueId, agentId: primaryAgentId });
         if (!gate.allowed) {
           // Record rejection but do not throw — the node stays ready and will be retried next step
@@ -1106,6 +1685,8 @@ async function stepWorkflowRun(
         try {
           await ctx.issues.requestWakeup(iid, companyId, {
             reason: `Workflow run ${runId} - executing step "${state.title}" (enforcement gate passed)`,
+            idempotencyKey: `${runId}:${node.id}:attempt-${state.retryCount}:${iid}`,
+            contextSource: "workflow-execution-gate",
             actorUserId: actionContext?.actor.userId ?? undefined
           });
         } catch (wakeupErr) {
@@ -1136,6 +1717,24 @@ async function stepWorkflowRun(
 
 const plugin = definePlugin({
   async setup(ctx) {
+    // Read-only connectivity check. Never call /run from a health probe.
+    ctx.data.register("ai-runtime-health", async (params) => {
+      requiredString(params.companyId, "companyId");
+      const gateway = (process.env.CODEX_GATEWAY_URL ?? "http://host.docker.internal:8400").replace(/\/$/, "");
+      const checkedAt = new Date().toISOString();
+      try {
+        const response = await fetch(`${gateway}/health`, { signal: AbortSignal.timeout(5000) });
+        const body = await response.json();
+        return {
+          reachable: response.ok && body.status === "ok",
+          checkedAt,
+          reason: response.ok && body.status === "ok" ? null : `Gateway health returned HTTP ${response.status}`
+        };
+      } catch (error) {
+        const cause = (error as { cause?: { code?: string } }).cause;
+        return { reachable: false, checkedAt, reason: cause?.code ?? asMessage(error) };
+      }
+    });
     ctx.data.register("bootstrap", async (params): Promise<BootstrapData> => {
       const companyId = requiredString(params.companyId, "companyId");
       const projectId = optionalString(params.projectId);
@@ -1155,10 +1754,26 @@ const plugin = definePlugin({
       } as unknown as BootstrapData;
     });
 
+    ctx.data.register("company-intelligence", async (params): Promise<CompanyIntelligenceData> => {
+      const companyId = requiredString(params.companyId, "companyId");
+      return readCompanyIntelligence(ctx, companyId, params.range);
+    });
+
     ctx.data.register("workflow", async (params) => {
       const companyId = requiredString(params.companyId, "companyId");
       const workflowId = requiredString(params.workflowId, "workflowId");
-      const workflow = await readWorkflow(ctx, companyId, workflowId);
+      const runId = optionalString(params.runId);
+      let workflow = await readWorkflow(ctx, companyId, workflowId);
+      if (!workflow && runId) {
+        const runRecord = await readRun(ctx, companyId, runId);
+        if (runRecord?.workflowSnapshot) {
+          workflow = runRecord.workflowSnapshot;
+          await ctx.state.set(
+            { scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: workflowKey(workflowId) },
+            workflow
+          );
+        }
+      }
       if (!workflow) throw new Error("Workflow not found");
       return { workflow, monitor: await monitorWorkflow(ctx, workflow) };
     });
@@ -1184,9 +1799,132 @@ const plugin = definePlugin({
         agents: agents as unknown as ProjectWorkflowData["agents"],
         issues: issues as unknown as ProjectWorkflowData["issues"],
         binding,
-        monitor: binding ? await monitorWorkflow(ctx, binding.workflow) : [],
+        monitor: binding ? await monitorWorkflow(ctx, binding.workflow, activeRun) : [],
         activeRun,
         recentRuns
+      };
+    });
+
+    ctx.data.register("portfolio-dashboard", async (params): Promise<ProjectPortfolioData> => {
+      const companyId = requiredString(params.companyId, "companyId");
+      const [projectsList, workflows, agents, allRuns] = await Promise.all([
+        ctx.projects.list({ companyId, limit: 200, offset: 0 }),
+        readIndex(ctx, companyId),
+        ctx.agents.list({ companyId, limit: 200, offset: 0 }),
+        readRunsIndex(ctx, companyId)
+      ]);
+
+      const items: ProjectPortfolioItem[] = await Promise.all(
+        projectsList.map(async (project) => {
+          const binding = await readProjectBinding(ctx, project.id);
+          const projectRuns = allRuns.filter((r) => r.projectId === project.id);
+          const activeSummary = projectRuns.find(
+            (r) => r.status === "running" || r.status === "waiting_approval" || r.status === "paused"
+          );
+          const latestRunSummary = projectRuns[0] ?? null;
+
+          let activeRun: ProjectPortfolioActiveRun | null = null;
+          if (activeSummary) {
+            const run = await readRun(ctx, companyId, activeSummary.id);
+            if (run) {
+              const states = Object.values(run.nodeExecutionStates ?? {});
+              const executableStates = states.filter(
+                (s) => s.kind === "task" || s.kind === "approval"
+              );
+              const completedCount = executableStates.filter((s) => s.status === "done").length;
+              const totalCount = executableStates.length || 1;
+              const progress = Math.min(100, Math.round((completedCount / totalCount) * 100));
+
+              const activeStates = executableStates.filter(
+                (s) => s.status === "running" || s.status === "waiting_approval"
+              );
+              const currentStages = activeStates.length > 0
+                ? activeStates.map((s) => s.title)
+                : run.currentStepTitle ? [run.currentStepTitle] : [];
+
+              const activeAgentsMap = new Map<string, { id: string; name: string; role?: string }>();
+              for (const s of activeStates) {
+                if (s.agentId && s.agentName) {
+                  activeAgentsMap.set(s.agentId, {
+                    id: s.agentId,
+                    name: s.agentName,
+                    role: s.agentRole ?? undefined
+                  });
+                }
+              }
+              const activeAgents = [...activeAgentsMap.values()];
+
+              let waitingOrBlockedReason: string | null = null;
+              if (run.status === "waiting_approval") {
+                const approvalState = activeStates.find((s) => s.status === "waiting_approval");
+                waitingOrBlockedReason = approvalState
+                  ? `Waiting for approval on "${approvalState.title}"`
+                  : "Waiting for human approval";
+              } else if (run.status === "paused") {
+                waitingOrBlockedReason = "Workflow paused by operator";
+              } else {
+                const blockedState = states.find((s) => s.status === "blocked");
+                if (blockedState) {
+                  waitingOrBlockedReason = blockedState.lastGateReason || `Step "${blockedState.title}" blocked`;
+                } else {
+                  const failedState = states.find((s) => s.status === "failed");
+                  if (failedState) {
+                    waitingOrBlockedReason = `Step "${failedState.title}" failed: ${failedState.error || "unknown error"}`;
+                  }
+                }
+              }
+
+              const history = run.executionHistory ?? [];
+              const latestLog = history.length > 0 ? history[history.length - 1] : null;
+
+              activeRun = {
+                id: run.id,
+                status: run.status,
+                progress,
+                completedSteps: completedCount,
+                totalSteps: totalCount,
+                startedAt: run.startedAt,
+                currentStages,
+                activeAgents,
+                waitingOrBlockedReason,
+                lastActivityAt: latestLog?.timestamp ?? run.updatedAt ?? run.startedAt,
+                lastActivitySummary: latestLog?.message ?? (currentStages.length > 0 ? `Executing ${currentStages.join(", ")}` : undefined)
+              };
+            }
+          }
+
+          const workflowBinding = binding
+            ? {
+                templateId: binding.templateId,
+                templateName: binding.templateName,
+                templateVersion: binding.templateVersion,
+                status: binding.workflow.status,
+                totalTasks: binding.workflow.nodes.filter(
+                  (n) => n.data.kind === "task" || n.data.kind === "approval"
+                ).length
+              }
+            : null;
+
+          return {
+            projectId: project.id,
+            projectName: project.name,
+            projectDescription: (project as any).description ?? null,
+            projectStatus: (project as any).status ?? "active",
+            workflowBinding,
+            activeRun,
+            latestRunSummary,
+            taskCount: workflowBinding?.totalTasks ?? (project as any).taskCount ?? 0,
+            completedTaskCount: activeRun?.completedSteps ?? latestRunSummary?.completedTasks ?? 0,
+            lastUpdatedAt: activeRun?.lastActivityAt ?? latestRunSummary?.finishedAt ?? (project as any).updatedAt ?? new Date().toISOString()
+          };
+        })
+      );
+
+      return {
+        companyId,
+        items,
+        workflows,
+        agents: agents as unknown as PaperclipAgent[]
       };
     });
 
@@ -1202,7 +1940,7 @@ const plugin = definePlugin({
       const runId = requiredString(params.runId, "runId");
       const run = await readRun(ctx, companyId, runId);
       if (!run) throw new Error("Workflow run not found");
-      const monitor = await monitorWorkflow(ctx, run.workflowSnapshot);
+      const monitor = await monitorWorkflow(ctx, run.workflowSnapshot, run);
       return { run, monitor };
     });
 
@@ -1287,7 +2025,7 @@ const plugin = definePlugin({
         projectId,
         version: 1,
         status: "draft",
-        nodes: template.nodes.map((node) => ({ ...node, data: { ...node.data, issueId: null, issueIdentifier: null, status: "draft" } })),
+        nodes: template.nodes.map((node) => ({ ...node, data: { ...node.data, issueId: null, issueIdentifier: null, issueIds: [], status: "draft" } })),
         publishedIssueIds: [],
         publishedDependencies: {},
         createdAt: now,
@@ -1304,6 +2042,10 @@ const plugin = definePlugin({
         updatedAt: now
       };
       await persistProjectBinding(ctx, binding);
+      await ctx.state.set(
+        { scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: workflowKey(workflow.id) },
+        workflow
+      );
       return { binding, validation: validateGraph(workflow) };
     });
 
@@ -1318,7 +2060,13 @@ const plugin = definePlugin({
         binding.workflow,
         Number(params.expectedVersion),
         actionContext,
-        async (workflow) => persistProjectBinding(ctx, { ...binding, workflow, updatedAt: new Date().toISOString() })
+        async (workflow) => {
+          await persistProjectBinding(ctx, { ...binding, workflow, updatedAt: new Date().toISOString() });
+          await ctx.state.set(
+            { scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: workflowKey(workflow.id) },
+            workflow
+          );
+        }
       );
       return result;
     });
@@ -1347,7 +2095,7 @@ const plugin = definePlugin({
         projectId: null,
         version: 1,
         status: "draft",
-        nodes: source.nodes.map((node) => ({ ...node, data: { ...node.data, issueId: null, issueIdentifier: null, status: "draft" } })),
+        nodes: source.nodes.map((node) => ({ ...node, data: { ...node.data, issueId: null, issueIdentifier: null, issueIds: [], status: "draft" } })),
         publishedIssueIds: [],
         publishedDependencies: {},
         createdAt: now,
@@ -1423,6 +2171,60 @@ const plugin = definePlugin({
       const settings = (params.settings && typeof params.settings === "object" ? params.settings : {}) as WorkflowRunSettings;
       return startProjectWorkflow(ctx, companyId, projectId, workflowId, inputRequirement, settings, actionContext);
     });
+
+    ctx.actions.register("create-stage-tasks", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const nodeId = requiredString(params.workflowNodeId ?? params.nodeId, "workflowNodeId");
+      return createStageExecutionTasks(ctx, companyId, runId, nodeId, params.tasks, {
+        actorUserId: actionContext.actor.userId,
+        actorAgentId: actionContext.actor.agentId,
+        actorRunId: actionContext.actor.runId
+      });
+    });
+
+    ctx.tools.register(
+      "create-execution-tasks",
+      {
+        displayName: "Create Workflow Execution Tasks",
+        description: "Create concrete AI execution tasks for an existing workflow stage. Tasks are mapped to the Workflow Run and remain blocked until predecessor stages complete.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            workflowRunId: { type: "string" },
+            workflowNodeId: { type: "string" },
+            tasks: {
+              type: "array",
+              minItems: 1,
+              items: {
+                type: "object",
+                properties: {
+                  taskKey: { type: "string" },
+                  title: { type: "string" },
+                  description: { type: "string" },
+                  priority: { type: "string" },
+                  assigneeAgentId: { type: ["string", "null"] }
+                },
+                required: ["taskKey", "title"]
+              }
+            }
+          },
+          required: ["workflowRunId", "workflowNodeId", "tasks"]
+        }
+      },
+      async (params, toolContext) => {
+        const input = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
+        const result = await createStageExecutionTasks(
+          ctx,
+          toolContext.companyId,
+          requiredString(input.workflowRunId, "workflowRunId"),
+          requiredString(input.workflowNodeId, "workflowNodeId"),
+          input.tasks,
+          { actorAgentId: toolContext.agentId, actorRunId: toolContext.runId }
+        );
+        return { content: `Mapped ${result.tasks.length} execution task(s) to ${result.stage}.`, data: result };
+      }
+    );
 
     ctx.actions.register("step-workflow-run", async (params, actionContext) => {
       const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
@@ -1537,6 +2339,69 @@ const plugin = definePlugin({
       return stepWorkflowRun(ctx, companyId, runId, actionContext);
     });
 
+    ctx.actions.register("register-node-issue", async (params, actionContext) => {
+      const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
+      const runId = requiredString(params.runId, "runId");
+      const nodeId = requiredString(params.nodeId, "nodeId");
+      const issueId = requiredString(params.issueId, "issueId");
+      const run = await readRun(ctx, companyId, runId);
+      if (!run || !["running", "waiting_approval", "paused"].includes(run.status)) {
+        throw new Error("Additional work can only be registered against an active Workflow Run.");
+      }
+      const state = run.nodeExecutionStates[nodeId];
+      const snapshotNode = run.workflowSnapshot.nodes.find((node) => node.id === nodeId);
+      if (!state || !snapshotNode || snapshotNode.data.kind !== "task") {
+        throw new Error("Additional issues may only be registered inside an existing task stage.");
+      }
+      if (["done", "failed", "cancelled", "skipped"].includes(state.status)) {
+        throw new Error(`Stage "${state.title}" is already terminal and cannot accept new work without an approved run revision.`);
+      }
+      const existingOwner = await resolveActiveIssueOwnership(ctx, companyId, issueId);
+      if (existingOwner && (existingOwner.run.id !== runId || existingOwner.nodeId !== nodeId)) {
+        throw new Error(`Issue ${issueId} is already owned by another active Workflow Run node.`);
+      }
+      const issue = await ctx.issues.get(issueId, companyId);
+      if (!issue || issue.projectId !== run.projectId) {
+        throw new Error("Issue must exist in the same project as the Workflow Run.");
+      }
+      if (state.agentId && issue.assigneeAgentId !== state.agentId) {
+        throw new Error(`Issue must be assigned to the stage agent ${state.agentId}; cross-stage reassignment is not permitted.`);
+      }
+
+      const predecessorIssueIds = state.blockedByNodeIds.flatMap((predecessorId) => {
+        const predecessor = run.nodeExecutionStates[predecessorId];
+        return predecessor?.issueIds?.length ? predecessor.issueIds : (predecessor?.issueId ? [predecessor.issueId] : []);
+      });
+      const relations = await ctx.issues.relations.get(issueId, companyId);
+      const requiredBlockers = [...new Set([...relations.blockedBy.map((item) => item.id), ...predecessorIssueIds])];
+      await ctx.issues.relations.setBlockedBy(issueId, requiredBlockers, companyId, {
+        actorUserId: actionContext.actor.userId,
+        actorAgentId: actionContext.actor.agentId,
+        actorRunId: actionContext.actor.runId
+      });
+
+      if (!state.issueIds.includes(issueId)) state.issueIds.push(issueId);
+      if (issue.identifier && !state.issueIdentifiers.includes(issue.identifier)) state.issueIdentifiers.push(issue.identifier);
+      if (!state.issueId) {
+        state.issueId = issueId;
+        state.issueIdentifier = issue.identifier ?? null;
+      }
+      if (!run.relatedIssueIds.includes(issueId)) run.relatedIssueIds.push(issueId);
+      const now = new Date().toISOString();
+      run.executionHistory.push({
+        id: randomUUID(),
+        timestamp: now,
+        level: "action",
+        message: `Registered ${issue.identifier ?? issueId} inside stage "${state.title}". Completion policy remains ${state.completionPolicy}; stage successors stay blocked until the policy is satisfied.`,
+        nodeId,
+        agentId: state.agentId ?? undefined,
+        issueId
+      });
+      run.updatedAt = now;
+      await persistRun(ctx, run);
+      return { run, node: state, issueId, blockedByIssueIds: requiredBlockers };
+    });
+
     ctx.actions.register("decide-run-approval", async (params, actionContext) => {
       const companyId = requiredString(actionContext.companyId ?? params.companyId, "companyId");
       const runId = requiredString(params.runId, "runId");
@@ -1581,36 +2446,16 @@ const plugin = definePlugin({
     // ── can-execute: adapter calls this before checkout to confirm gate ───────
     ctx.actions.register("can-execute", async (params) => {
       const companyId = requiredString(params.companyId, "companyId");
-      const nodeId = requiredString(params.nodeId, "nodeId");
       const issueId = requiredString(params.issueId, "issueId");
       const agentId = requiredString(params.agentId, "agentId");
       const runId = optionalString(params.runId);
-
-      // Find the active run that owns this issue
-      let run: WorkflowRunRecord | null = null;
-      if (runId) {
-        run = await readRun(ctx, companyId, runId);
-      } else {
-        const index = await readRunsIndex(ctx, companyId);
-        const active = index.find((r) => r.status === "running" || r.status === "waiting_approval" || r.status === "paused");
-        if (active) run = await readRun(ctx, companyId, active.id);
+      const requestedNodeId = optionalString(params.nodeId);
+      const ownership = await resolveActiveIssueOwnership(ctx, companyId, issueId, runId);
+      if (!ownership) {
+        return { allowed: true, code: "NO_ACTIVE_RUN", reason: "Issue is not owned by any active Workflow Run — independent task, gate passes." };
       }
-
-      // If there is no active run owning this issue, allow it (independent task)
-      if (!run) {
-        // Check if any active run owns this issueId
-        const index = await readRunsIndex(ctx, companyId);
-        for (const summary of index) {
-          if (summary.status !== "running" && summary.status !== "waiting_approval" && summary.status !== "paused") continue;
-          const candidate = await readRun(ctx, companyId, summary.id);
-          if (!candidate) continue;
-          const owned = Object.values(candidate.nodeExecutionStates).some((s) => s.issueId === issueId || s.issueIds.includes(issueId));
-          if (owned) { run = candidate; break; }
-        }
-        if (!run) {
-          return { allowed: true, code: "NO_ACTIVE_RUN", reason: "Issue is not owned by any active Workflow Run — independent task, gate passes." };
-        }
-      }
+      const { run } = ownership;
+      const nodeId = requestedNodeId ?? ownership.nodeId;
 
       const gate = canExecute({ run, nodeId, issueId, agentId });
       const audit = buildAuditEntry(run.id, nodeId, issueId, agentId, gate);
@@ -1653,51 +2498,104 @@ const plugin = definePlugin({
 
       if (action === "resume-all") {
         const results = await Promise.allSettled(
-          agents.filter((a) => a.status === "paused").map((a) => ctx.agents.resume(a.id, companyId))
+          agents.filter((a) => a.status === "paused" || a.status === "error").map(async (a) => {
+            if (a.status === "error") {
+              try { await ctx.agents.pause(a.id, companyId); } catch {}
+            }
+            return ctx.agents.resume(a.id, companyId);
+          })
         );
         return { action, count: results.filter((r) => r.status === "fulfilled").length };
       }
 
       if (action === "start-all") {
-        // ENFORCEMENT: Collect all issueIds owned by an active Workflow Run that
-        // are NOT yet in "ready" or "running" status inside the run. These must
-        // NOT be woken by Start All — the DAG orchestrator is the only authority.
+        // 1. Resume any paused or errored agents so all 8 agents are active and ready
+        let resumedAgentsCount = 0;
+        const pausedOrErrorAgents = agents.filter((a) => a.status === "paused" || a.status === "error");
+        if (pausedOrErrorAgents.length > 0) {
+          const resumeResults = await Promise.allSettled(
+            pausedOrErrorAgents.map(async (a) => {
+              if (a.status === "error") {
+                try { await ctx.agents.pause(a.id, companyId); } catch {}
+              }
+              return ctx.agents.resume(a.id, companyId);
+            })
+          );
+          resumedAgentsCount = resumeResults.filter((r) => r.status === "fulfilled").length;
+        }
+
+        // 2. Advance any active workflow runs
         const allRuns = await readRunsIndex(ctx, companyId);
-        const blockedByRun = new Set<string>();
-        for (const summary of allRuns) {
-          if (summary.status !== "running" && summary.status !== "waiting_approval" && summary.status !== "paused") continue;
-          const run = await readRun(ctx, companyId, summary.id);
-          if (!run) continue;
-          for (const state of Object.values(run.nodeExecutionStates)) {
-            const ownedIds = state.issueIds.length > 0 ? state.issueIds : (state.issueId ? [state.issueId] : []);
-            // If the node is not "ready" or "running", it must not be woken externally
-            if (!["ready", "running"].includes(state.status)) {
-              for (const iid of ownedIds) blockedByRun.add(iid);
-            }
+        const activeRuns = allRuns.filter((r) => r.status === "running" || r.status === "paused" || r.status === "waiting_approval");
+        let steppedRunsCount = 0;
+        for (const runSummary of activeRuns) {
+          try {
+            await stepWorkflowRun(ctx, companyId, runSummary.id, actionContext);
+            steppedRunsCount += 1;
+          } catch {
+            // ignore step error
           }
         }
 
+        // 3. Dispatch any runnable tasks
         const issues = await ctx.issues.list({ companyId, limit: 500, offset: 0 });
-        const runnable = issues.filter((i) =>
-          i.assigneeAgentId &&
-          ["todo", "backlog"].includes(i.status) &&
-          !blockedByRun.has(i.id)  // ← Gate: skip run-owned but dependency-blocked tasks
-        );
-        const skippedCount = issues.filter((i) => i.assigneeAgentId && ["todo", "backlog"].includes(i.status) && blockedByRun.has(i.id)).length;
+        const runnable: Issue[] = [];
+        let skippedCount = 0;
+        for (const issue of issues) {
+          if (!issue.assigneeAgentId || !["todo", "backlog", "in_progress"].includes(issue.status)) continue;
+          const ownership = await resolveActiveIssueOwnership(ctx, companyId, issue.id);
+          if (ownership) {
+            const gate = canExecute({
+              run: ownership.run,
+              nodeId: ownership.nodeId,
+              issueId: issue.id,
+              agentId: issue.assigneeAgentId
+            });
+            if (gate.allowed) {
+              runnable.push(issue);
+            } else {
+              skippedCount += 1;
+            }
+            continue;
+          }
+          runnable.push(issue);
+        }
 
         const results = await Promise.allSettled(
           runnable.map((issue) =>
             ctx.issues.requestWakeup(issue.id, companyId, {
               reason: "Agent Control Center: Start All requested (Execution Gate cleared)",
+              idempotencyKey: `start-all:${issue.id}:${Date.now()}`,
+              contextSource: "agent-control-start-all",
               actorUserId: actionContext.actor.userId
             })
           )
         );
+        const wokeCount = results.filter((r) => r.status === "fulfilled").length;
+        const totalActive = wokeCount + steppedRunsCount;
+
+        let message = "";
+        let noActiveWorkflow = false;
+
+        if (totalActive > 0) {
+          message = `Started: ${wokeCount} task(s) dispatched, ${steppedRunsCount} workflow run(s) advanced.${resumedAgentsCount > 0 ? ` Resumed ${resumedAgentsCount} agents.` : ""}`;
+        } else if (resumedAgentsCount > 0) {
+          message = `Resumed ${resumedAgentsCount} AI agents. No workflow is currently running. Opening Workflow runner...`;
+          noActiveWorkflow = true;
+        } else {
+          message = `All 8 AI agents are active and ready. No workflow is currently running. Opening Workflow runner...`;
+          noActiveWorkflow = true;
+        }
+
         return {
           action,
-          count: results.filter((r) => r.status === "fulfilled").length,
+          count: totalActive,
+          resumedAgentsCount,
+          wokeCount,
+          steppedRunsCount,
           skippedDueToWorkflowGate: skippedCount,
-          message: skippedCount > 0 ? `${skippedCount} task(s) skipped — they are owned by an active Workflow Run and must be dispatched by the DAG orchestrator in dependency order.` : undefined
+          noActiveWorkflow,
+          message
         };
       }
 
@@ -1711,15 +2609,23 @@ const plugin = definePlugin({
       if (action === "retry-failed") {
         const issues = await ctx.issues.list({ companyId, limit: 500, offset: 0 });
         const failed = issues.filter((i) => i.assigneeAgentId && (i.status === "cancelled" || i.status === "blocked"));
+        const independentFailed: Issue[] = [];
+        let skippedDueToWorkflowGate = 0;
+        for (const issue of failed) {
+          if (await resolveActiveIssueOwnership(ctx, companyId, issue.id)) skippedDueToWorkflowGate += 1;
+          else independentFailed.push(issue);
+        }
         const results = await Promise.allSettled(
-          failed.map((issue) =>
+          independentFailed.map((issue) =>
             ctx.issues.requestWakeup(issue.id, companyId, {
               reason: "Agent Control Center: Retry Failed requested",
+              idempotencyKey: `retry-failed:${issue.id}:${issue.updatedAt instanceof Date ? issue.updatedAt.toISOString() : String(issue.updatedAt ?? "unknown")}`,
+              contextSource: "agent-control-retry-failed",
               actorUserId: actionContext.actor.userId
             })
           )
         );
-        return { action, count: results.filter((r) => r.status === "fulfilled").length };
+        return { action, count: results.filter((r) => r.status === "fulfilled").length, skippedDueToWorkflowGate };
       }
 
       if (action === "agent-pause" && agentId) {
@@ -1728,11 +2634,24 @@ const plugin = definePlugin({
       }
 
       if (action === "agent-resume" && agentId) {
+        const target = agents.find((a) => a.id === agentId);
+        if (target?.status === "error") {
+          try { await ctx.agents.pause(agentId, companyId); } catch {}
+        }
         const agent = await ctx.agents.resume(agentId, companyId);
         return { action, agent };
       }
 
       if (action === "agent-wakeup" && agentId) {
+        // Resume agent if it is currently paused or in error
+        const target = agents.find((a) => a.id === agentId);
+        if (target && (target.status === "paused" || target.status === "error")) {
+          if (target.status === "error") {
+            try { await ctx.agents.pause(agentId, companyId); } catch {}
+          }
+          try { await ctx.agents.resume(agentId, companyId); } catch {}
+        }
+
         // ENFORCEMENT: If the target issue belongs to an active run, gate must allow it
         const targetIssueId = issueId ?? (() => {
           // Will be resolved below per-issue
@@ -1780,7 +2699,7 @@ const plugin = definePlugin({
             reason: `Agent Control Center: Wakeup requested for ${agentId} (gate cleared)`,
             actorUserId: actionContext.actor.userId
           });
-          return { action, res, allowed: true };
+          return { action, res, allowed: true, message: "Agent task wake requested successfully" };
         } else {
           // No explicit issueId: find a runnable issue that is NOT blocked by workflow gate
           const issues = await ctx.issues.list({ companyId, assigneeAgentId: agentId, limit: 50, offset: 0 });
@@ -1806,10 +2725,14 @@ const plugin = definePlugin({
                 reason: `Agent Control Center: Wakeup requested for ${agentId} (gate cleared)`,
                 actorUserId: actionContext.actor.userId
               });
-              return { action, res, issueId: candidate.id, allowed: true };
+              return { action, res, issueId: candidate.id, allowed: true, message: `Task ${candidate.identifier ?? candidate.id} dispatched to agent.` };
             }
           }
-          return { action, message: "No runnable issue available for this agent that passes the Workflow Execution Gate", allowed: false };
+          return {
+            action,
+            allowed: false,
+            message: "Agent is active and ready. No task is currently assigned to this agent — start a Project Workflow to generate and dispatch work in DAG order."
+          };
         }
       }
 
