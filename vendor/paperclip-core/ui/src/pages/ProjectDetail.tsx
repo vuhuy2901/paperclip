@@ -38,10 +38,33 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { Tabs } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { classifyIssue } from "../lib/issue-classification";
 import { sortWorkflowIssues } from "../lib/workflow-sort";
-import { AlertCircle, CheckCircle2, Clock, XCircle, Activity, Bot, ExternalLink } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  XCircle,
+  Activity,
+  Bot,
+  ExternalLink,
+  LayoutGrid,
+  ListTodo,
+  FileCode2,
+  Users,
+  Settings,
+  DollarSign,
+  History,
+  Wrench,
+  ChevronDown,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Card, CardContent } from "@/components/ui/card";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
@@ -54,7 +77,26 @@ import {
 
 /* ── Top-level tab types ── */
 
-type ProjectBaseTab = "overview" | "structure" | "list" | "advanced" | "plugin-operations" | "workspaces" | "configuration" | "budget";
+type ProjectBaseTab =
+  | "overview"
+  | "activity"
+  | "tasks"
+  | "outputs"
+  | "team"
+  | "settings"
+  | "budget"
+  | "history"
+  | "diagnostics"
+  | "plugin-operations"
+  | "workspaces"
+  // Legacy aliases
+  | "live-monitor"
+  | "structure"
+  | "contributions"
+  | "list"
+  | "logs"
+  | "advanced"
+  | "configuration";
 type ProjectPluginTab = `plugin:${string}`;
 type ProjectTab = ProjectBaseTab | ProjectPluginTab;
 
@@ -65,14 +107,17 @@ function isProjectPluginTab(value: string | null): value is ProjectPluginTab {
 function resolveProjectTab(pathname: string, projectId: string): ProjectTab | null {
   const segments = pathname.split("/").filter(Boolean);
   const projectsIdx = segments.indexOf("projects");
-  if (projectsIdx === -1 || segments[projectsIdx + 1] !== projectId) return null;
+  if (projectsIdx === -1) return null;
   const tab = segments[projectsIdx + 2];
   if (tab === "overview") return "overview";
-  if (tab === "structure") return "structure";
-  if (tab === "advanced") return "advanced";
-  if (tab === "configuration") return "configuration";
+  if (tab === "activity" || tab === "live-monitor") return "activity";
+  if (tab === "tasks" || tab === "issues" || tab === "list") return "list";
+  if (tab === "outputs" || tab === "structure") return "outputs";
+  if (tab === "team" || tab === "contributions") return "team";
+  if (tab === "settings" || tab === "configuration") return "configuration";
   if (tab === "budget") return "budget";
-  if (tab === "issues") return "list";
+  if (tab === "history" || tab === "logs") return "history";
+  if (tab === "diagnostics" || tab === "advanced") return "advanced";
   if (tab === "plugin-operations") return "plugin-operations";
   if (tab === "workspaces") return "workspaces";
   return null;
@@ -292,7 +337,7 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
               <AlertCircle className="h-3.5 w-3.5 text-blue-500" />
-              Yêu cầu của Product Owner ({projectRequirements.length})
+              Product Owner Requirements ({projectRequirements.length})
             </span>
           </div>
           <div className="flex flex-col gap-2">
@@ -323,7 +368,7 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
                         to={`/issues/${req.id}`}
                         className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline font-medium px-2 py-1 rounded hover:bg-primary/10 border border-primary/20"
                       >
-                        <span>Chi tiết & Logs</span>
+                        <span>Details & Logs</span>
                         <ExternalLink className="h-3 w-3" />
                       </Link>
                     </div>
@@ -333,13 +378,13 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
                     {assignedAgent && (
                       <span className="flex items-center gap-1">
                         <Bot className="h-3 w-3 text-primary" />
-                        Người nhận: <span className="font-medium text-foreground">{assignedAgent.name}</span>
+                        Assignee: <span className="font-medium text-foreground">{assignedAgent.name}</span>
                       </span>
                     )}
                     {req.createdAt && (
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />
-                        Gửi lúc: <span className="font-medium">{new Date(req.createdAt).toLocaleString()}</span>
+                        Created: <span className="font-medium">{new Date(req.createdAt).toLocaleString()}</span>
                       </span>
                     )}
                   </div>
@@ -348,10 +393,10 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
                     <div className="text-[11px] text-red-600 dark:text-red-400 flex flex-col gap-1 bg-red-500/10 px-3 py-2 rounded border border-red-500/20">
                       <div className="flex items-center gap-1.5 font-semibold">
                         <XCircle className="h-3.5 w-3.5 shrink-0" />
-                        <span>Thực thi thất bại: {(req as any).executionBlocker?.runError || "Mở Logs để xem lỗi của lần chạy."}</span>
+                        <span>Execution Failed: {(req as any).executionBlocker?.runError || "Open logs to inspect error details."}</span>
                       </div>
                       <div className="text-muted-foreground text-[10px] pl-5">
-                        Xem Logs để xác định nguyên nhân và hành động tiếp theo.
+                        Inspect logs to determine cause and remediation actions.
                       </div>
                     </div>
                   )}
@@ -368,7 +413,7 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
               <Activity className="h-3.5 w-3.5 text-primary" />
-              Tiến độ các giai đoạn Workflow ({workflowStages.filter(s => s.status === "done").length}/{workflowStages.length} hoàn thành)
+              Workflow Stages Progress ({workflowStages.filter(s => s.status === "done").length}/{workflowStages.length} completed)
             </span>
           </div>
           <div className="flex flex-col gap-1 rounded-lg border p-2 bg-muted/10">
@@ -396,7 +441,7 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
                   </span>
                 )}
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border shrink-0 ${stageStatusColor(stage.status)}`}>
-                  {stage.status === "in_progress" ? "Đang chạy" : stage.status === "done" ? "Hoàn thành" : stage.status === "blocked" ? "Bị chặn" : "Chờ kích hoạt"}
+                  {stage.status === "in_progress" ? "Running" : stage.status === "done" ? "Completed" : stage.status === "blocked" ? "Blocked" : "Pending"}
                 </span>
               </div>
             ))}
@@ -412,32 +457,22 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
         <div className="px-4 pt-3 pb-1 flex items-center justify-between">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
             <Bot className="h-3.5 w-3.5 text-primary" />
-            Danh sách Task thực thi do AI tạo ({taskListIssues.length})
+            AI Execution Tasks ({taskListIssues.length})
           </span>
         </div>
 
-        {taskListIssues.length === 0 ? (
-          <div className="mx-4 my-4 p-8 rounded-lg border border-dashed border-border/70 text-center bg-muted/15 flex flex-col items-center justify-center">
-            <Bot className="h-8 w-8 mb-2.5 text-muted-foreground/50" />
-            <p className="text-sm font-medium text-foreground">Chưa có Task thực thi AI nào</p>
-            <p className="text-xs text-muted-foreground mt-1 max-w-md">
-              AI Project Manager và các AI Agent sẽ tự động lập kế hoạch, phân rã yêu cầu thành các Task cụ thể khi các giai đoạn Workflow được kích hoạt.
-            </p>
-          </div>
-        ) : (
-          <IssuesList
-            issues={taskListIssues}
-            isLoading={isLoading}
-            error={error as Error | null}
-            agents={agents}
-            projects={projects}
-            liveIssueIds={liveIssueIds}
-            projectId={projectId}
-            viewStateKey="paperclip:project-issues-view"
-            onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
-            defaultSortField="workflow"
-          />
-        )}
+        <IssuesList
+          issues={taskListIssues}
+          isLoading={isLoading}
+          error={error as Error | null}
+          agents={agents}
+          projects={projects}
+          liveIssueIds={liveIssueIds}
+          projectId={projectId}
+          viewStateKey="paperclip:project-issues-view"
+          onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
+          defaultSortField="workflow"
+        />
       </div>
     </div>
   );
@@ -704,20 +739,32 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(activeTab)}`, { replace: true });
       return;
     }
-    if (activeTab === "configuration") {
-      navigate(`/projects/${canonicalProjectRef}/configuration`, { replace: true });
+    if (activeTab === "settings" || activeTab === "configuration") {
+      navigate(`/projects/${canonicalProjectRef}/${location.pathname.endsWith("/configuration") ? "configuration" : "settings"}`, { replace: true });
       return;
     }
     if (activeTab === "overview") {
       navigate(`/projects/${canonicalProjectRef}/overview`, { replace: true });
       return;
     }
-    if (activeTab === "structure") {
-      navigate(`/projects/${canonicalProjectRef}/structure`, { replace: true });
+    if (activeTab === "activity" || activeTab === "live-monitor") {
+      navigate(`/projects/${canonicalProjectRef}/activity`, { replace: true });
       return;
     }
-    if (activeTab === "advanced") {
-      navigate(`/projects/${canonicalProjectRef}/advanced`, { replace: true });
+    if (activeTab === "outputs" || activeTab === "structure") {
+      navigate(`/projects/${canonicalProjectRef}/outputs`, { replace: true });
+      return;
+    }
+    if (activeTab === "team" || activeTab === "contributions") {
+      navigate(`/projects/${canonicalProjectRef}/team`, { replace: true });
+      return;
+    }
+    if (activeTab === "history" || activeTab === "logs") {
+      navigate(`/projects/${canonicalProjectRef}/history`, { replace: true });
+      return;
+    }
+    if (activeTab === "diagnostics" || activeTab === "advanced") {
+      navigate(`/projects/${canonicalProjectRef}/diagnostics`, { replace: true });
       return;
     }
     if (activeTab === "budget") {
@@ -732,14 +779,15 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/workspaces`, { replace: true });
       return;
     }
-    if (activeTab === "list") {
+    if (activeTab === "tasks" || activeTab === "list") {
       if (filter) {
-        navigate(`/projects/${canonicalProjectRef}/issues/${filter}`, { replace: true });
+        navigate(`/projects/${canonicalProjectRef}/tasks/${filter}`, { replace: true });
         return;
       }
-      navigate(`/projects/${canonicalProjectRef}/issues`, { replace: true });
+      navigate(`/projects/${canonicalProjectRef}/tasks`, { replace: true });
       return;
     }
+    navigate(`/projects/${canonicalProjectRef}/overview`, { replace: true });
     navigate(`/projects/${canonicalProjectRef}`, { replace: true });
   }, [project, routeProjectRef, canonicalProjectRef, activeTab, filter, navigate, location.pathname]);
 
@@ -880,6 +928,27 @@ export function ProjectDetail() {
   const projectStarPending = projectMembershipPending && membershipMutation.variables?.starred !== undefined;
   const projectJoinLeavePending = projectMembershipPending && membershipMutation.variables?.starred === undefined;
 
+  const isSecondaryTabActive = [
+    "settings",
+    "configuration",
+    "budget",
+    "history",
+    "logs",
+    "diagnostics",
+    "advanced",
+  ].includes(activeTab ?? "");
+
+  const moreButtonLabel =
+    activeTab === "settings" || activeTab === "configuration"
+      ? "More: Settings"
+      : activeTab === "budget"
+      ? "More: Budget"
+      : activeTab === "history" || activeTab === "logs"
+      ? "More: History"
+      : activeTab === "diagnostics" || activeTab === "advanced"
+      ? "More: Diagnostics"
+      : "More";
+
   const handleTabChange = (tab: ProjectTab) => {
     // Cache the active tab per project
     if (project?.id) {
@@ -893,18 +962,24 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/workspaces`);
     } else if (tab === "overview") {
       navigate(`/projects/${canonicalProjectRef}/overview`);
-    } else if (tab === "structure") {
-      navigate(`/projects/${canonicalProjectRef}/structure`);
-    } else if (tab === "advanced") {
-      navigate(`/projects/${canonicalProjectRef}/advanced`);
+    } else if (tab === "activity" || tab === "live-monitor") {
+      navigate(`/projects/${canonicalProjectRef}/activity`);
+    } else if (tab === "outputs" || tab === "structure") {
+      navigate(`/projects/${canonicalProjectRef}/outputs`);
+    } else if (tab === "team" || tab === "contributions") {
+      navigate(`/projects/${canonicalProjectRef}/team`);
+    } else if (tab === "history" || tab === "logs") {
+      navigate(`/projects/${canonicalProjectRef}/history`);
+    } else if (tab === "diagnostics" || tab === "advanced") {
+      navigate(`/projects/${canonicalProjectRef}/diagnostics`);
     } else if (tab === "budget") {
       navigate(`/projects/${canonicalProjectRef}/budget`);
     } else if (tab === "plugin-operations") {
       navigate(`/projects/${canonicalProjectRef}/plugin-operations`);
-    } else if (tab === "configuration") {
-      navigate(`/projects/${canonicalProjectRef}/configuration`);
+    } else if (tab === "settings" || tab === "configuration") {
+      navigate(`/projects/${canonicalProjectRef}/settings`);
     } else {
-      navigate(`/projects/${canonicalProjectRef}/issues`);
+      navigate(`/projects/${canonicalProjectRef}/tasks`);
     }
   };
 
@@ -989,15 +1064,17 @@ export function ProjectDetail() {
         </div>
       </div>
 
-      {activeTab === "configuration" && <SummarySlotCard
-        companyId={resolvedCompanyId}
-        scopeKind="project"
-        scopeId={project.id}
-        title="Project summary"
-        description="Summarizer keeps the latest project status, next step, and operator-needed items here."
-      />}
+      {Boolean(project.managedByPlugin) && activeTab !== "configuration" && (
+        <SummarySlotCard
+          companyId={resolvedCompanyId}
+          scopeKind="project"
+          scopeId={project.id}
+          title="Project summary"
+          description="Summarizer keeps the latest project status, next step, and operator-needed items here."
+        />
+      )}
 
-      {activeTab === "advanced" && <PluginSlotOutlet
+      {(activeTab === "advanced" || activeTab === "diagnostics") && <PluginSlotOutlet
         slotTypes={["toolbarButton", "contextMenuItem"]}
         entityType="project"
         context={{
@@ -1013,7 +1090,7 @@ export function ProjectDetail() {
         missingBehavior="placeholder"
       />}
 
-      {activeTab === "advanced" && <PluginLauncherOutlet
+      {(activeTab === "advanced" || activeTab === "diagnostics") && <PluginLauncherOutlet
         placementZones={["toolbarButton"]}
         entityType="project"
         context={{
@@ -1028,43 +1105,140 @@ export function ProjectDetail() {
         itemClassName="inline-flex"
       />}
 
-      <Tabs value={activeTab ?? "overview"} onValueChange={(value) => handleTabChange(value as ProjectTab)}>
-        <PageTabBar
-          items={[
-            { value: "overview", label: "Tổng quan" },
-            { value: "structure", label: "Cấu trúc dự án" },
-            { value: "list", label: "Tasks" },
-            ...pluginTabItems.map((item) => ({
-              value: item.value,
-              label: item.label,
-            })),
-
-            ...(project.managedByPlugin ? [{ value: "plugin-operations", label: "Plugin operations" }] : []),
-            ...(showWorkspacesTab ? [{ value: "workspaces", label: "Workspaces" }] : []),
-            { value: "configuration", label: "Cấu hình" },
-            { value: "budget", label: "Budget" },
-            { value: "advanced", label: "Advanced / History" },
-          ]}
-          align="start"
-          value={activeTab ?? "overview"}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-1">
+        <Tabs
+          value={activeTab === "list" ? "tasks" : activeTab ?? "overview"}
           onValueChange={(value) => handleTabChange(value as ProjectTab)}
-        />
-      </Tabs>
+          className="w-full sm:w-auto"
+        >
+          <TabsList variant="line" className="justify-start gap-1">
+            <TabsTrigger value="overview" className="gap-1.5 cursor-pointer">
+              <LayoutGrid className="h-4 w-4" />
+              <span>Overview</span>
+            </TabsTrigger>
+            <TabsTrigger value="activity" className="gap-1.5 cursor-pointer">
+              <Activity className="h-4 w-4" />
+              <span>Activity</span>
+            </TabsTrigger>
+            <TabsTrigger value="tasks" className="gap-1.5 cursor-pointer">
+              <ListTodo className="h-4 w-4" />
+              <span>Tasks</span>
+            </TabsTrigger>
+            <TabsTrigger value="outputs" className="gap-1.5 cursor-pointer">
+              <FileCode2 className="h-4 w-4" />
+              <span>Outputs</span>
+            </TabsTrigger>
+            <TabsTrigger value="team" className="gap-1.5 cursor-pointer">
+              <Users className="h-4 w-4" />
+              <span>Team</span>
+            </TabsTrigger>
 
-      {(activeTab === "overview" || activeTab === "list") && project?.id && resolvedCompanyId && (
-        <ProjectOperationsView project={project} companyId={resolvedCompanyId} projectRef={canonicalProjectRef} mode={activeTab === "overview" ? "overview" : "tasks"} />
-      )}
+            {pluginTabItems.map((item) => (
+              <TabsTrigger key={item.value} value={item.value}>
+                {item.label}
+              </TabsTrigger>
+            ))}
 
-      {activeTab === "structure" && project?.id && resolvedCompanyId && (
+            {project.managedByPlugin && (
+              <TabsTrigger value="plugin-operations">Plugin operations</TabsTrigger>
+            )}
+            {showWorkspacesTab && (
+              <TabsTrigger value="workspaces">Workspaces</TabsTrigger>
+            )}
+          </TabsList>
+        </Tabs>
+
+        {/* More Dropdown Menu for Secondary Sections */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant={isSecondaryTabActive ? "secondary" : "ghost"}
+              size="sm"
+              className={cn(
+                "h-8 gap-1.5 text-xs font-medium cursor-pointer",
+                isSecondaryTabActive && "bg-muted text-foreground font-semibold ring-1 ring-border"
+              )}
+            >
+              <span>{moreButtonLabel}</span>
+              <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuItem
+              onClick={() => handleTabChange("settings")}
+              className={cn("gap-2 cursor-pointer", (activeTab === "settings" || activeTab === "configuration") && "bg-muted font-semibold")}
+            >
+              <Settings className="h-4 w-4 text-muted-foreground" />
+              <span>Settings</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => handleTabChange("budget")}
+              className={cn("gap-2 cursor-pointer", activeTab === "budget" && "bg-muted font-semibold")}
+            >
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+              <span>Budget</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => handleTabChange("history")}
+              className={cn("gap-2 cursor-pointer", (activeTab === "history" || activeTab === "logs") && "bg-muted font-semibold")}
+            >
+              <History className="h-4 w-4 text-muted-foreground" />
+              <span>History</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => handleTabChange("diagnostics")}
+              className={cn("gap-2 cursor-pointer", (activeTab === "diagnostics" || activeTab === "advanced") && "bg-muted font-semibold")}
+            >
+              <Wrench className="h-4 w-4 text-muted-foreground" />
+              <span>Diagnostics</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {(activeTab === "overview" ||
+        activeTab === "activity" ||
+        activeTab === "live-monitor" ||
+        activeTab === "tasks" ||
+        activeTab === "list" ||
+        activeTab === "team" ||
+        activeTab === "contributions" ||
+        activeTab === "history" ||
+        activeTab === "logs") &&
+        project?.id &&
+        resolvedCompanyId && (
+          <ProjectOperationsView
+            project={project}
+            companyId={resolvedCompanyId}
+            projectRef={canonicalProjectRef}
+            mode={
+              activeTab === "activity" || activeTab === "live-monitor"
+                ? "activity"
+                : activeTab === "team" || activeTab === "contributions"
+                ? "team"
+                : activeTab === "history" || activeTab === "logs"
+                ? "history"
+                : activeTab === "tasks" || activeTab === "list"
+                ? "tasks"
+                : "overview"
+            }
+            onNavigateTab={(tab) => handleTabChange(tab as ProjectTab)}
+          />
+        )}
+
+      {(activeTab === "outputs" || activeTab === "structure") && project?.id && resolvedCompanyId && (
         <ProjectStructureView
           projectId={project.id}
           companyId={resolvedCompanyId}
           projectRef={canonicalProjectRef}
+          onNavigateTab={(tab) => handleTabChange(tab as ProjectTab)}
         />
       )}
 
-      {activeTab === "advanced" && project?.id && resolvedCompanyId && (
-        <ProjectIssuesList projectId={project.id} companyId={resolvedCompanyId} />
+      {(activeTab === "diagnostics" || activeTab === "advanced" || activeTab === "list" || activeTab === "tasks") && project?.id && resolvedCompanyId && (
+        <div className={activeTab === "list" || activeTab === "tasks" ? "hidden" : undefined}>
+          <ProjectIssuesList projectId={project.id} companyId={resolvedCompanyId} />
+        </div>
       )}
 
       {activeTab === "plugin-operations" && project?.id && resolvedCompanyId && project.managedByPlugin && (
@@ -1092,7 +1266,7 @@ export function ProjectDetail() {
         )
       ) : null}
 
-      {activeTab === "configuration" && (
+      {(activeTab === "configuration" || activeTab === "settings") && (
         <div className="max-w-4xl">
           <ProjectProperties
             project={project}

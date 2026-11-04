@@ -15,7 +15,25 @@ export type ProjectPhase =
   | "completed";
 
 export type ProjectWorkflowSnapshot = {
-  binding: { templateName: string; workflow: { nodes: Array<{ id: string; data?: { kind?: string } }> } } | null;
+  binding: {
+    templateName: string;
+    workflow: {
+      nodes: Array<{
+        id: string;
+        data?: {
+          kind?: string;
+          title?: string;
+          agentName?: string | null;
+          agentRole?: string | null;
+          model?: string | null;
+          description?: string;
+          issueIdentifier?: string | null;
+        };
+        position?: { x: number; y: number };
+      }>;
+      edges?: Array<{ id: string; source: string; target: string }>;
+    };
+  } | null;
   activeRun?: {
     id: string;
     status: string;
@@ -74,9 +92,7 @@ export function isProjectRequirement(issue: Issue): boolean {
 
 function isRealTask(issue: Issue, mappedIds: Set<string>): boolean {
   if (mappedIds.has(issue.id) || isManualTask(issue)) return true;
-  if (issue.createdByAgentId) return true;
-  return issue.originKind === "plugin:ai-company-workflow-studio" &&
-    (issue.originId ?? "").includes(":task:");
+  return Boolean(issue.createdByAgentId || issue.parentId);
 }
 
 function latest<T extends { createdAt?: string | Date | null }>(items: T[]): T | null {
@@ -144,15 +160,15 @@ export function buildProjectOperationsModel(input: {
   else if (taskRows.length > 0) phase = "tasks-generated";
   else phase = "submitted";
   const messages: Record<ProjectPhase, [string, string]> = {
-    "no-requirement": ["Bạn chưa gửi yêu cầu cho dự án.", "Giao yêu cầu đầu tiên để AI Project Manager bắt đầu lập kế hoạch."],
-    submitted: ["Đã nhận yêu cầu. Đang chờ Project Manager.", "Task sẽ xuất hiện sau khi Project Manager phân tích và phân công công việc."],
-    "pm-running": ["Project Manager đang phân tích yêu cầu.", "Theo dõi hoạt động hiện tại và mở logs để xem tiến độ."],
-    "pm-failed": ["Project Manager không thể thực thi yêu cầu, nên chưa tạo được kế hoạch và Task.", "Xem lỗi của lần chạy gần nhất, sửa kết nối nếu cần rồi thử lại."],
-    "tasks-generated": ["AI đã tạo kế hoạch và Task.", "Các Agent được phân công theo Workflow của dự án."],
-    "workflow-running": ["Các Agent đang thực hiện công việc.", "Theo dõi giai đoạn đang chạy và mở logs của từng Task."],
-    "workflow-blocked": ["Workflow đang bị chặn.", "Mở Live Monitor để xem giai đoạn và lỗi cần xử lý."],
-    "waiting-approval": ["Dự án đang chờ phê duyệt.", "Xem kết quả giai đoạn trước khi quyết định tiếp tục."],
-    completed: ["Workflow đã hoàn thành.", "Xem sản phẩm bàn giao và kết quả kiểm tra."],
+    "no-requirement": ["No requirement submitted yet.", "Submit the initial software requirement to start planning with the AI Project Manager."],
+    submitted: ["Requirement received. Awaiting Project Manager.", "Tasks will appear after the Project Manager analyzes the requirement and delegates work."],
+    "pm-running": ["Project Manager is analyzing the requirement.", "Track real-time activity and open logs to observe planning progress."],
+    "pm-failed": ["Project Manager could not execute the requirement.", "Review failure diagnostics from the latest run, resolve connection or config issues, and retry."],
+    "tasks-generated": ["AI generated the execution plan and tasks.", "Specialist agents are assigned according to the project workflow."],
+    "workflow-running": ["Agents are actively executing tasks.", "Track active stages and inspect logs for each delegated task."],
+    "workflow-blocked": ["Workflow execution is blocked.", "Open the Live Monitor to identify the stage or gate that requires intervention."],
+    "waiting-approval": ["Project is waiting for review or approval.", "Review stage deliverables before deciding to proceed."],
+    completed: ["Workflow execution completed.", "Inspect deliverables, artifacts, and test verification results."],
   };
   const lastActivity = [run?.updatedAt, ...issues.map((issue) => String(issue.updatedAt))]
     .filter((value): value is string => Boolean(value))
@@ -175,13 +191,13 @@ export function buildProjectOperationsModel(input: {
     blockedCount,
     failedCount,
     activeAgents,
-    currentStages: failureIsCurrent ? currentStages.map((stage) => `${stage} · lỗi thực thi`) : currentStages,
+    currentStages: failureIsCurrent ? currentStages.map((stage) => `${stage} · execution failed`) : currentStages,
     progress: run?.status === "completed" ? 100 : taskRows.length > 0
       ? Math.round(completedCount / taskRows.length * 100) : 0,
     lastActivity,
     failedRunId: failureIsCurrent ? blocker?.runId ?? null : null,
     failedAgentId: failureIsCurrent ? blocker?.agentId ?? null : null,
-    failure: failureIsCurrent ? blocker?.runError ?? "Lần chạy gần nhất thất bại." : null,
+    failure: failureIsCurrent ? blocker?.runError ?? "Latest run failed." : null,
     canRetry: failureIsCurrent && blocker?.canRetry === true,
     journeyStep,
   };

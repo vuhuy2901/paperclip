@@ -1,31 +1,5 @@
 export type PaperclipRequest = (path: string, options?: { method?: string; body?: unknown }) => Promise<any>;
 
-export async function assertWorkflowExecutionAllowed(
-  issue: any,
-  ctx: any,
-  request: PaperclipRequest
-): Promise<{ allowed: true; code: string; reason: string; runId?: string }> {
-  const companyId = issue.companyId ?? ctx.agent.companyId;
-  const response = await request("/api/plugins/ai-company-workflow-studio/actions/can-execute", {
-    method: "POST",
-    body: {
-      companyId,
-      params: {
-        companyId,
-        issueId: issue.id,
-        agentId: ctx.agent.id
-      }
-    }
-  });
-  const decision = response?.data ?? response;
-  if (!decision || decision.allowed !== true) {
-    const code = String(decision?.code ?? "WORKFLOW_GATE_UNAVAILABLE");
-    const reason = String(decision?.reason ?? "Workflow Execution Gate returned no valid admission decision.");
-    throw new Error(`Workflow Execution Gate denied ${issue.identifier ?? issue.id}: [${code}] ${reason}`);
-  }
-  return decision;
-}
-
 function text(value: unknown): string {
   return typeof value === "string" && value !== "null" && value !== "undefined" ? value.trim() : "";
 }
@@ -92,11 +66,6 @@ export async function resolveAssignedTask(ctx: any, request: PaperclipRequest) {
 
 export async function taskPrompt(issue: any, request: PaperclipRequest): Promise<string> {
   const sections = [`Current task: ${issue.identifier ?? issue.id}\n${issue.title ?? ""}\n\n${issue.description ?? ""}`];
-  if (String(issue.originId ?? "").includes(":coordinator:")) {
-    sections.push(
-      "Coordinator responsibility: you are the AI Project Manager for this Workflow Run. Analyze the Product Owner requirement, keep the published React Flow dependency graph authoritative, and use the create-execution-tasks tool to create concrete tasks for the appropriate workflowNodeId stages. Include a stable taskKey for every task, assign only the stage's configured agent, and never use parentId or create tasks for a future stage before its dependencies are represented. Do not mark the coordinator as a business delivery task."
-    );
-  }
   if (issue.projectId) {
     sections.push(`Project: ${issue.project?.name ?? issue.projectId}\n${issue.project?.description ?? ""}`);
   }
@@ -124,12 +93,72 @@ export async function taskPrompt(issue: any, request: PaperclipRequest): Promise
 }
 
 export function taskResult(message: string): { status: "done" | "blocked" | "in_progress"; report: string } {
-  const match = message.match(/<\s*paperclip-result\s*>\s*(\{[\s\S]*?\})\s*<\/\s*paperclip-result\s*>/);
-  if (!match) return { status: "in_progress", report: message };
-  try {
-    const payload = JSON.parse(match[1]);
-    const status = ["done", "blocked", "in_progress"].includes(payload.status) ? payload.status : "in_progress";
-    const report = message.replace(match[0], "").trim();
-    return { status: report ? status : "in_progress", report: report || "No substantive deliverable was returned." };
-  } catch { return { status: "in_progress", report: message }; }
+  const candidates = [
+    ...[...message.matchAll(/<\s*paperclip-result\s*>\s*(\{[\s\S]*?\})\s*<\/\s*paperclip-result\s*>/g)].map((match) => ({ json: match[1], whole: match[0] })),
+    ...[...message.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi)].map((match) => ({ json: match[1], whole: match[0] })),
+  ].reverse();
+  for (const candidate of candidates) {
+    try {
+      const payload = JSON.parse(candidate.json);
+      if (!["done", "blocked", "in_progress"].includes(payload?.status)) continue;
+      const status = payload.status as "done" | "blocked" | "in_progress";
+      const report = message.replace(candidate.whole, "")
+        .replace(/<\s*paperclip-actions\s*>[\s\S]*?<\/\s*paperclip-actions\s*>/g, "")
+        .replace(/```(?:json)?\s*\{\s*"paperclip-actions"[\s\S]*?\}\s*```/gi, "")
+        .trim();
+      const actionOnlyCompletion = nativeTaskActions(message).length > 0;
+      return {
+        status: report || actionOnlyCompletion ? status : "in_progress",
+        report: report || (actionOnlyCompletion ? "Native Paperclip child-task delegation completed." : "No substantive deliverable was returned."),
+      };
+    } catch { /* Try the next model-provided JSON block. */ }
+  }
+  // Some small local models emit the native child-task action and omit the
+  // result marker. Once the validated native action exists, the manager's
+  // delegation turn is complete; treating it as unfinished would make the
+  // native recovery coordinator retry the same delegation.
+  if (nativeTaskActions(message).length > 0) {
+    return { status: "done", report: "Native Paperclip child-task delegation completed." };
+  }
+  const substantive = message.replace(/```(?:json)?\s*```/gi, "").trim();
+  return substantive
+    ? { status: "done", report: substantive }
+    : { status: "in_progress", report: message };
+}
+
+export type NativeTaskAction = {
+  type: "create_task";
+  title: string;
+  description: string;
+  assigneeAgentId: string;
+  priority?: "low" | "medium" | "high" | "urgent";
+};
+
+/**
+ * The model may ask the adapter to call Paperclip's native task API.  This is
+ * deliberately a small, validated tool contract: it is not a scheduler and it
+ * cannot advance a workflow, bypass dependencies, or invoke another runtime.
+ */
+export function nativeTaskActions(message: string): NativeTaskAction[] {
+  const jsonCandidates = [
+    ...[...message.matchAll(/<\s*paperclip-actions\s*>\s*(\{[\s\S]*?\})\s*<\/\s*paperclip-actions\s*>/g)].map((match) => match[1]),
+    ...[...message.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi)].map((match) => match[1]),
+  ];
+  for (const candidateJson of jsonCandidates) {
+    try {
+      const payload = JSON.parse(candidateJson);
+      const actions = payload?.actions ?? payload?.["paperclip-actions"]?.actions;
+    if (!Array.isArray(actions)) continue;
+    return actions.slice(0, 5).flatMap((candidate: any): NativeTaskAction[] => {
+      if (candidate?.type !== "create_task") return [];
+      const title = text(candidate.title);
+      const description = text(candidate.description);
+      const assigneeAgentId = text(candidate.assigneeAgentId);
+      if (!title || !description || !assigneeAgentId) return [];
+      const priority = ["low", "medium", "high", "urgent"].includes(candidate.priority) ? candidate.priority : "medium";
+      return [{ type: "create_task", title: title.slice(0, 240), description: description.slice(0, 16000), assigneeAgentId, priority }];
+    });
+    } catch { /* Try the next model-provided JSON block. */ }
+  }
+  return [];
 }

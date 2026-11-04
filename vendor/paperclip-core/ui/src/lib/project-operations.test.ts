@@ -80,4 +80,18 @@ describe("Workflow Run Progress & Node Status Mapping", () => {
     expect(validateSafeWorkspacePath("node_modules/lodash/index.js")).toBe(false);
     expect(validateSafeWorkspacePath("dist/bundle.js")).toBe(false);
   });
+
+  it("provides full English messaging across all project execution phases", () => {
+    const nodes = [{ id: "start" }, { id: "pm" }, { id: "backend" }];
+    const paused = computeWorkflowRunProgress(nodes, {
+      start: { status: "done" },
+      pm: { status: "running" },
+      backend: { status: "pending" },
+    });
+    expect(paused.completedNodes).toBe(1);
+    expect(paused.runningNodes).toBe(1);
+
+    expect(mapNodeExecutionStatus({ status: "waiting_approval" })).toBe("waiting_approval");
+    expect(mapNodeExecutionStatus({ status: "paused" })).toBe("pending");
+  });
 });

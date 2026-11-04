@@ -9,13 +9,8 @@ RUN rm -rf /usr/local/lib/node_modules/paperclipai/node_modules/@paperclipai/ser
   && cp -a /opt/paperclip-core-ui-dist /usr/local/lib/node_modules/paperclipai/node_modules/@paperclipai/server/ui-dist
 COPY apps/paperclip-adapter /opt/ai-company-adapter
 RUN cd /opt/ai-company-adapter && npm install && npm run build
-COPY packages/paperclip-workflow-studio/package.json packages/paperclip-workflow-studio/package-lock.json packages/paperclip-workflow-studio/tsconfig.json /opt/workflow-studio/
-COPY packages/paperclip-workflow-studio/scripts /opt/workflow-studio/scripts
-COPY packages/paperclip-workflow-studio/migrations /opt/workflow-studio/migrations
-COPY packages/paperclip-workflow-studio/src /opt/workflow-studio/src
-RUN cd /opt/workflow-studio && npm ci && npm run build
 COPY apps/roles /opt/role-assets
-COPY infra/paperclip/configure.mjs infra/paperclip/proxy.mjs infra/paperclip/sync-skills.mjs infra/paperclip/install-workflow-plugin.mjs infra/paperclip/entrypoint.sh ./
-RUN chmod +x entrypoint.sh && mkdir -p /home/node/.paperclip && chown -R node:node /opt/paperclip /opt/workflow-studio /home/node/.paperclip
+COPY infra/paperclip/configure.mjs infra/paperclip/proxy.mjs infra/paperclip/sync-skills.mjs infra/paperclip/entrypoint.sh ./
+RUN chmod +x entrypoint.sh && mkdir -p /home/node/.paperclip && chown -R node:node /opt/paperclip /home/node/.paperclip
 USER node
 ENTRYPOINT ["/opt/paperclip/entrypoint.sh"]

@@ -3,17 +3,17 @@ import { classifyIssue, isWorkflowStage, isProjectRequirement, isAiExecutionTask
 import type { Issue } from "@paperclipai/shared";
 
 describe("issue-classification", () => {
-  it("classifies workflow stages correctly", () => {
+  it("keeps historical plugin-created issues out of the native stage model", () => {
     const stageIssue = {
       id: "stage-1",
       identifier: "AIS-22",
       title: "Analyze and plan",
       originId: "workflow-run:d58f1fdd-4ea6-45b7-b81d-b3676bd8801a:node:pm",
-      originKind: "plugin:ai-company-workflow-studio",
+      originKind: "legacy-plugin",
     } as unknown as Issue;
 
-    expect(classifyIssue(stageIssue)).toBe("workflow-stage");
-    expect(isWorkflowStage(stageIssue)).toBe(true);
+    expect(classifyIssue(stageIssue)).toBe("unclassified");
+    expect(isWorkflowStage(stageIssue)).toBe(false);
     expect(isProjectRequirement(stageIssue)).toBe(false);
   });
 
@@ -31,17 +31,17 @@ describe("issue-classification", () => {
     expect(isWorkflowStage(reqIssue)).toBe(false);
   });
 
-  it("classifies AI execution tasks correctly", () => {
+  it("does not treat historical plugin tasks as native agent work", () => {
     const taskIssue = {
       id: "task-1",
       identifier: "AIS-33",
       title: "Generate database schema",
       originId: "workflow-run:d58f1fdd-4ea6-45b7-b81d-b3676bd8801a:node:backend:task:schema-1",
-      originKind: "plugin:ai-company-workflow-studio",
+      originKind: "legacy-plugin",
     } as unknown as Issue;
 
-    expect(classifyIssue(taskIssue)).toBe("ai-execution-task");
-    expect(isAiExecutionTask(taskIssue)).toBe(true);
+    expect(classifyIssue(taskIssue)).toBe("unclassified");
+    expect(isAiExecutionTask(taskIssue)).toBe(false);
   });
 
   it("classifies agent-created issues as execution tasks", () => {

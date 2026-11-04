@@ -19,6 +19,5 @@ fi
 
 paperclipai run &
 PAPERCLIP_PID=$!
-node /opt/paperclip/install-workflow-plugin.mjs || echo "Workflow Studio plugin did not install; retry on next restart"
 node /opt/paperclip/sync-skills.mjs || echo "Paperclip role-skill sync did not complete; retry on next restart"
 wait "$PAPERCLIP_PID"

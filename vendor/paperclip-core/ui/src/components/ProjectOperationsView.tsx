@@ -1,109 +1,68 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Issue, Project } from "@paperclipai/shared";
+import type { Issue, Project, Agent } from "@paperclipai/shared";
 import {
   Activity,
   AlertCircle,
   AlertTriangle,
   ArrowRight,
+  ArrowUpRight,
   Bot,
+  Calendar,
   Check,
   CheckCircle2,
   ChevronRight,
   Clock,
   Copy,
+  Download,
   ExternalLink,
   Eye,
   FileCode,
+  FileCode2,
+  FileText,
+  Filter,
+  Flame,
+  GitCommit,
+  Layers,
+  LayoutGrid,
+  List,
   ListChecks,
+  ListTodo,
   Pause,
   Play,
   Plus,
   RefreshCw,
   RotateCw,
   Search,
-  Square,
+  SlidersHorizontal,
+  Sparkles,
+  Table as TableIcon,
   Terminal,
+  TrendingUp,
+  UserCheck,
+  Users,
   WifiOff,
-  Workflow as WorkflowIcon,
   X,
   XCircle,
+  Building2,
+  ShieldAlert,
 } from "lucide-react";
 import { Link } from "@/lib/router";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "../api/client";
 import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
+import { heartbeatsApi } from "../api/heartbeats";
 import { useToastActions } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
-import {
-  computeWorkflowRunProgress,
-  mapNodeExecutionStatus,
-  MANUAL_TASK_LABEL,
-  type NormalizedNodeStatus,
-  type ProjectWorkflowSnapshot,
-  type ProjectTaskRow,
-  isProjectRequirement,
-} from "../lib/project-operations";
 
-const WORKFLOW_TAB = "plugin:ai-company-workflow-studio:project-workflow-tab";
+/* ─────────────────────────────────────────────────────────────────────────────
+   TYPES & HELPERS
+   ───────────────────────────────────────────────────────────────────────────── */
 
-interface WorkflowRunRecord {
-  id: string;
-  status: "running" | "paused" | "completed" | "failed" | "stopped" | "cancelled" | "waiting_approval";
-  projectId: string;
-  workflowId: string;
-  startedAt: string;
-  finishedAt: string | null;
-  inputRequirement: string;
-  nodeExecutionStates: Record<string, {
-    nodeId: string;
-    title: string;
-    status: string;
-    kind?: string;
-    agentId?: string | null;
-    agentName?: string | null;
-    agentRole?: string | null;
-    issueIdentifier?: string | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-    error?: string | null;
-    lastGateReason?: string | null;
-    retryCount?: number;
-  }>;
-  executionHistory: Array<{
-    id: string;
-    level: "info" | "warn" | "action" | "error" | "approval";
-    nodeId?: string;
-    agentId?: string;
-    issueId?: string;
-    message: string;
-    timestamp: string;
-  }>;
-  taskMappings?: Array<{ issueId: string; workflowNodeId: string; stageId: string; isCoordinator?: boolean }>;
-  workflowSnapshot?: {
-    nodes: Array<{
-      id: string;
-      data: {
-        kind: string;
-        title: string;
-        model?: string | null;
-        agentId?: string | null;
-        agentName?: string | null;
-        agentRole?: string | null;
-        description?: string;
-        issueIdentifier?: string | null;
-      };
-      position?: { x: number; y: number };
-    }>;
-    edges: Array<{ id: string; source: string; target: string }>;
-  };
-}
-
-interface WorkspaceFileInfo {
+export interface WorkspaceFileInfo {
   path: string;
   name: string;
   size: number;
@@ -114,7 +73,36 @@ interface WorkspaceFileInfo {
   is_modified: boolean;
 }
 
-function formattedDuration(startedAt: string | null | undefined, finishedAt?: string | null | undefined, nowTs?: number): string {
+export interface ActivityFeedItem {
+  id: string;
+  type: "delegation" | "started" | "completed" | "created" | "blocked" | "review";
+  timestamp: string;
+  agentId?: string;
+  agentName?: string;
+  agentRole?: string;
+  fromAgentName?: string;
+  toAgentName?: string;
+  issueId: string;
+  issueIdentifier?: string | null;
+  issueTitle: string;
+  priority?: string | null;
+  status?: string;
+  message: string;
+}
+
+export interface ProjectOperationsViewProps {
+  project: Project;
+  companyId: string;
+  projectRef?: string;
+  mode?: "overview" | "activity" | "tasks" | "team" | "history" | "live-monitor" | "contributions" | "logs";
+  onNavigateTab?: (tab: string) => void;
+}
+
+function formattedDuration(
+  startedAt: string | null | undefined,
+  finishedAt?: string | null | undefined,
+  nowTs?: number,
+): string {
   if (!startedAt) return "--:--";
   const start = new Date(startedAt).getTime();
   if (Number.isNaN(start)) return "--:--";
@@ -126,103 +114,147 @@ function formattedDuration(startedAt: string | null | undefined, finishedAt?: st
 }
 
 function formattedDateTime(value: string | Date | null | undefined): string {
-  if (!value) return "Chưa có";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "Chưa có" : date.toLocaleString("vi-VN");
+  if (!value) return "—";
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-function issueHref(row: { id: string; identifier: string | null }) {
-  return `/issues/${row.identifier ?? row.id}`;
+function formattedRelativeTime(value: string | number | Date | null | undefined): string {
+  if (!value) return "Recently";
+  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
+  if (Number.isNaN(date.getTime())) return "Recently";
+  const diffSec = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (diffSec < 60) return "Just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}h ago`;
+  const diffDays = Math.floor(diffHour / 24);
+  return `${diffDays}d ago`;
 }
 
-function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    backlog: "Chờ", todo: "Sẵn sàng", in_progress: "Đang làm", in_review: "Chờ duyệt",
-    blocked: "Bị chặn", done: "Hoàn thành", cancelled: "Đã hủy",
-  };
-  return labels[status] ?? status;
+function statusBadgeInfo(status: string) {
+  const normalized = status.toLowerCase();
+  switch (normalized) {
+    case "in_progress":
+    case "running":
+      return {
+        label: "In Progress",
+        className: "bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30",
+        dotColor: "bg-blue-500",
+      };
+    case "done":
+    case "completed":
+      return {
+        label: "Completed",
+        className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30",
+        dotColor: "bg-emerald-500",
+      };
+    case "in_review":
+    case "waiting_approval":
+      return {
+        label: "In Review",
+        className: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30",
+        dotColor: "bg-amber-500",
+      };
+    case "blocked":
+    case "failed":
+    case "error":
+      return {
+        label: "Blocked",
+        className: "bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30",
+        dotColor: "bg-red-500",
+      };
+    case "todo":
+    case "pending":
+    case "waiting":
+      return {
+        label: "To Do",
+        className: "bg-slate-500/15 text-slate-700 dark:text-slate-300 border border-slate-500/30",
+        dotColor: "bg-slate-400",
+      };
+    case "cancelled":
+    case "stopped":
+      return {
+        label: "Cancelled",
+        className: "bg-zinc-500/15 text-zinc-500 border border-zinc-500/30",
+        dotColor: "bg-zinc-400",
+      };
+    default:
+      return {
+        label: status,
+        className: "bg-muted text-muted-foreground border border-border",
+        dotColor: "bg-muted-foreground",
+      };
+  }
 }
+
+function priorityBadgeInfo(priority: string | null | undefined) {
+  const p = (priority ?? "normal").toLowerCase();
+  switch (p) {
+    case "urgent":
+      return "bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/20";
+    case "high":
+      return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20";
+    case "low":
+      return "bg-zinc-500/15 text-zinc-500 border border-zinc-500/20";
+    case "normal":
+    default:
+      return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20";
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MAIN COMPONENT
+   ───────────────────────────────────────────────────────────────────────────── */
 
 export function ProjectOperationsView({
   project,
   companyId,
   projectRef,
-  mode,
-}: {
-  project: Project;
-  companyId: string;
-  projectRef: string;
-  mode: "overview" | "tasks";
-}) {
+  mode = "overview",
+  onNavigateTab,
+}: ProjectOperationsViewProps) {
   const queryClient = useQueryClient();
   const { pushToast } = useToastActions();
 
-  // Polling clock for elapsed seconds
+  // Normalize mode for backward compatibility
+  const currentTab = useMemo(() => {
+    if (mode === "live-monitor") return "activity";
+    if (mode === "contributions") return "team";
+    if (mode === "logs") return "history";
+    return mode;
+  }, [mode]);
+
+  // Polling clock for elapsed counters
   const [nowTs, setNowTs] = useState(() => Date.now());
   useEffect(() => {
-    const timer = window.setInterval(() => setNowTs(Date.now()), 1000);
+    const timer = window.setInterval(() => setNowTs(Date.now()), 2000);
     return () => window.clearInterval(timer);
   }, []);
 
-  // UI state for overview
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [followRunning, setFollowRunning] = useState(true);
-  const [copiedRunId, setCopiedRunId] = useState(false);
-  const [logFilter, setLogFilter] = useState<"all" | "error" | "action">("all");
-  const [logAgentFilter, setLogAgentFilter] = useState<string>("");
-  const [autoScrollLogs, setAutoScrollLogs] = useState(true);
-  const [actionBusy, setActionBusy] = useState(false);
-  const logContainerRef = useRef<HTMLDivElement>(null);
-  const runningNodeRef = useRef<HTMLDivElement>(null);
+  /* ── Queries ── */
 
-  // UI state for tasks
-  const [manualOpen, setManualOpen] = useState(false);
-  const [manualTitle, setManualTitle] = useState("");
-  const [manualDescription, setManualDescription] = useState("");
-  const [manualAgentId, setManualAgentId] = useState("");
-  const [taskSearch, setTaskSearch] = useState("");
-  const [taskAgentFilter, setTaskAgentFilter] = useState("");
-  const [taskStatusFilter, setTaskStatusFilter] = useState("");
-  const [taskSort, setTaskSort] = useState<"newest" | "oldest" | "title">("newest");
-  const [taskGrouped, setTaskGrouped] = useState(true);
-
-  const workflowHref = `/projects/${projectRef}?tab=${encodeURIComponent(WORKFLOW_TAB)}`;
-  const monitorHref = `${workflowHref}&subtab=monitor`;
-  const submitHref = `${workflowHref}&submitRequirement=1`;
-
-  // 1. Fetch project workflow binding & recent runs (2s polling)
-  const workflowQuery = useQuery({
-    queryKey: ["project-operations-workflow", companyId, project.id],
-    queryFn: async () => {
-      const result = await api.post<{ data: ProjectWorkflowSnapshot }>(
-        "/plugins/ai-company-workflow-studio/data/project-workflow",
-        { companyId, params: { companyId, projectId: project.id } },
-      );
-      return result.data;
-    },
-    refetchInterval: 2000,
-    retry: 2,
+  // 1. Fetch company agents
+  const { data: agents = [] } = useQuery({
+    queryKey: queryKeys.agents.list(companyId),
+    queryFn: () => agentsApi.list(companyId),
   });
 
-  const activeRunId = workflowQuery.data?.activeRun?.id ?? workflowQuery.data?.recentRuns?.[0]?.id ?? null;
-
-  // 2. Fetch full active workflow run record (2s polling)
-  const runQuery = useQuery({
-    queryKey: ["workflow-run-detail", companyId, activeRunId],
-    queryFn: async () => {
-      if (!activeRunId) return null;
-      const res = await api.post<{ data: { run: WorkflowRunRecord } }>(
-        "/plugins/ai-company-workflow-studio/data/workflow-run",
-        { companyId, params: { companyId, runId: activeRunId } },
-      );
-      return res.data.run;
-    },
-    enabled: Boolean(activeRunId),
-    refetchInterval: 2000,
-    retry: 2,
+  // 2. Fetch project issues / tasks
+  const { data: issues = [] } = useQuery({
+    queryKey: queryKeys.issues.listByProject(companyId, project.id),
+    queryFn: () => issuesApi.listAll(companyId, { projectId: project.id }),
+    refetchInterval: 3000,
   });
 
-  // 3. Fetch workspace tree files for node-to-file attribution
+  // 3. Fetch project workspace tree files (outputs / deliverables)
   const workspaceFilesQuery = useQuery({
     queryKey: ["project-workspace-tree", project.id],
     queryFn: async () => {
@@ -231,947 +263,1660 @@ export function ProjectOperationsView({
       const data = await res.json();
       return (data.files ?? []) as WorkspaceFileInfo[];
     },
-    refetchInterval: 5000,
+    refetchInterval: 4000,
   });
 
-  // 4. Fetch company agents
-  const { data: agents = [] } = useQuery({
-    queryKey: queryKeys.agents.list(companyId),
-    queryFn: () => agentsApi.list(companyId),
+  // 4. Fetch live heartbeat runs to identify active agents
+  const liveRunsQuery = useQuery({
+    queryKey: queryKeys.liveRuns(companyId),
+    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId),
+    refetchInterval: 3000,
   });
 
-  // 5. Fetch project issues
-  const { data: issues = [] } = useQuery({
-    queryKey: queryKeys.issues.listByProject(companyId, project.id),
-    queryFn: () => issuesApi.listAll(companyId, { projectId: project.id }),
-    refetchInterval: 5000,
-  });
+  /* ── Maps & Lookup Dictionaries ── */
 
-  const binding = workflowQuery.data?.binding ?? null;
-  const run = runQuery.data ?? null;
-  const isDisconnected = workflowQuery.isError || (Boolean(activeRunId) && runQuery.isError);
+  const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+  const issueById = useMemo(() => new Map(issues.map((i) => [i.id, i])), [issues]);
 
-  // Workflow template definition (nodes + edges)
-  const workflowDefinition = run?.workflowSnapshot ?? binding?.workflow ?? { nodes: [], edges: [] };
-  const rawNodes = workflowDefinition.nodes ?? [];
-  const rawEdges = workflowDefinition.edges ?? [];
-  const nodeStates = run?.nodeExecutionStates ?? {};
+  /* ── Computed Metrics & Project Status ── */
 
-  // Compute progress strictly from template nodes
-  const progressStats = useMemo(() => {
-    return computeWorkflowRunProgress(rawNodes, nodeStates);
-  }, [rawNodes, nodeStates]);
+  const completedTasks = useMemo(() => issues.filter((i) => i.status === "done"), [issues]);
+  const inProgressTasks = useMemo(() => issues.filter((i) => i.status === "in_progress"), [issues]);
+  const inReviewTasks = useMemo(() => issues.filter((i) => i.status === "in_review"), [issues]);
+  const blockedTasks = useMemo(() => issues.filter((i) => i.status === "blocked"), [issues]);
+  const todoTasks = useMemo(() => issues.filter((i) => i.status === "todo"), [issues]);
+  const openTasks = useMemo(
+    () => issues.filter((i) => i.status !== "done" && i.status !== "cancelled"),
+    [issues],
+  );
 
-  // Find active running nodes for auto-follow and agent count
-  const runningNodeIds = useMemo(() => {
-    return Object.entries(nodeStates)
-      .filter(([, state]) => mapNodeExecutionStatus(state) === "running")
-      .map(([id]) => id);
-  }, [nodeStates]);
-
-  // Auto-follow: scroll to the first running node when it changes
-  useEffect(() => {
-    if (followRunning && runningNodeRef.current) {
-      runningNodeRef.current.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  const activeAgentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const task of openTasks) {
+      if (task.assigneeAgentId) ids.add(task.assigneeAgentId);
     }
-  }, [runningNodeIds, followRunning]);
-
-  // Auto-scroll logs to bottom
-  useEffect(() => {
-    if (autoScrollLogs && logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    // Also add agents from active live heartbeat runs matching project issues
+    const projectIssueIds = new Set(issues.map((i) => i.id));
+    for (const run of liveRunsQuery.data ?? []) {
+      if (run.issueId && projectIssueIds.has(run.issueId) && run.agentId) {
+        ids.add(run.agentId);
+      }
     }
-  }, [run?.executionHistory, autoScrollLogs]);
+    return ids;
+  }, [openTasks, liveRunsQuery.data, issues]);
 
-  // Action dispatcher
-  const executeRunAction = async (actionName: string, extraParams: Record<string, unknown> = {}) => {
-    if (!activeRunId) return;
-    setActionBusy(true);
-    try {
-      await api.post(`/plugins/ai-company-workflow-studio/actions/${actionName}`, {
-        companyId,
-        params: { companyId, runId: activeRunId, ...extraParams },
-      });
-      void workflowQuery.refetch();
-      void runQuery.refetch();
-      pushToast({ title: "Thành công", tone: "success" });
-    } catch (err: any) {
-      pushToast({ title: "Thao tác thất bại", body: err.message, tone: "error" });
-    } finally {
-      setActionBusy(false);
+  const activeAgents = useMemo(() => {
+    return Array.from(activeAgentIds)
+      .map((id) => agentById.get(id))
+      .filter((a): a is Agent => Boolean(a));
+  }, [activeAgentIds, agentById]);
+
+  // Overall project status
+  const projectStatus = useMemo(() => {
+    if (blockedTasks.length > 0) {
+      return {
+        label: "Blocked / Action Required",
+        tone: "blocked",
+        badge: statusBadgeInfo("blocked"),
+        description: `${blockedTasks.length} task${blockedTasks.length > 1 ? "s are" : " is"} blocked.`,
+      };
     }
-  };
-
-  // Node inspection details
-  const selectedNode = useMemo(() => {
-    if (!selectedNodeId) return null;
-    const templateNode = rawNodes.find((n) => n.id === selectedNodeId);
-    const executionState = nodeStates[selectedNodeId] ?? null;
+    if (inProgressTasks.length > 0) {
+      return {
+        label: "In Progress",
+        tone: "in_progress",
+        badge: statusBadgeInfo("in_progress"),
+        description: `${inProgressTasks.length} active task${inProgressTasks.length > 1 ? "s" : ""} running across ${activeAgentIds.size} agents.`,
+      };
+    }
+    if (issues.length > 0 && openTasks.length === 0) {
+      return {
+        label: "Completed",
+        tone: "completed",
+        badge: statusBadgeInfo("done"),
+        description: "All planned deliverables and tasks are finished.",
+      };
+    }
+    if (issues.length > 0) {
+      return {
+        label: "Active",
+        tone: "active",
+        badge: statusBadgeInfo("in_progress"),
+        description: `${openTasks.length} pending task${openTasks.length > 1 ? "s" : ""} queued.`,
+      };
+    }
     return {
-      id: selectedNodeId,
-      template: templateNode,
-      execution: executionState,
-      status: mapNodeExecutionStatus(executionState),
+      label: "Ready for Work",
+      tone: "ready",
+      badge: statusBadgeInfo("todo"),
+      description: "No tasks have started yet. Assign tasks to launch autonomous execution.",
     };
-  }, [selectedNodeId, rawNodes, nodeStates]);
+  }, [blockedTasks, inProgressTasks, issues, openTasks, activeAgentIds]);
 
-  // Files modified/created by selected node's agent
-  const selectedNodeFiles = useMemo(() => {
-    if (!selectedNode) return [];
-    const agentName = selectedNode.execution?.agentName ?? selectedNode.template?.data.agentName ?? "";
-    if (!agentName) return [];
-    return (workspaceFilesQuery.data ?? []).filter((f) => f.agent.toLowerCase() === agentName.toLowerCase());
-  }, [selectedNode, workspaceFilesQuery.data]);
+  const completionPercentage = useMemo(() => {
+    if (issues.length === 0) return 0;
+    return Math.round((completedTasks.length / issues.length) * 100);
+  }, [completedTasks.length, issues.length]);
 
-  // Node-specific logs
-  const selectedNodeLogs = useMemo(() => {
-    if (!selectedNodeId || !run?.executionHistory) return [];
-    return run.executionHistory.filter((entry) => entry.nodeId === selectedNodeId);
-  }, [selectedNodeId, run?.executionHistory]);
+  const totalWorkspaceFiles = workspaceFilesQuery.data?.length ?? 0;
+  const newOrModifiedFiles = (workspaceFilesQuery.data ?? []).filter((f) => f.is_new || f.is_modified).length;
 
-  // Items needing user attention (Failed nodes, Waiting approval, Blocked)
-  const attentionItems = useMemo(() => {
-    const items: Array<{
-      nodeId: string;
-      title: string;
-      type: "failed" | "approval" | "blocked";
-      reason: string;
-      agentName?: string | null;
-      canRetry?: boolean;
-    }> = [];
+  // Last Activity info
+  const lastActivity = useMemo(() => {
+    if (issues.length === 0 && (workspaceFilesQuery.data ?? []).length === 0) {
+      return { time: "No activity yet", note: "Awaiting task assignment" };
+    }
+    // Find newest task update
+    const sortedIssues = [...issues].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+    const newestIssue = sortedIssues[0];
+    if (newestIssue) {
+      const agent = newestIssue.assigneeAgentId ? agentById.get(newestIssue.assigneeAgentId) : null;
+      const agentName = agent ? agent.name : "Agent";
+      return {
+        time: formattedRelativeTime(newestIssue.updatedAt),
+        note: `${agentName} updated "${newestIssue.title}" (${statusBadgeInfo(newestIssue.status).label})`,
+      };
+    }
+    return { time: "Recently", note: "Project files synchronized" };
+  }, [issues, workspaceFilesQuery.data, agentById]);
 
-    for (const [nodeId, st] of Object.entries(nodeStates)) {
-      const status = mapNodeExecutionStatus(st);
-      if (status === "failed") {
+  /* ── Activity Stream Synthesis (Tasks, Delegations, Events) ── */
+
+  const activityFeed = useMemo<ActivityFeedItem[]>(() => {
+    const items: ActivityFeedItem[] = [];
+
+    // Synthesize events from issues
+    for (const issue of issues) {
+      const agent = issue.assigneeAgentId ? agentById.get(issue.assigneeAgentId) : null;
+      const parentIssue = issue.parentId ? issueById.get(issue.parentId) : null;
+      const parentAgent = parentIssue?.assigneeAgentId ? agentById.get(parentIssue.assigneeAgentId) : null;
+
+      // Delegation event: parent issue assignee -> child issue assignee
+      if (issue.parentId && parentAgent && agent && parentAgent.id !== agent.id) {
         items.push({
-          nodeId,
-          title: st.title || nodeId,
-          type: "failed",
-          reason: st.error || st.lastGateReason || "Bước này gặp lỗi thực thi.",
-          agentName: st.agentName,
-          canRetry: true,
+          id: `delegation-${issue.id}`,
+          type: "delegation",
+          timestamp: issue.createdAt,
+          agentId: agent.id,
+          agentName: agent.name,
+          agentRole: agent.role ?? undefined,
+          fromAgentName: parentAgent.name,
+          toAgentName: agent.name,
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          issueTitle: issue.title,
+          priority: issue.priority,
+          status: issue.status,
+          message: `${parentAgent.name} delegated "${issue.title}" to ${agent.name}`,
         });
-      } else if (status === "waiting_approval") {
+      }
+
+      // Lifecycle status events
+      if (issue.status === "in_progress") {
         items.push({
-          nodeId,
-          title: st.title || nodeId,
-          type: "approval",
-          reason: "Cần bạn phê duyệt để tiếp tục bước tiếp theo.",
-          agentName: st.agentName,
+          id: `in_progress-${issue.id}`,
+          type: "started",
+          timestamp: issue.updatedAt,
+          agentId: agent?.id,
+          agentName: agent?.name,
+          agentRole: agent?.role ?? undefined,
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          issueTitle: issue.title,
+          priority: issue.priority,
+          status: issue.status,
+          message: `${agent?.name ?? "Specialist"} started working on "${issue.title}"`,
         });
-      } else if (status === "blocked") {
+      } else if (issue.status === "done") {
         items.push({
-          nodeId,
-          title: st.title || nodeId,
+          id: `done-${issue.id}`,
+          type: "completed",
+          timestamp: issue.updatedAt,
+          agentId: agent?.id,
+          agentName: agent?.name,
+          agentRole: agent?.role ?? undefined,
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          issueTitle: issue.title,
+          priority: issue.priority,
+          status: issue.status,
+          message: `${agent?.name ?? "Specialist"} completed "${issue.title}"`,
+        });
+      } else if (issue.status === "blocked") {
+        items.push({
+          id: `blocked-${issue.id}`,
           type: "blocked",
-          reason: st.lastGateReason || "Bước này đang bị chặn bởi điều kiện trước.",
-          agentName: st.agentName,
+          timestamp: issue.updatedAt,
+          agentId: agent?.id,
+          agentName: agent?.name,
+          agentRole: agent?.role ?? undefined,
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          issueTitle: issue.title,
+          priority: issue.priority,
+          status: issue.status,
+          message: `Task "${issue.title}" is blocked`,
+        });
+      } else if (issue.status === "in_review") {
+        items.push({
+          id: `review-${issue.id}`,
+          type: "review",
+          timestamp: issue.updatedAt,
+          agentId: agent?.id,
+          agentName: agent?.name,
+          agentRole: agent?.role ?? undefined,
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          issueTitle: issue.title,
+          priority: issue.priority,
+          status: issue.status,
+          message: `${agent?.name ?? "Specialist"} submitted "${issue.title}" for review`,
+        });
+      } else {
+        items.push({
+          id: `created-${issue.id}`,
+          type: "created",
+          timestamp: issue.createdAt,
+          agentId: agent?.id,
+          agentName: agent?.name,
+          agentRole: agent?.role ?? undefined,
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          issueTitle: issue.title,
+          priority: issue.priority,
+          status: issue.status,
+          message: `Task "${issue.title}" assigned to ${agent?.name ?? "Specialist"}`,
         });
       }
     }
-    return items;
-  }, [nodeStates]);
 
-  // Agent strip data
-  const agentStripList = useMemo(() => {
-    const list: Array<{
-      id: string;
-      name: string;
-      role: string;
-      status: "running" | "waiting" | "done" | "error";
-      currentTask: string;
-      duration: string;
-      tokenCost: string;
-    }> = [];
+    // Sort newest first
+    return items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [issues, agentById, issueById]);
 
-    const nodeAgentsMap = new Map<string, { role: string; nodeId: string; status: NormalizedNodeStatus; title: string; startedAt?: string | null; finishedAt?: string | null }>();
+  /* ── Team Members Ledger Synthesis ── */
 
-    for (const node of rawNodes) {
-      const name = node.data.agentName;
-      if (!name) continue;
-      const st = nodeStates[node.id];
-      const normalizedStatus = mapNodeExecutionStatus(st);
-      nodeAgentsMap.set(name, {
-        role: node.data.agentRole || "AI Specialist",
-        nodeId: node.id,
-        status: normalizedStatus,
-        title: node.data.title,
-        startedAt: st?.startedAt,
-        finishedAt: st?.finishedAt,
+  const teamMembers = useMemo(() => {
+    const workspaceFiles = workspaceFilesQuery.data ?? [];
+    return agents.map((agent) => {
+      const agentTasks = issues.filter((i) => i.assigneeAgentId === agent.id);
+      const activeTask =
+        agentTasks.find((i) => i.status === "in_progress") ??
+        agentTasks.find((i) => i.status === "todo") ??
+        null;
+      const completedCount = agentTasks.filter((i) => i.status === "done").length;
+      const blockedCount = agentTasks.filter((i) => i.status === "blocked").length;
+
+      // Status
+      const hasLiveHeartbeat = (liveRunsQuery.data ?? []).some((r) => r.agentId === agent.id);
+      let status: "active" | "waiting" | "blocked" | "idle" = "idle";
+      if (hasLiveHeartbeat || agentTasks.some((i) => i.status === "in_progress")) {
+        status = "active";
+      } else if (blockedCount > 0) {
+        status = "blocked";
+      } else if (agentTasks.some((i) => i.status === "todo" || i.status === "in_review")) {
+        status = "waiting";
+      }
+
+      // Outputs attribution
+      const authorFiles = workspaceFiles.filter((f) => {
+        const fileAgent = f.agent.toLowerCase();
+        return (
+          fileAgent === agent.name.toLowerCase() ||
+          (agent.role && fileAgent === agent.role.toLowerCase())
+        );
       });
-    }
+      const filesCreated = authorFiles.filter((f) => f.is_new).length;
+      const filesModified = authorFiles.filter((f) => f.is_modified).length;
 
-    for (const [name, info] of nodeAgentsMap.entries()) {
-      let agentDisplayStatus: "running" | "waiting" | "done" | "error" = "waiting";
-      if (info.status === "running") agentDisplayStatus = "running";
-      else if (info.status === "failed" || info.status === "blocked") agentDisplayStatus = "error";
-      else if (info.status === "done") agentDisplayStatus = "done";
-
-      list.push({
-        id: name,
-        name,
-        role: info.role,
-        status: agentDisplayStatus,
-        currentTask: info.title,
-        duration: formattedDuration(info.startedAt, info.finishedAt, nowTs),
-        tokenCost: "$0.02 - $0.05",
-      });
-    }
-
-    return list;
-  }, [rawNodes, nodeStates, nowTs]);
-
-  // Filtered live logs
-  const filteredLogs = useMemo(() => {
-    if (!run?.executionHistory) return [];
-    return run.executionHistory.filter((entry) => {
-      if (logFilter === "error" && entry.level !== "error") return false;
-      if (logFilter === "action" && entry.level !== "action") return false;
-      if (logAgentFilter && entry.agentId !== logAgentFilter) return false;
-      return true;
+      return {
+        id: agent.id,
+        name: agent.name,
+        role: agent.role ?? "AI Specialist",
+        status,
+        totalTasks: agentTasks.length,
+        completedTasks: completedCount,
+        activeTask,
+        filesCreated,
+        filesModified,
+        totalOutputs: authorFiles.length,
+      };
     });
-  }, [run?.executionHistory, logFilter, logAgentFilter]);
+  }, [agents, issues, liveRunsQuery.data, workspaceFilesQuery.data]);
 
-  // Tasks view handling
-  const createManualTask = useMutation({
+  /* ── Task Creation Dialog State ── */
+
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [dialogAgentId, setDialogAgentId] = useState("");
+  const [dialogTitle, setDialogTitle] = useState("");
+  const [dialogDescription, setDialogDescription] = useState("");
+  const [dialogPriority, setDialogPriority] = useState<"urgent" | "high" | "normal" | "low">("normal");
+
+  const openAssignTaskDialog = (preferredRole?: "ceo" | "pm") => {
+    let targetAgent: Agent | undefined;
+    let suggestedTitle = "";
+    let suggestedDescription = "";
+
+    if (preferredRole === "ceo") {
+      targetAgent = agents.find(
+        (a) => /ceo/i.test(a.name) || /ceo/i.test(a.role ?? ""),
+      );
+      suggestedTitle = "Initial Project Vision & Leadership Plan";
+      suggestedDescription =
+        "Analyze the project brief, define technical roadmap, and delegate architectural analysis to Solution Architect and Project Manager.";
+    } else if (preferredRole === "pm") {
+      targetAgent = agents.find(
+        (a) => /project manager|pm/i.test(a.name) || /project manager|pm/i.test(a.role ?? ""),
+      );
+      suggestedTitle = "Decompose Requirements & Task Breakdown";
+      suggestedDescription =
+        "Review requirements, plan implementation tasks, and delegate actionable issues to specialist agents.";
+    }
+
+    if (!targetAgent && agents.length > 0) {
+      targetAgent = agents[0];
+    }
+
+    setDialogAgentId(targetAgent?.id ?? "");
+    setDialogTitle(suggestedTitle);
+    setDialogDescription(suggestedDescription);
+    setDialogPriority("high");
+    setTaskDialogOpen(true);
+  };
+
+  const createTaskMutation = useMutation({
     mutationFn: async () => {
-      if (!manualTitle.trim() || !manualAgentId) throw new Error("Nhập tên Task và chọn Agent.");
-      const labels = await issuesApi.listLabels(companyId);
-      const label = labels.find((item) => item.name === MANUAL_TASK_LABEL) ??
-        await issuesApi.createLabel(companyId, { name: MANUAL_TASK_LABEL, color: "#3B82F6" });
+      if (!dialogTitle.trim() || !dialogAgentId) {
+        throw new Error("Please specify task title and select an assignee agent.");
+      }
       return issuesApi.create(companyId, {
         projectId: project.id,
-        title: manualTitle.trim(),
-        description: manualDescription.trim() || null,
-        assigneeAgentId: manualAgentId,
+        title: dialogTitle.trim(),
+        description: dialogDescription.trim() || null,
+        assigneeAgentId: dialogAgentId,
+        priority: dialogPriority,
         status: "todo",
-        labelIds: [label.id],
         idempotencyKey: crypto.randomUUID(),
       });
     },
     onSuccess: (issue) => {
-      setManualOpen(false);
-      setManualTitle("");
-      setManualDescription("");
-      setManualAgentId("");
+      setTaskDialogOpen(false);
+      setDialogTitle("");
+      setDialogDescription("");
+      setDialogAgentId("");
       void queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(companyId, project.id) });
-      pushToast({ title: "Đã thêm Task thủ công", tone: "success", action: { label: "Mở Task", href: issueHref(issue) } });
+      pushToast({
+        title: "Task assigned successfully",
+        tone: "success",
+        action: { label: "Open Task", href: issueHref(issue) },
+      });
+    },
+    onError: (err: any) => {
+      pushToast({
+        title: "Failed to create task",
+        description: err?.message || "An unexpected error occurred.",
+        tone: "error",
+      });
     },
   });
 
-  const visibleTasks = useMemo(() => {
-    return issues.filter((issue) => {
-      const text = `${issue.title} ${issue.identifier ?? ""}`.toLowerCase();
-      return text.includes(taskSearch.toLowerCase()) &&
-        (!taskAgentFilter || issue.assigneeAgentId === taskAgentFilter) &&
-        (!taskStatusFilter || issue.status === taskStatusFilter);
-    }).sort((a, b) => taskSort === "title" ? a.title.localeCompare(b.title)
-      : (new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()) * (taskSort === "oldest" ? -1 : 1));
-  }, [issues, taskSearch, taskAgentFilter, taskStatusFilter, taskSort]);
-
-  const copyRunId = () => {
-    if (!activeRunId) return;
-    navigator.clipboard.writeText(activeRunId);
-    setCopiedRunId(true);
-    setTimeout(() => setCopiedRunId(false), 2000);
+  const issueHref = (issue: { id: string; identifier?: string | null }) => {
+    return `/issues/${issue.id}`;
   };
 
-  /* ───────────────────────────────────────────────────────────────────────── */
-  /* MODE: TASKS                                                               */
-  /* ───────────────────────────────────────────────────────────────────────── */
-  if (mode === "tasks") {
+  /* ── Tasks Tab Filter State ── */
+
+  const [taskSearch, setTaskSearch] = useState("");
+  const [taskAgentFilter, setTaskAgentFilter] = useState("");
+  const [taskStatusFilter, setTaskStatusFilter] = useState("");
+  const [taskPriorityFilter, setTaskPriorityFilter] = useState("");
+  const [taskSort, setTaskSort] = useState<"newest" | "oldest" | "title" | "priority">("newest");
+
+  const visibleTasks = useMemo(() => {
+    return issues
+      .filter((issue) => {
+        const text = `${issue.title} ${issue.identifier ?? ""} ${issue.description ?? ""}`.toLowerCase();
+        if (taskSearch && !text.includes(taskSearch.toLowerCase())) return false;
+        if (taskAgentFilter && issue.assigneeAgentId !== taskAgentFilter) return false;
+        if (taskStatusFilter && issue.status !== taskStatusFilter) return false;
+        if (taskPriorityFilter && (issue.priority ?? "normal") !== taskPriorityFilter) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (taskSort === "title") return a.title.localeCompare(b.title);
+        if (taskSort === "priority") return (b.priority ?? "").localeCompare(a.priority ?? "");
+        if (taskSort === "oldest") return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+  }, [issues, taskSearch, taskAgentFilter, taskStatusFilter, taskPriorityFilter, taskSort]);
+
+  /* ── Activity Tab Filter State ── */
+
+  const [activityFilter, setActivityFilter] = useState<"all" | "delegation" | "started" | "completed" | "blocked">("all");
+  const [activityAgentFilter, setActivityAgentFilter] = useState("");
+  const [activitySearch, setActivitySearch] = useState("");
+
+  const filteredActivity = useMemo(() => {
+    return activityFeed.filter((item) => {
+      if (activityFilter !== "all" && item.type !== activityFilter) return false;
+      if (activityAgentFilter && item.agentId !== activityAgentFilter) return false;
+      if (activitySearch) {
+        const q = activitySearch.toLowerCase();
+        if (
+          !item.message.toLowerCase().includes(q) &&
+          !item.issueTitle.toLowerCase().includes(q) &&
+          !(item.issueIdentifier ?? "").toLowerCase().includes(q)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [activityFeed, activityFilter, activityAgentFilter, activitySearch]);
+
+  /* ── Team Drilldown State ── */
+
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const selectedAgent = useMemo(() => {
+    if (!selectedAgentId) return null;
+    return teamMembers.find((a) => a.id === selectedAgentId) ?? null;
+  }, [selectedAgentId, teamMembers]);
+
+  /* ── Export Executive Report ── */
+
+  const exportExecutiveReport = () => {
+    const report = `# AI Project Status Report — ${project.name}
+Generated: ${new Date().toISOString()}
+
+## Executive Summary
+- Project Status: ${projectStatus.label}
+- Progress: ${completionPercentage}% (${completedTasks.length}/${issues.length} tasks completed)
+- Active AI Specialists: ${activeAgents.length}
+- Deliverables Created: ${totalWorkspaceFiles} workspace files (${newOrModifiedFiles} new/modified)
+- Last Activity: ${lastActivity.time} — ${lastActivity.note}
+
+## Tasks Breakdown
+${issues
+  .map(
+    (i) =>
+      `- [${i.status.toUpperCase()}] ${i.identifier ?? i.id.slice(0, 8)}: ${i.title} (Assignee: ${
+        agentById.get(i.assigneeAgentId ?? "")?.name ?? "Unassigned"
+      }, Priority: ${i.priority ?? "normal"})`,
+  )
+  .join("\n")}
+
+## AI Team Roster
+${teamMembers
+  .map(
+    (a) =>
+      `- ${a.name} (${a.role}): ${a.completedTasks}/${a.totalTasks} tasks completed · Status: ${a.status.toUpperCase()}`,
+  )
+  .join("\n")}
+`;
+
+    const blob = new Blob([report], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${project.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-status-report.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    pushToast({ title: "Project status report downloaded", tone: "success" });
+  };
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     SHARED COMPONENT: TOP SUMMARY AREA (Requirement 3)
+     ───────────────────────────────────────────────────────────────────────────── */
+
+  const renderTopSummaryArea = () => {
     return (
-      <div className="space-y-5" data-testid="project-tasks">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-semibold">Công việc AI thực hiện</h3>
-            <p className="text-sm text-muted-foreground">Task do AI tạo và Task thủ công được phân công theo Workflow.</p>
+      <section className="rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs" aria-label="Project Status Summary">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          {/* Project Identity & Health */}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary shrink-0">
+              <Bot className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-bold text-foreground truncate">{project.name}</h1>
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${projectStatus.badge.className}`}>
+                  <span className={`h-2 w-2 rounded-full ${projectStatus.badge.dotColor} ${projectStatus.tone === "in_progress" ? "motion-safe:animate-pulse" : ""}`} />
+                  {projectStatus.label}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5 truncate">{projectStatus.description}</p>
+            </div>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setManualOpen(true)}>
-            <Plus className="mr-1 h-4 w-4" />Thêm Task thủ công
+
+          {/* Quick Actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => openAssignTaskDialog()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Assign Task
+            </Button>
+            <Button size="sm" variant="outline" onClick={exportExecutiveReport} title="Export executive markdown report">
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Export Report
+            </Button>
+            <Button size="sm" variant="outline" asChild title="Open 3D Virtual AI Company Office">
+              <Link to="/office">
+                <Building2 className="mr-1.5 h-3.5 w-3.5 text-primary" /> 3D Office
+              </Link>
+            </Button>
+          </div>
+        </div>
+
+        {/* 5 KPI Metric Strip */}
+        <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-4 border-t border-border/60">
+          {/* Project Status */}
+          <div className="rounded-lg bg-muted/40 p-3">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Project Status</span>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-sm font-bold text-foreground truncate">{projectStatus.label}</span>
+              <Activity className="h-4 w-4 text-primary" />
+            </div>
+            <span className="mt-1 text-[11px] text-muted-foreground truncate block">
+              {completionPercentage}% completed
+            </span>
+          </div>
+
+          {/* Active Agents */}
+          <div className="rounded-lg bg-muted/40 p-3">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Active Agents</span>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-xl font-bold text-foreground tabular-nums">{activeAgents.length}</span>
+              <Users className="h-4 w-4 text-blue-500" />
+            </div>
+            <span className="mt-1 text-[11px] text-muted-foreground truncate block">
+              Of {agents.length} specialist agents
+            </span>
+          </div>
+
+          {/* Open Tasks */}
+          <div className="rounded-lg bg-muted/40 p-3">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Open Tasks</span>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-xl font-bold text-foreground tabular-nums">{openTasks.length}</span>
+              <ListTodo className="h-4 w-4 text-amber-500" />
+            </div>
+            <span className="mt-1 text-[11px] text-muted-foreground truncate block">
+              {completedTasks.length} of {issues.length} done
+            </span>
+          </div>
+
+          {/* Outputs */}
+          <div className="rounded-lg bg-muted/40 p-3">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Outputs</span>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-xl font-bold text-foreground tabular-nums">{totalWorkspaceFiles}</span>
+              <FileCode className="h-4 w-4 text-emerald-500" />
+            </div>
+            <span className="mt-1 text-[11px] text-muted-foreground truncate block">
+              {newOrModifiedFiles} new / modified files
+            </span>
+          </div>
+
+          {/* Last Activity */}
+          <div className="rounded-lg bg-muted/40 p-3 col-span-2 sm:col-span-1">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Last Activity</span>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-sm font-semibold text-foreground truncate">{lastActivity.time}</span>
+              <Clock className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <span className="mt-1 text-[11px] text-muted-foreground truncate block" title={lastActivity.note}>
+              {lastActivity.note}
+            </span>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     EMPTY STATE (Requirement 2)
+     ───────────────────────────────────────────────────────────────────────────── */
+
+  const renderEmptyState = () => {
+    return (
+      <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center shadow-xs">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-inner">
+          <Bot className="h-7 w-7" />
+        </div>
+        <h3 className="mt-4 text-lg font-bold text-foreground">No active work yet</h3>
+        <p className="mx-auto mt-1.5 max-w-md text-xs text-muted-foreground leading-relaxed">
+          This project is ready, but no native Paperclip task has started. Assign tasks to initiate planning,
+          specification, and implementation by autonomous AI specialists.
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Button size="sm" onClick={() => openAssignTaskDialog("ceo")} className="gap-1.5">
+            <Sparkles className="h-4 w-4" /> Assign Task to CEO
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => openAssignTaskDialog("pm")} className="gap-1.5">
+            <UserCheck className="h-4 w-4" /> Assign Task to Project Manager
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => onNavigateTab?.("tasks")} className="gap-1.5">
+            <ListChecks className="h-4 w-4" /> Open Task Board
           </Button>
         </div>
+      </div>
+    );
+  };
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-48 flex-1">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input className="pl-8" placeholder="Tìm Task…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} />
-          </div>
-          <select className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={taskAgentFilter} onChange={(e) => setTaskAgentFilter(e.target.value)}>
-            <option value="">Tất cả Agent</option>
-            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-          <select className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={taskStatusFilter} onChange={(e) => setTaskStatusFilter(e.target.value)}>
-            <option value="">Mọi trạng thái</option>
-            {["todo", "in_progress", "blocked", "in_review", "done"].map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
-          </select>
-          <select className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={taskSort} onChange={(e) => setTaskSort(e.target.value as typeof taskSort)}>
-            <option value="newest">Cập nhật gần nhất</option>
-            <option value="oldest">Cập nhật cũ nhất</option>
-            <option value="title">Theo tên</option>
-          </select>
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ACTION CENTER & ATTENTION ITEMS (Requirement 4)
+     ───────────────────────────────────────────────────────────────────────────── */
+
+  const renderActionCenter = () => {
+    if (blockedTasks.length === 0 && inReviewTasks.length === 0) return null;
+
+    return (
+      <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:p-5 shadow-xs" aria-label="Action Center">
+        <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-semibold text-sm">
+          <AlertCircle className="h-4 w-4" />
+          <span>Action Center ({blockedTasks.length + inReviewTasks.length} items needing attention)</span>
         </div>
 
-        {visibleTasks.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border bg-muted/20 p-8 text-center">
-            <ListChecks className="mx-auto h-7 w-7 text-muted-foreground" />
-            <h3 className="mt-3 font-semibold">Chưa có công việc nào</h3>
-            <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Các Task do AI sinh ra sẽ hiển thị ở đây khi Workflow được kích hoạt.</p>
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
-            <div className="hidden grid-cols-[minmax(14rem,2fr)_minmax(8rem,1fr)_7rem_7rem_8rem] gap-2 border-b border-border bg-muted/30 px-3 py-2 text-xs font-semibold text-muted-foreground md:grid">
-              <span>Task</span><span>Agent phụ trách</span><span>Trạng thái</span><span>Mã Task</span><span>Cập nhật</span>
-            </div>
-            {visibleTasks.map((issue) => (
-              <div key={issue.id} className="grid gap-2 border-b border-border/60 px-3 py-3 text-sm last:border-b-0 md:grid-cols-[minmax(14rem,2fr)_minmax(8rem,1fr)_7rem_7rem_8rem] md:items-center hover:bg-muted/30">
-                <Link to={issueHref(issue)} className="min-w-0 font-medium text-foreground hover:text-primary hover:underline truncate">
-                  {issue.title}
-                </Link>
-                <span className="truncate text-muted-foreground">
-                  {agents.find((a) => a.id === issue.assigneeAgentId)?.name ?? "Chưa phân công"}
-                </span>
-                <span>{statusLabel(issue.status)}</span>
-                <span className="text-xs font-mono text-muted-foreground">{issue.identifier ?? issue.id.slice(0, 8)}</span>
-                <span className="text-xs text-muted-foreground">{formattedDateTime(issue.updatedAt)}</span>
+        <div className="mt-3 space-y-2.5">
+          {/* Blocked Tasks */}
+          {blockedTasks.map((task) => {
+            const agent = task.assigneeAgentId ? agentById.get(task.assigneeAgentId) : null;
+            return (
+              <div
+                key={task.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-500/20 bg-background/90 p-3 text-xs"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-foreground">{task.title}</span>
+                    <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-600 dark:text-red-400">
+                      Blocked
+                    </span>
+                    {task.identifier && <span className="font-mono text-muted-foreground text-[10px]">({task.identifier})</span>}
+                  </div>
+                  <p className="text-muted-foreground">
+                    Assigned to {agent?.name ?? "Specialist"}. Check logs or unblock dependencies to resume work.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" asChild className="h-7 text-xs border-red-500/30 text-red-600 hover:bg-red-500/10">
+                    <Link to={issueHref(task)}>Inspect Task</Link>
+                  </Button>
+                </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
+
+          {/* In Review Tasks */}
+          {inReviewTasks.map((task) => {
+            const agent = task.assigneeAgentId ? agentById.get(task.assigneeAgentId) : null;
+            return (
+              <div
+                key={task.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/20 bg-background/90 p-3 text-xs"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-foreground">{task.title}</span>
+                    <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-600 dark:text-amber-400">
+                      Waiting Review
+                    </span>
+                    {task.identifier && <span className="font-mono text-muted-foreground text-[10px]">({task.identifier})</span>}
+                  </div>
+                  <p className="text-muted-foreground">
+                    Submitted by {agent?.name ?? "Specialist"} for deliverable verification.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" asChild className="h-7 text-xs">
+                    <Link to={issueHref(task)}>Review Deliverable</Link>
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    );
+  };
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     TAB 1: OVERVIEW PAGE
+     ───────────────────────────────────────────────────────────────────────────── */
+
+  if (currentTab === "overview") {
+    return (
+      <div className="space-y-6" data-testid="project-overview">
+        {renderTopSummaryArea()}
+
+        {issues.length === 0 ? (
+          renderEmptyState()
+        ) : (
+          <>
+            {renderActionCenter()}
+
+            {/* Current Activity + Recent Outputs */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* Current Activity (7 cols) */}
+              <section className="lg:col-span-7 rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-3.5">
+                    <h3 className="text-sm font-semibold flex items-center gap-2 text-foreground">
+                      <Activity className="h-4 w-4 text-primary" />
+                      Current Activity Feed
+                    </h3>
+                    {onNavigateTab && (
+                      <button
+                        type="button"
+                        onClick={() => onNavigateTab("activity")}
+                        className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+                      >
+                        View Full Activity <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {activityFeed.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic py-8 text-center">
+                      No agent activity recorded yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {activityFeed.slice(0, 5).map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/20 p-2.5 text-xs hover:bg-muted/40 transition-colors"
+                        >
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-primary shrink-0 mt-0.5">
+                            {item.type === "delegation" ? (
+                              <Users className="h-3.5 w-3.5 text-blue-500" />
+                            ) : item.type === "completed" ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                            ) : item.type === "blocked" ? (
+                              <AlertCircle className="h-3.5 w-3.5 text-red-500" />
+                            ) : (
+                              <Bot className="h-3.5 w-3.5 text-primary" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-foreground truncate">
+                                {item.agentName ?? "Specialist Agent"}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground shrink-0">
+                                {formattedRelativeTime(item.timestamp)}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-muted-foreground text-[11px] leading-relaxed">
+                              {item.message}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-border/50 text-[11px] text-muted-foreground flex items-center justify-between">
+                  <span>Live heartbeat polling active</span>
+                  {onNavigateTab && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab("activity")}
+                      className="text-primary hover:underline font-medium"
+                    >
+                      {activityFeed.length} total events
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              {/* Recent Outputs (5 cols) */}
+              <section className="lg:col-span-5 rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-3.5">
+                    <h3 className="text-sm font-semibold flex items-center gap-2 text-foreground">
+                      <FileCode className="h-4 w-4 text-primary" />
+                      Recent Outputs & Deliverables
+                    </h3>
+                    {onNavigateTab && (
+                      <button
+                        type="button"
+                        onClick={() => onNavigateTab("outputs")}
+                        className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+                      >
+                        Explore Outputs <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {(workspaceFilesQuery.data ?? []).length === 0 ? (
+                    <div className="py-8 text-center text-xs text-muted-foreground">
+                      <FileCode2 className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+                      <p className="font-medium text-foreground">No outputs generated yet</p>
+                      <p className="mt-1 text-[11px]">Artifacts and files will appear here as agents execute tasks.</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-border/40 font-mono text-xs">
+                      {(workspaceFilesQuery.data ?? []).slice(0, 5).map((file) => (
+                        <div key={file.path} className="py-2.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-foreground truncate" title={file.path}>
+                              {file.path}
+                            </p>
+                            <span className="font-sans text-[10px] text-muted-foreground">
+                              By {file.agent} · {(file.size / 1024).toFixed(1)} KB
+                            </span>
+                          </div>
+                          <div>
+                            {file.is_new ? (
+                              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-emerald-600 dark:text-emerald-400">
+                                NEW
+                              </span>
+                            ) : file.is_modified ? (
+                              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-amber-600 dark:text-amber-400">
+                                MODIFIED
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-border/50 text-[11px] text-muted-foreground flex items-center justify-between">
+                  <span>{totalWorkspaceFiles} workspace deliverables</span>
+                  {onNavigateTab && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab("outputs")}
+                      className="text-primary hover:underline font-medium"
+                    >
+                      Open Outputs
+                    </button>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            {/* Team Snapshot (Requirement 4) */}
+            <section className="rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-3.5">
+                <div>
+                  <h3 className="text-sm font-semibold flex items-center gap-2 text-foreground">
+                    <Users className="h-4 w-4 text-primary" />
+                    Team Snapshot
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Specialist AI agents assigned to deliver this software project.
+                  </p>
+                </div>
+                {onNavigateTab && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigateTab("team")}
+                    className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+                  >
+                    View Team Ledger <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                {teamMembers.map((member) => {
+                  const badge = statusBadgeInfo(member.status);
+                  return (
+                    <div
+                      key={member.id}
+                      onClick={() => setSelectedAgentId(member.id)}
+                      className="flex flex-col justify-between rounded-lg border border-border/80 bg-background/60 p-3 hover:border-border hover:bg-muted/20 cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-primary shrink-0">
+                            <Bot className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-xs text-foreground truncate">{member.name}</p>
+                            <span className="text-[10px] text-muted-foreground truncate block">{member.role}</span>
+                          </div>
+                        </div>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-semibold shrink-0 ${badge.className}`}>
+                          {badge.label}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 border-t border-border/50 pt-2 text-[10px]">
+                        <span className="text-muted-foreground block truncate">
+                          {member.activeTask ? `Working on: ${member.activeTask.title}` : "No active task"}
+                        </span>
+                        <div className="mt-1 flex items-center justify-between text-muted-foreground">
+                          <span>{member.completedTasks} completed</span>
+                          <span>{member.totalOutputs} outputs</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </>
         )}
 
-        <Dialog open={manualOpen} onOpenChange={setManualOpen}>
-          <DialogContent>
-            <DialogHeader><DialogTitle>Thêm Task thủ công</DialogTitle></DialogHeader>
-            <p className="text-sm text-muted-foreground">Task được thêm vào dự án và không làm thay đổi cấu trúc Workflow.</p>
-            <div className="space-y-3">
-              <Input placeholder="Tên Task" value={manualTitle} onChange={(e) => setManualTitle(e.target.value)} />
-              <Textarea placeholder="Mô tả công việc" value={manualDescription} onChange={(e) => setManualDescription(e.target.value)} />
-              <select className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm" value={manualAgentId} onChange={(e) => setManualAgentId(e.target.value)}>
-                <option value="">Chọn Agent phụ trách</option>
-                {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setManualOpen(false)}>Hủy</Button>
-              <Button disabled={!manualTitle.trim() || !manualAgentId || createManualTask.isPending} onClick={() => createManualTask.mutate()}>
-                {createManualTask.isPending ? "Đang thêm…" : "Thêm Task"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        {/* Task Creation Dialog */}
+        {renderTaskDialog()}
+        {renderAgentDrilldownDrawer()}
       </div>
     );
   }
 
-  /* ───────────────────────────────────────────────────────────────────────── */
-  /* MODE: OVERVIEW (TRUNG TÂM GIÁM SÁT THỜI GIAN THỰC)                       */
-  /* ───────────────────────────────────────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────────────────────────────────
+     TAB 2: ACTIVITY FEED PAGE (Requirement 6)
+     ───────────────────────────────────────────────────────────────────────────── */
 
-  return (
-    <div className="space-y-6" data-testid="project-overview">
-      {/* ── Disconnected Reconnect Banner ── */}
-      {isDisconnected && (
-        <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-400">
-          <WifiOff className="h-4 w-4 shrink-0 motion-safe:animate-pulse" />
-          <span className="font-medium">Mất kết nối với máy chủ, đang tự động thử lại...</span>
-        </div>
-      )}
+  if (currentTab === "activity") {
+    return (
+      <div className="space-y-6" data-testid="project-activity">
+        {renderTopSummaryArea()}
 
-      {/* ── Empty state: No active run and no workflow ── */}
-      {!binding && !run && (
-        <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center">
-          <WorkflowIcon className="mx-auto h-8 w-8 text-muted-foreground/60" />
-          <h3 className="mt-3 text-base font-semibold">Chưa có lượt chạy Workflow nào đang hoạt động</h3>
-          <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
-            Bắt đầu giao yêu cầu cho AI hoặc gán một Workflow template cho dự án để theo dõi quy trình tự động.
-          </p>
-          <div className="mt-4 flex justify-center gap-3">
-            <Button size="sm" asChild>
-              <Link to={submitHref}><Plus className="mr-1.5 h-4 w-4" />Giao yêu cầu cho AI</Link>
-            </Button>
-            <Button size="sm" variant="outline" asChild>
-              <Link to={workflowHref}>Quản lý Workflow</Link>
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Section A: Run Status Bar ── */}
-      {run && (
-        <section className="rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5" aria-label="Thanh trạng thái run">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            {/* Run ID & Status */}
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs font-mono">
-                <span className="text-muted-foreground">RUN:</span>
-                <span className="font-semibold text-foreground">{run.id}</span>
-                <button
-                  type="button"
-                  onClick={copyRunId}
-                  className="ml-1 text-muted-foreground hover:text-foreground"
-                  title="Sao chép Run ID"
-                  aria-label="Sao chép Run ID"
-                >
-                  {copiedRunId ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                </button>
-              </div>
-
-              {/* Status Pill */}
-              <div className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium">
-                {run.status === "running" ? (
-                  <span className="inline-flex items-center gap-1.5 text-blue-500 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-full">
-                    <span className="h-2 w-2 rounded-full bg-blue-500 motion-safe:animate-pulse" />
-                    Đang chạy
-                  </span>
-                ) : run.status === "paused" ? (
-                  <span className="inline-flex items-center gap-1.5 text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full">
-                    <span className="h-2 w-2 rounded-full bg-amber-500" />
-                    Tạm dừng
-                  </span>
-                ) : run.status === "completed" ? (
-                  <span className="inline-flex items-center gap-1.5 text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full">
-                    <CheckCircle2 className="h-3 w-3" />
-                    Hoàn thành
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-red-500 bg-red-500/10 border border-red-500/20 px-2.5 py-0.5 rounded-full">
-                    <XCircle className="h-3 w-3" />
-                    {run.status === "waiting_approval" ? "Chờ duyệt" : "Lỗi"}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Metrics: Progress, Active Agents, Real Elapsed Timer */}
-            <div className="flex flex-wrap items-center gap-6 text-xs text-muted-foreground">
-              {/* Progress derived from template nodes count */}
-              <div className="flex items-center gap-2">
-                <span>Tiến độ:</span>
-                <span className="font-semibold text-foreground tabular-nums">
-                  {progressStats.completedNodes}/{progressStats.totalNodes} node ({progressStats.percent}%)
-                </span>
-                <div className="h-2 w-20 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all duration-300"
-                    style={{ width: `${progressStats.percent}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Running Agents Count */}
-              <div>
-                <span>Agent đang chạy:</span>{" "}
-                <span className="font-semibold text-foreground tabular-nums">{runningNodeIds.length}</span>
-              </div>
-
-              {/* Real-time Seconds Elapsed Timer */}
-              <div className="flex items-center gap-1.5 font-mono">
-                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="font-semibold text-foreground tabular-nums">
-                  {formattedDuration(run.startedAt, run.finishedAt, nowTs)}
-                </span>
-              </div>
-            </div>
-
-            {/* Run Actions Toolbar */}
-            <div className="flex items-center gap-2">
-              {run.status === "running" && (
-                <Button size="sm" variant="outline" disabled={actionBusy} onClick={() => executeRunAction("pause-workflow-run")}>
-                  <Pause className="mr-1 h-3.5 w-3.5" />Tạm dừng
-                </Button>
-              )}
-              {run.status === "paused" && (
-                <Button size="sm" variant="default" disabled={actionBusy} onClick={() => executeRunAction("resume-workflow-run")}>
-                  <Play className="mr-1 h-3.5 w-3.5" />Tiếp tục
-                </Button>
-              )}
-              {(run.status === "running" || run.status === "paused") && (
-                <Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/10" disabled={actionBusy} onClick={() => executeRunAction("stop-workflow-run")}>
-                  <Square className="mr-1 h-3.5 w-3.5" />Dừng
-                </Button>
-              )}
-              <Button size="sm" variant="outline" asChild>
-                <Link to={monitorHref}>
-                  <ExternalLink className="mr-1 h-3.5 w-3.5" />Mở Live Monitor
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* ── Section E: Cần bạn xử lý (Needs Attention) ── */}
-      {/* ONLY rendered when there are approvals, errors, or blocked nodes. Hidden otherwise. */}
-      {attentionItems.length > 0 && (
-        <section className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 sm:p-5 shadow-xs" aria-label="Cần bạn xử lý">
-          <div className="flex items-center gap-2 text-destructive font-semibold text-sm">
-            <AlertCircle className="h-4 w-4" />
-            <span>Cần bạn xử lý ({attentionItems.length})</span>
-          </div>
-          <div className="mt-3 space-y-2.5">
-            {attentionItems.map((item) => (
-              <div
-                key={item.nodeId}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-background/80 p-3 text-xs"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-foreground">{item.title}</span>
-                    <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-destructive">
-                      {item.type === "failed" ? "Lỗi thực thi" : item.type === "approval" ? "Chờ duyệt" : "Bị chặn"}
-                    </span>
-                    {item.agentName && <span className="text-muted-foreground font-mono">({item.agentName})</span>}
-                  </div>
-                  <p className="text-muted-foreground">{item.reason}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {item.type === "failed" && item.canRetry && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="border-destructive/30 text-destructive hover:bg-destructive/10 text-xs h-7"
-                      disabled={actionBusy}
-                      onClick={() => executeRunAction("retry-failed-step", { nodeId: item.nodeId })}
-                    >
-                      <RotateCw className="mr-1 h-3 w-3" />Thử lại bước này
-                    </Button>
-                  )}
-                  {item.type === "approval" && (
-                    <>
-                      <Button
-                        size="sm"
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-7"
-                        disabled={actionBusy}
-                        onClick={() => executeRunAction("decide-run-approval", { nodeId: item.nodeId, decision: "approve" })}
-                      >
-                        <Check className="mr-1 h-3 w-3" />Duyệt
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-xs h-7"
-                        disabled={actionBusy}
-                        onClick={() => executeRunAction("decide-run-approval", { nodeId: item.nodeId, decision: "reject" })}
-                      >
-                        Từ chối
-                      </Button>
-                    </>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-xs h-7 text-primary hover:underline"
-                    onClick={() => setSelectedNodeId(item.nodeId)}
-                  >
-                    Xem chi tiết
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* ── Section B: Đồ thị Workflow thu nhỏ (Mini Workflow Graph) ── */}
-      {rawNodes.length > 0 && (
-        <section className="rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs" aria-label="Đồ thị Workflow">
+        <section className="rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div>
-              <h3 className="text-sm font-semibold flex items-center gap-2">
-                <WorkflowIcon className="h-4 w-4 text-primary" />
-                Đồ thị quy trình ({binding?.templateName ?? "Workflow"})
-              </h3>
+              <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <Activity className="h-4 w-4 text-primary" />
+                Live Agent Activity & Delegations
+              </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Cập nhật thời gian thực theo từng node của workflow template. Bấm vào node để xem ngăn chi tiết.
+                Real-time stream of agent task assignments, inter-agent delegations, and execution milestones.
               </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer text-muted-foreground hover:text-foreground">
-                <input
-                  type="checkbox"
-                  checked={followRunning}
-                  onChange={(e) => setFollowRunning(e.target.checked)}
-                  className="rounded border-border text-primary focus:ring-primary"
-                />
-                Theo dõi (Follow)
-              </label>
             </div>
           </div>
 
-          {/* Graph Nodes Canvas */}
-          <div className="relative overflow-x-auto pb-4 pt-2">
-            <div className="flex items-center gap-3 min-w-max px-2">
-              {rawNodes.map((node, index) => {
-                const st = nodeStates[node.id];
-                const status = mapNodeExecutionStatus(st);
-                const isRunning = status === "running";
-                const isFailed = status === "failed";
-                const isDone = status === "done";
-                const isApproval = status === "waiting_approval";
-                const isSelected = selectedNodeId === node.id;
-                const nodeTitle = node.data?.title || node.id;
-                const agentName = node.data?.agentName || st?.agentName;
+          {/* Filters Bar */}
+          <div className="flex flex-wrap items-center gap-2.5 pb-4 border-b border-border/60">
+            {/* Search */}
+            <div className="relative min-w-44 flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                className="h-8 pl-8 text-xs"
+                placeholder="Search activity events..."
+                value={activitySearch}
+                onChange={(e) => setActivitySearch(e.target.value)}
+              />
+            </div>
 
-                // Find latest log for this node
-                const nodeLatestLog = run?.executionHistory
-                  ?.filter((entry) => entry.nodeId === node.id)
-                  ?.slice(-1)[0]?.message;
+            {/* Type Filter */}
+            <div className="flex rounded-md border border-border bg-muted/40 p-0.5 text-xs">
+              {(
+                [
+                  { key: "all", label: "All" },
+                  { key: "delegation", label: "Delegations" },
+                  { key: "started", label: "Started" },
+                  { key: "completed", label: "Completed" },
+                  { key: "blocked", label: "Blocked" },
+                ] as const
+              ).map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setActivityFilter(f.key)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                    activityFilter === f.key
+                      ? "bg-background font-semibold text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
 
-                return (
-                  <React.Fragment key={node.id}>
-                    {/* Node Box */}
-                    <div
-                      ref={isRunning ? runningNodeRef : undefined}
-                      onClick={() => setSelectedNodeId(node.id)}
-                      className={`relative flex flex-col justify-between w-52 min-h-[92px] rounded-lg border p-3 cursor-pointer transition-all duration-200 select-none ${
-                        isRunning
-                          ? "border-blue-500 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.4)] motion-safe:animate-pulse ring-2 ring-blue-500/40"
-                          : isFailed
-                          ? "border-red-500 bg-red-500/10 shadow-[0_0_12px_rgba(239,68,68,0.3)] ring-1 ring-red-500/40"
-                          : isDone
-                          ? "border-emerald-500/60 bg-emerald-500/5 text-foreground hover:border-emerald-500"
-                          : isApproval
-                          ? "border-amber-500 bg-amber-500/10 ring-1 ring-amber-500/40"
-                          : "border-border/70 bg-card/60 text-muted-foreground/80 hover:border-border hover:text-foreground"
-                      } ${isSelected ? "ring-2 ring-primary" : ""}`}
-                    >
-                      {/* Node Top Header */}
-                      <div className="flex items-center justify-between gap-1 text-[11px] mb-1">
-                        <span className="font-semibold uppercase tracking-wider text-[10px] text-muted-foreground truncate">
-                          {node.data?.kind || "task"}
-                        </span>
-                        {/* Status Icon / Duration */}
-                        <div className="flex items-center gap-1 font-mono text-[10px]">
-                          {isDone && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
-                          {isRunning && <span className="h-2 w-2 rounded-full bg-blue-500 motion-safe:animate-pulse" />}
-                          {isFailed && <XCircle className="h-3 w-3 text-red-500" />}
-                          {isApproval && <AlertTriangle className="h-3 w-3 text-amber-500" />}
-                          <span className="text-muted-foreground tabular-nums">
-                            {formattedDuration(st?.startedAt, st?.finishedAt, nowTs)}
-                          </span>
-                        </div>
-                      </div>
+            {/* Agent Filter */}
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
+              value={activityAgentFilter}
+              onChange={(e) => setActivityAgentFilter(e.target.value)}
+            >
+              <option value="">All Agents</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-                      {/* Node Title */}
-                      <div className="font-medium text-xs text-foreground truncate" title={nodeTitle}>
-                        {nodeTitle}
-                      </div>
-
-                      {/* Agent & Identifier */}
-                      <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
-                        <span className="truncate max-w-[120px]">{agentName || "System"}</span>
-                        {st?.issueIdentifier && (
-                          <span className="font-mono bg-muted/60 px-1 rounded">{st.issueIdentifier}</span>
+          {/* Activity Timeline List */}
+          <div className="mt-4">
+            {filteredActivity.length === 0 ? (
+              <div className="py-12 text-center text-xs text-muted-foreground">
+                <Activity className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+                <p className="font-semibold text-foreground">No events found</p>
+                <p className="mt-1">Events will appear as agents begin delegating and executing tasks.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredActivity.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-start justify-between gap-3 rounded-lg border border-border/70 bg-card p-3.5 hover:bg-muted/20 transition-colors"
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary shrink-0 mt-0.5">
+                        {item.type === "delegation" ? (
+                          <Users className="h-4 w-4 text-blue-500" />
+                        ) : item.type === "completed" ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                        ) : item.type === "blocked" ? (
+                          <AlertCircle className="h-4 w-4 text-red-500" />
+                        ) : (
+                          <Bot className="h-4 w-4 text-primary" />
                         )}
                       </div>
 
-                      {/* Running Agent Latest Log Line */}
-                      {isRunning && nodeLatestLog && (
-                        <div className="mt-1.5 border-t border-blue-500/20 pt-1 text-[10px] text-blue-600 dark:text-blue-400 truncate" title={nodeLatestLog}>
-                          {nodeLatestLog}
-                        </div>
-                      )}
+                      <div className="min-w-0">
+                        {item.type === "delegation" ? (
+                          <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-foreground">
+                            <span>{item.fromAgentName}</span>
+                            <ArrowRight className="h-3 w-3 text-primary" />
+                            <span>{item.toAgentName}</span>
+                            <span className="rounded bg-blue-500/15 px-1.5 py-0.2 text-[10px] text-blue-700 dark:text-blue-300">
+                              Delegation
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-xs text-foreground">
+                              {item.agentName ?? "Specialist Agent"}
+                            </span>
+                            {item.agentRole && (
+                              <span className="text-[10px] text-muted-foreground">({item.agentRole})</span>
+                            )}
+                          </div>
+                        )}
 
-                      {/* Failed Reason */}
-                      {isFailed && st?.error && (
-                        <div className="mt-1.5 border-t border-red-500/20 pt-1 text-[10px] text-red-600 dark:text-red-400 truncate" title={st.error}>
-                          {st.error}
-                        </div>
-                      )}
+                        <p className="mt-1 text-xs text-foreground font-medium">
+                          {item.message}
+                        </p>
 
-                      {/* Approval Action on Node */}
-                      {isApproval && (
-                        <div className="mt-2 pt-1 border-t border-amber-500/20 flex gap-1">
-                          <Button
-                            size="sm"
-                            className="h-5 px-2 text-[10px] bg-amber-600 hover:bg-amber-700 text-white w-full"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void executeRunAction("decide-run-approval", { nodeId: node.id, decision: "approve" });
-                            }}
-                          >
-                            Duyệt ngay
-                          </Button>
+                        <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground font-mono">
+                          {item.issueIdentifier && (
+                            <span className="bg-muted px-1.5 py-0.2 rounded">{item.issueIdentifier}</span>
+                          )}
+                          <Link to={`/issues/${item.issueId}`} className="hover:text-primary hover:underline">
+                            View Task Details →
+                          </Link>
                         </div>
-                      )}
+                      </div>
                     </div>
 
-                    {/* Edge Connector */}
-                    {index < rawNodes.length - 1 && (
-                      <div className="flex items-center justify-center shrink-0 w-6">
-                        <div
-                          className={`h-0.5 w-6 ${
-                            isRunning
-                              ? "border-t-2 border-dashed border-blue-500 motion-safe:animate-pulse"
-                              : isDone
-                              ? "bg-emerald-500/70"
-                              : "bg-border"
-                          }`}
-                        />
-                      </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-[11px] text-muted-foreground">
+                        {formattedDateTime(item.timestamp)}
+                      </span>
+                      <span className="block text-[10px] text-muted-foreground/70">
+                        {formattedRelativeTime(item.timestamp)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
-      )}
 
-      {/* ── Section C: Dải "Agent" (Agent Strip) ── */}
-      {agentStripList.length > 0 && (
-        <section className="rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs" aria-label="Dải Agent">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
-              <Bot className="h-4 w-4 text-primary" />
-              Đội ngũ AI Agents tham gia ({agentStripList.length})
-            </h3>
+        {renderTaskDialog()}
+      </div>
+    );
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     TAB 3: TASKS PAGE (Requirement 7)
+     ───────────────────────────────────────────────────────────────────────────── */
+
+  if (currentTab === "tasks") {
+    return (
+      <div className="space-y-6" data-testid="project-tasks">
+        {renderTopSummaryArea()}
+
+        <section className="rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <ListTodo className="h-4 w-4 text-primary" />
+                Project Tasks & Native Assignments
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Native Paperclip execution tasks, assignments, dependencies, and real-time status.
+              </p>
+            </div>
+
+            <Button size="sm" onClick={() => openAssignTaskDialog()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Task
+            </Button>
           </div>
+
+          {/* Filters Toolbar */}
+          <div className="flex flex-wrap items-center gap-2.5 pb-4 border-b border-border/60">
+            {/* Search */}
+            <div className="relative min-w-48 flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                className="h-8 pl-8 text-xs"
+                placeholder="Search tasks by title or identifier..."
+                value={taskSearch}
+                onChange={(e) => setTaskSearch(e.target.value)}
+              />
+            </div>
+
+            {/* Assignee Filter */}
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
+              value={taskAgentFilter}
+              onChange={(e) => setTaskAgentFilter(e.target.value)}
+            >
+              <option value="">All Assignees</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+
+            {/* Status Filter */}
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
+              value={taskStatusFilter}
+              onChange={(e) => setTaskStatusFilter(e.target.value)}
+            >
+              <option value="">All Statuses</option>
+              {["todo", "in_progress", "in_review", "blocked", "done", "cancelled"].map((s) => (
+                <option key={s} value={s}>
+                  {statusBadgeInfo(s).label}
+                </option>
+              ))}
+            </select>
+
+            {/* Priority Filter */}
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
+              value={taskPriorityFilter}
+              onChange={(e) => setTaskPriorityFilter(e.target.value)}
+            >
+              <option value="">All Priorities</option>
+              <option value="urgent">Urgent</option>
+              <option value="high">High</option>
+              <option value="normal">Normal</option>
+              <option value="low">Low</option>
+            </select>
+
+            {/* Sort */}
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
+              value={taskSort}
+              onChange={(e) => setTaskSort(e.target.value as typeof taskSort)}
+            >
+              <option value="newest">Recently Updated</option>
+              <option value="oldest">Oldest Updated</option>
+              <option value="title">By Title</option>
+              <option value="priority">By Priority</option>
+            </select>
+          </div>
+
+          {/* Tasks Table (Requirement 7: Task, Assignee, Status, Priority, Parent Task, Depends On, Updated At) */}
+          <div className="mt-4 overflow-hidden rounded-lg border border-border">
+            {visibleTasks.length === 0 ? (
+              <div className="py-12 text-center text-xs text-muted-foreground">
+                <ListChecks className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+                <p className="font-semibold text-foreground">No tasks match criteria</p>
+                <p className="mt-1">Try clearing filters or assign a new task to an agent.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40 text-muted-foreground text-[11px]">
+                      <th className="py-2.5 px-3 font-semibold">Task</th>
+                      <th className="py-2.5 px-3 font-semibold">Assignee</th>
+                      <th className="py-2.5 px-3 font-semibold">Status</th>
+                      <th className="py-2.5 px-3 font-semibold">Priority</th>
+                      <th className="py-2.5 px-3 font-semibold">Parent Task</th>
+                      <th className="py-2.5 px-3 font-semibold">Depends On</th>
+                      <th className="py-2.5 px-3 font-semibold">Updated At</th>
+                      <th className="py-2.5 px-3 font-semibold text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {visibleTasks.map((task) => {
+                      const badge = statusBadgeInfo(task.status);
+                      const assignedAgent = task.assigneeAgentId ? agentById.get(task.assigneeAgentId) : null;
+                      const parentTask = task.parentId ? issueById.get(task.parentId) : null;
+                      const blockersCount = (task as any).blockedBy?.length ?? 0;
+
+                      return (
+                        <tr key={task.id} className="hover:bg-muted/20 transition-colors">
+                          {/* Task */}
+                          <td className="py-3 px-3 max-w-xs">
+                            <div className="min-w-0">
+                              <span className="font-mono text-[10px] text-muted-foreground block">
+                                {task.identifier ?? task.id.slice(0, 8)}
+                              </span>
+                              <Link
+                                to={issueHref(task)}
+                                className="font-medium text-foreground hover:text-primary hover:underline truncate block"
+                                title={task.title}
+                              >
+                                {task.title}
+                              </Link>
+                            </div>
+                          </td>
+
+                          {/* Assignee */}
+                          <td className="py-3 px-3">
+                            {assignedAgent ? (
+                              <div className="flex items-center gap-1.5">
+                                <Bot className="h-3.5 w-3.5 text-primary shrink-0" />
+                                <span className="font-medium text-foreground truncate max-w-[120px]">
+                                  {assignedAgent.name}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">Unassigned</span>
+                            )}
+                          </td>
+
+                          {/* Status */}
+                          <td className="py-3 px-3">
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[10px] font-semibold ${badge.className}`}>
+                              <span className={`h-1.5 w-1.5 rounded-full ${badge.dotColor}`} />
+                              {badge.label}
+                            </span>
+                          </td>
+
+                          {/* Priority */}
+                          <td className="py-3 px-3">
+                            <span className={`rounded px-1.5 py-0.2 text-[10px] font-semibold uppercase ${priorityBadgeInfo(task.priority)}`}>
+                              {task.priority ?? "normal"}
+                            </span>
+                          </td>
+
+                          {/* Parent Task */}
+                          <td className="py-3 px-3 max-w-[140px] truncate text-muted-foreground">
+                            {parentTask ? (
+                              <Link
+                                to={issueHref(parentTask)}
+                                className="hover:text-primary hover:underline text-[11px]"
+                                title={parentTask.title}
+                              >
+                                {parentTask.identifier ?? parentTask.title}
+                              </Link>
+                            ) : (
+                              <span className="text-muted-foreground/60">—</span>
+                            )}
+                          </td>
+
+                          {/* Depends On */}
+                          <td className="py-3 px-3 text-muted-foreground">
+                            {blockersCount > 0 ? (
+                              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                                {blockersCount} blocker{blockersCount > 1 ? "s" : ""}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground/60">None</span>
+                            )}
+                          </td>
+
+                          {/* Updated At */}
+                          <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">
+                            {formattedDateTime(task.updatedAt)}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="py-3 px-3 text-right">
+                            <Button size="sm" variant="ghost" className="h-7 text-xs text-primary" asChild>
+                              <Link to={issueHref(task)}>Open</Link>
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {renderTaskDialog()}
+      </div>
+    );
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     TAB 4: TEAM PAGE (Requirement 9)
+     ───────────────────────────────────────────────────────────────────────────── */
+
+  if (currentTab === "team") {
+    const totalTeamTasks = teamMembers.reduce((sum, m) => sum + m.totalTasks, 0);
+    const totalTeamDone = teamMembers.reduce((sum, m) => sum + m.completedTasks, 0);
+    const totalTeamFiles = teamMembers.reduce((sum, m) => sum + m.totalOutputs, 0);
+
+    return (
+      <div className="space-y-6" data-testid="project-team">
+        {renderTopSummaryArea()}
+
+        {/* Team Roster Summary */}
+        <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-xs">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Team Size</span>
+            <p className="mt-1 text-xl font-bold text-foreground">{teamMembers.length}</p>
+            <span className="text-[11px] text-muted-foreground">Specialist AI Agents</span>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-xs">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Tasks Assigned</span>
+            <p className="mt-1 text-xl font-bold text-foreground">{totalTeamTasks}</p>
+            <span className="text-[11px] text-muted-foreground">Across project lifecycle</span>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-xs">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Completed Tasks</span>
+            <p className="mt-1 text-xl font-bold text-emerald-600 dark:text-emerald-400">{totalTeamDone}</p>
+            <span className="text-[11px] text-muted-foreground">Verified & merged</span>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-xs">
+            <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Deliverables</span>
+            <p className="mt-1 text-xl font-bold text-blue-600 dark:text-blue-400">{totalTeamFiles}</p>
+            <span className="text-[11px] text-muted-foreground">Workspace code files</span>
+          </div>
+        </section>
+
+        {/* Team Table */}
+        <section className="rounded-xl border border-border bg-card overflow-hidden shadow-xs">
+          <div className="p-4 sm:p-5 border-b border-border/80 flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <Users className="h-4 w-4 text-primary" />
+                AI Agent Team Ledger
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Overview of all specialist agents, current assignments, completed tasks, and code contributions.
+              </p>
+            </div>
+            <Button size="sm" onClick={() => openAssignTaskDialog()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Delegate Task
+            </Button>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead>
-                <tr className="border-b border-border/80 text-muted-foreground">
-                  <th className="py-2 px-3 font-semibold">Trạng thái</th>
-                  <th className="py-2 px-3 font-semibold">Agent</th>
-                  <th className="py-2 px-3 font-semibold">Vai trò</th>
-                  <th className="py-2 px-3 font-semibold">Nhiệm vụ hiện tại</th>
-                  <th className="py-2 px-3 font-semibold">Thời gian</th>
-                  <th className="py-2 px-3 font-semibold">Chi phí Token</th>
+                <tr className="border-b border-border bg-muted/40 text-muted-foreground text-[11px]">
+                  <th className="py-2.5 px-3 font-semibold">Agent Name</th>
+                  <th className="py-2.5 px-3 font-semibold">Role</th>
+                  <th className="py-2.5 px-3 font-semibold">Status</th>
+                  <th className="py-2.5 px-3 font-semibold">Current Task</th>
+                  <th className="py-2.5 px-3 font-semibold">Tasks Completed</th>
+                  <th className="py-2.5 px-3 font-semibold">Files Created</th>
+                  <th className="py-2.5 px-3 font-semibold">Files Modified</th>
+                  <th className="py-2.5 px-3 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border/40">
-                {agentStripList.map((agent) => (
-                  <tr key={agent.id} className="hover:bg-muted/20">
-                    <td className="py-2.5 px-3">
-                      {agent.status === "running" ? (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 font-medium">
-                          <span className="h-1.5 w-1.5 rounded-full bg-blue-500 motion-safe:animate-pulse" />
-                          Đang chạy
+              <tbody className="divide-y divide-border/50">
+                {teamMembers.map((member) => {
+                  const badge = statusBadgeInfo(member.status);
+                  return (
+                    <tr key={member.id} className="hover:bg-muted/20 transition-colors">
+                      <td className="py-3 px-3 font-semibold text-foreground flex items-center gap-2">
+                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary shrink-0">
+                          <Bot className="h-3.5 w-3.5" />
+                        </div>
+                        {member.name}
+                      </td>
+                      <td className="py-3 px-3 text-muted-foreground">{member.role}</td>
+                      <td className="py-3 px-3">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[10px] font-semibold ${badge.className}`}>
+                          {badge.label}
                         </span>
-                      ) : agent.status === "done" ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 font-medium">
-                          <Check className="h-3 w-3" />
-                          Xong
-                        </span>
-                      ) : agent.status === "error" ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 font-medium">
-                          <X className="h-3 w-3" />
-                          Lỗi
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
-                          Chờ
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 font-medium text-foreground">{agent.name}</td>
-                    <td className="py-2.5 px-3 text-muted-foreground">{agent.role}</td>
-                    <td className="py-2.5 px-3 font-medium">{agent.currentTask}</td>
-                    <td className="py-2.5 px-3 font-mono tabular-nums text-muted-foreground">{agent.duration}</td>
-                    <td className="py-2.5 px-3 font-mono text-muted-foreground">{agent.tokenCost}</td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="py-3 px-3 max-w-xs truncate text-muted-foreground">
+                        {member.activeTask ? (
+                          <Link to={issueHref(member.activeTask)} className="hover:text-primary hover:underline">
+                            {member.activeTask.title}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground/60">Idle</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 font-mono font-semibold">
+                        {member.completedTasks} / {member.totalTasks}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-emerald-600 dark:text-emerald-400">
+                        +{member.filesCreated}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-amber-600 dark:text-amber-400">
+                        ~{member.filesModified}
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-xs text-primary"
+                          onClick={() => setSelectedAgentId(member.id)}
+                        >
+                          View Details
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </section>
-      )}
 
-      {/* ── Section D: Log Trực Tiếp (Live Logs Stream) ── */}
-      {run && (
-        <section className="rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs" aria-label="Log trực tiếp">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <div className="flex items-center gap-2">
-              <Terminal className="h-4 w-4 text-primary" />
-              <h3 className="text-sm font-semibold">Log thực thi trực tiếp</h3>
-              <span className="text-xs text-muted-foreground">({filteredLogs.length} dòng)</span>
+        {renderTaskDialog()}
+        {renderAgentDrilldownDrawer()}
+      </div>
+    );
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     TAB 5: HISTORY PAGE (More -> History)
+     ───────────────────────────────────────────────────────────────────────────── */
+
+  if (currentTab === "history") {
+    return (
+      <div className="space-y-6" data-testid="project-history">
+        {renderTopSummaryArea()}
+
+        <section className="rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <Terminal className="h-4 w-4 text-primary" />
+                Audit History & Task Logs
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Complete audit ledger of task transitions, delegations, and agent executions.
+              </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Filter Pills */}
-              <div className="flex rounded-md border border-border bg-muted/40 p-0.5 text-xs">
-                {(["all", "error", "action"] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    onClick={() => setLogFilter(filter)}
-                    className={`px-2.5 py-1 rounded capitalize ${
-                      logFilter === filter ? "bg-background font-semibold text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {filter === "all" ? "Tất cả" : filter === "error" ? "Lỗi" : "Tool call"}
-                  </button>
-                ))}
-              </div>
-
-              {/* Agent Filter */}
-              <select
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                value={logAgentFilter}
-                onChange={(e) => setLogAgentFilter(e.target.value)}
-              >
-                <option value="">Tất cả Agent</option>
-                {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-
-              {/* Auto Scroll Toggle */}
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 text-xs"
-                onClick={() => setAutoScrollLogs((current) => !current)}
-              >
-                {autoScrollLogs ? "Tạm dừng cuộn" : "Tiếp tục cuộn"}
-              </Button>
-            </div>
+            <Button size="sm" variant="outline" onClick={exportExecutiveReport}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Export Log File
+            </Button>
           </div>
 
-          {/* Logs Terminal Box */}
-          <div
-            ref={logContainerRef}
-            className="h-64 overflow-y-auto rounded-lg border border-border/80 bg-zinc-950 p-3 font-mono text-xs text-zinc-100 select-text"
-          >
-            {filteredLogs.length === 0 ? (
-              <p className="text-zinc-500 py-4 text-center">Chưa có bản ghi log nào phù hợp bộ lọc.</p>
+          <div className="h-96 overflow-y-auto rounded-lg border border-border/80 bg-zinc-950 p-3.5 font-mono text-xs text-zinc-100 select-text">
+            {activityFeed.length === 0 ? (
+              <p className="text-zinc-500 py-10 text-center">No audit entries found.</p>
             ) : (
-              filteredLogs.map((entry) => (
-                <div key={entry.id} className="py-1 flex items-start gap-2 border-b border-zinc-900/60 last:border-b-0">
+              activityFeed.map((entry) => (
+                <div key={entry.id} className="py-1.5 flex items-start gap-2 border-b border-zinc-900/60 last:border-b-0">
                   <span className="text-[10px] text-zinc-500 shrink-0 select-none">
-                    {new Date(entry.timestamp).toLocaleTimeString("vi-VN")}
+                    {new Date(entry.timestamp).toLocaleTimeString("en-US")}
                   </span>
                   <span
                     className={`px-1.5 py-0.2 rounded text-[10px] font-semibold uppercase shrink-0 ${
-                      entry.level === "error"
+                      entry.type === "blocked"
                         ? "bg-red-500/20 text-red-400"
-                        : entry.level === "warn"
-                        ? "bg-amber-500/20 text-amber-400"
-                        : entry.level === "action"
+                        : entry.type === "completed"
+                        ? "bg-emerald-500/20 text-emerald-400"
+                        : entry.type === "delegation"
                         ? "bg-blue-500/20 text-blue-400"
                         : "bg-zinc-800 text-zinc-300"
                     }`}
                   >
-                    {entry.level}
+                    {entry.type}
                   </span>
-                  {entry.nodeId && (
-                    <span className="text-zinc-400 text-[10px] shrink-0 font-semibold">[{entry.nodeId}]</span>
-                  )}
+                  {entry.agentName && <span className="text-zinc-400 text-[10px] font-semibold">[{entry.agentName}]</span>}
                   <span className="break-all leading-relaxed text-zinc-200">{entry.message}</span>
                 </div>
               ))
             )}
           </div>
         </section>
-      )}
 
-      {/* ── Node Detail Drawer (Inspector Modal / Sidebar) ── */}
-      {selectedNode && (
-        <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-background border-l border-border shadow-2xl p-6 flex flex-col overflow-y-auto animate-in slide-in-from-right duration-200">
-          <div className="flex items-center justify-between pb-4 border-b border-border">
+        {renderTaskDialog()}
+      </div>
+    );
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     RENDER: TASK CREATION DIALOG
+     ───────────────────────────────────────────────────────────────────────────── */
+
+  function renderTaskDialog() {
+    return (
+      <Dialog open={taskDialogOpen} onOpenChange={setTaskDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign Native Task</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Create a native Paperclip task and assign it to an AI agent. The agent will execute this task autonomously.
+          </p>
+
+          <div className="space-y-3 pt-2">
             <div>
-              <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                {selectedNode.template?.data.kind || "Task"}
-              </span>
-              <h3 className="text-base font-bold text-foreground">
-                {selectedNode.template?.data.title || selectedNode.id}
-              </h3>
+              <label className="text-xs font-semibold text-foreground mb-1 block">Task Title</label>
+              <Input
+                placeholder="e.g., Define architecture specifications"
+                value={dialogTitle}
+                onChange={(e) => setDialogTitle(e.target.value)}
+                autoFocus
+              />
             </div>
-            <button
-              type="button"
-              onClick={() => setSelectedNodeId(null)}
-              className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-foreground"
-              aria-label="Đóng ngăn chi tiết"
-            >
-              <X className="h-5 w-5" />
-            </button>
+
+            <div>
+              <label className="text-xs font-semibold text-foreground mb-1 block">Assignee Agent</label>
+              <select
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs"
+                value={dialogAgentId}
+                onChange={(e) => setDialogAgentId(e.target.value)}
+              >
+                <option value="">Select an Agent...</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.role ?? "Agent"})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-foreground mb-1 block">Priority</label>
+              <select
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs"
+                value={dialogPriority}
+                onChange={(e) => setDialogPriority(e.target.value as any)}
+              >
+                <option value="urgent">Urgent</option>
+                <option value="high">High</option>
+                <option value="normal">Normal</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-foreground mb-1 block">Description & Instructions</label>
+              <Textarea
+                placeholder="Detailed prompt, instructions, and acceptance criteria..."
+                value={dialogDescription}
+                onChange={(e) => setDialogDescription(e.target.value)}
+                rows={4}
+              />
+            </div>
           </div>
 
-          <div className="py-4 space-y-4 flex-1 text-xs">
-            {/* Status & Timing */}
-            <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/20">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Trạng thái:</span>
-                <span className="font-semibold uppercase">{selectedNode.status}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Thời gian chạy:</span>
-                <span className="font-mono tabular-nums">
-                  {formattedDuration(selectedNode.execution?.startedAt, selectedNode.execution?.finishedAt, nowTs)}
-                </span>
-              </div>
-              {selectedNode.execution?.issueIdentifier && (
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Mã Task:</span>
-                  <span className="font-mono font-semibold">{selectedNode.execution.issueIdentifier}</span>
-                </div>
-              )}
-            </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setTaskDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!dialogTitle.trim() || !dialogAgentId || createTaskMutation.isPending}
+              onClick={() => createTaskMutation.mutate()}
+            >
+              {createTaskMutation.isPending ? "Assigning..." : "Assign Task"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
-            {/* Agent & Model */}
-            <div className="rounded-lg border border-border p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Agent phụ trách:</span>
-                <span className="font-medium text-foreground">
-                  {selectedNode.execution?.agentName || selectedNode.template?.data.agentName || "Chưa phân công"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Vai trò:</span>
-                <span>{selectedNode.execution?.agentRole || selectedNode.template?.data.agentRole || "AI Specialist"}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Model AI:</span>
-                <span className="font-mono bg-muted px-1.5 py-0.5 rounded">{selectedNode.template?.data.model || "gpt-5.6-luna"}</span>
-              </div>
-            </div>
+  /* ─────────────────────────────────────────────────────────────────────────────
+     RENDER: AGENT DRILLDOWN DRAWER
+     ───────────────────────────────────────────────────────────────────────────── */
 
-            {/* Error / Last Gate Code */}
-            {selectedNode.execution?.error && (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-destructive space-y-1">
-                <span className="font-semibold block">Lỗi thực thi:</span>
-                <p>{selectedNode.execution.error}</p>
+  function renderAgentDrilldownDrawer() {
+    if (!selectedAgent) return null;
+    const badge = statusBadgeInfo(selectedAgent.status);
+    const agentTasks = issues.filter((i) => i.assigneeAgentId === selectedAgent.id);
+
+    return (
+      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-background border-l border-border shadow-2xl p-6 flex flex-col overflow-y-auto animate-in slide-in-from-right duration-200">
+        <div className="flex items-center justify-between pb-4 border-b border-border">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Bot className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-foreground">{selectedAgent.name}</h3>
+              <span className="text-xs text-muted-foreground">{selectedAgent.role}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedAgentId(null)}
+            className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-foreground"
+            aria-label="Close Agent Details"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Current Status</span>
+            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge.className}`}>
+              {badge.label}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <div className="rounded-lg bg-muted/40 p-3">
+              <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Completed</span>
+              <p className="mt-1 text-base font-bold">{selectedAgent.completedTasks} tasks</p>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Deliverables</span>
+              <p className="mt-1 text-base font-bold">{selectedAgent.totalOutputs} files</p>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+              Assigned Tasks ({agentTasks.length})
+            </h4>
+            {agentTasks.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic py-3">No tasks assigned to this agent yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {agentTasks.map((task) => (
+                  <div key={task.id} className="rounded-lg border border-border p-2.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <Link to={issueHref(task)} className="font-medium hover:text-primary hover:underline truncate">
+                        {task.title}
+                      </Link>
+                      <span className={`rounded-full px-1.5 py-0.2 text-[9px] font-semibold ${statusBadgeInfo(task.status).className}`}>
+                        {statusBadgeInfo(task.status).label}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
+          </div>
 
-            {/* Files generated / modified by this node */}
-            <div className="space-y-2">
-              <span className="font-semibold text-foreground flex items-center gap-1.5">
-                <FileCode className="h-4 w-4 text-primary" />
-                File do Agent này tạo / sửa ({selectedNodeFiles.length})
-              </span>
-              {selectedNodeFiles.length === 0 ? (
-                <p className="text-muted-foreground italic">Chưa có file nào được ghi bởi agent này.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {selectedNodeFiles.map((file) => (
-                    <div key={file.path} className="flex items-center justify-between p-2 rounded bg-muted/40 font-mono text-[11px]">
-                      <span className="truncate">{file.path}</span>
-                      <span className="text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Node-specific logs */}
-            <div className="space-y-2">
-              <span className="font-semibold text-foreground flex items-center gap-1.5">
-                <Terminal className="h-4 w-4 text-primary" />
-                Log riêng của bước này ({selectedNodeLogs.length})
-              </span>
-              <div className="max-h-48 overflow-y-auto rounded bg-zinc-950 p-2 font-mono text-[10px] text-zinc-300 space-y-1">
-                {selectedNodeLogs.length === 0 ? (
-                  <p className="text-zinc-600">Không có bản ghi log riêng.</p>
-                ) : (
-                  selectedNodeLogs.map((log) => (
-                    <div key={log.id} className="leading-tight">
-                      <span className="text-zinc-500">[{log.level}]</span> {log.message}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+          <div className="pt-4 border-t border-border">
+            <Button
+              className="w-full gap-1.5"
+              size="sm"
+              onClick={() => {
+                setSelectedAgentId(null);
+                setDialogAgentId(selectedAgent.id);
+                setTaskDialogOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" /> Assign New Task to {selectedAgent.name}
+            </Button>
           </div>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
+
+  return null;
 }

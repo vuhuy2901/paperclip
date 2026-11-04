@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Folder,
@@ -19,9 +19,20 @@ import {
   ExternalLink,
   ChevronRight,
   ChevronDown,
+  Layers,
+  ListTodo,
+  Calendar,
+  Clock,
+  Sparkles,
+  Info,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { api } from "../api/client";
+import { issuesApi } from "../api/issues";
+import { queryKeys } from "../lib/queryKeys";
+import type { ProjectWorkflowSnapshot } from "../lib/project-operations";
 
 export interface WorkspaceFileEntry {
   path: string;
@@ -87,6 +98,7 @@ function buildTree(files: WorkspaceFileEntry[]): TreeNode {
 }
 
 function formatBytes(bytes: number): string {
+  if (!bytes || bytes === 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -104,25 +116,39 @@ function getFileIcon(name: string) {
   return <File className="h-4 w-4 text-muted-foreground shrink-0" />;
 }
 
+function getFileCategory(path: string): string {
+  const lower = path.toLowerCase();
+  if (lower.includes("test") || lower.includes("spec")) return "Test Suite";
+  if (lower.endsWith(".md") || lower.endsWith(".txt")) return "Documentation / Specification";
+  if (lower.includes("api") || lower.includes("server") || lower.includes("backend")) return "Backend API Service";
+  if (lower.includes("ui") || lower.includes("front") || lower.endsWith(".tsx") || lower.endsWith(".jsx") || lower.endsWith(".css")) return "Frontend UI Component";
+  if (lower.endsWith(".json") || lower.endsWith(".yaml") || lower.endsWith(".yml") || lower.includes("docker")) return "Configuration & Infrastructure";
+  return "Source Code";
+}
+
 export function ProjectStructureView({
   projectId,
   companyId,
   projectRef,
+  initialFilePath,
+  onNavigateTab,
 }: {
   projectId: string;
   companyId: string;
   projectRef: string;
+  initialFilePath?: string | null;
+  onNavigateTab?: (tab: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const [agentFilter, setAgentFilter] = useState("all");
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialFilePath ?? null);
   const [viewMode, setViewMode] = useState<"code" | "diff">("code");
   const [copied, setCopied] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
   const [flashFiles, setFlashFiles] = useState<Set<string>>(new Set());
   const prevFilesRef = useRef<Map<string, number>>(new Map());
 
-  // 1. Fetch workspace tree files
+  // 1. Fetch workspace tree files (polling every 3s)
   const treeQuery = useQuery({
     queryKey: ["project-workspace-tree-view", projectId],
     queryFn: async () => {
@@ -130,12 +156,28 @@ export function ProjectStructureView({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return (await res.json()) as WorkspaceTreeResponse;
     },
-    refetchInterval: 2000,
+    refetchInterval: 3000,
   });
 
   const data = treeQuery.data ?? null;
   const loading = treeQuery.isLoading;
   const isError = treeQuery.isError;
+
+  // Workflow Studio was removed; native Paperclip task hierarchy is the
+  // project structure source of truth.
+  const workflowQuery = useQuery({
+    queryKey: ["project-native-structure", companyId, projectId],
+    queryFn: async () => ({ binding: null, activeRun: null, recentRuns: [], monitor: [] } as ProjectWorkflowSnapshot),
+    enabled: false,
+    initialData: { binding: null, activeRun: null, recentRuns: [], monitor: [] } as ProjectWorkflowSnapshot,
+  });
+
+  // 3. Fetch project issues for task mapping
+  const issuesQuery = useQuery({
+    queryKey: queryKeys.issues.listByProject(companyId, projectId),
+    queryFn: () => issuesApi.listAll(companyId, { projectId }),
+    refetchInterval: 5000,
+  });
 
   // Flash detection on new/modified files
   useEffect(() => {
@@ -163,7 +205,7 @@ export function ProjectStructureView({
     }
   }, [data, selectedFilePath]);
 
-  // 2. Fetch selected file content
+  // Fetch selected file content
   const fileQuery = useQuery({
     queryKey: ["project-workspace-file-content", projectId, selectedFilePath],
     queryFn: async () => {
@@ -209,7 +251,7 @@ export function ProjectStructureView({
 
   const downloadSingleFile = () => {
     if (!fileDetails) return;
-    const blob = new Blob([fileDetails.content], { type: fileDetails.mime });
+    const blob = new Blob([fileDetails.content], { type: fileDetails.mime || "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -239,6 +281,49 @@ export function ProjectStructureView({
     return [...new Set(data.files.map((f) => f.agent))];
   }, [data?.files]);
 
+  // Selected file entry from tree
+  const selectedFileEntry = useMemo(() => {
+    if (!selectedFilePath || !data?.files) return null;
+    return data.files.find((f) => f.path === selectedFilePath) ?? null;
+  }, [selectedFilePath, data?.files]);
+
+  // Attributed Workflow Stage
+  const relatedNode = useMemo(() => {
+    if (!selectedFileEntry) return null;
+    const author = selectedFileEntry.agent.toLowerCase();
+    const nodes = workflowQuery.data?.binding?.workflow?.nodes ?? [];
+    return nodes.find((n) => {
+      const nodeData = n.data as { agentName?: string | null; agentRole?: string | null; title?: string } | undefined;
+      const nodeAgent = (nodeData?.agentName || nodeData?.agentRole || "").toLowerCase();
+      return nodeAgent && (author.includes(nodeAgent) || nodeAgent.includes(author));
+    }) ?? null;
+  }, [selectedFileEntry, workflowQuery.data]);
+
+  // Attributed Task
+  const relatedTask = useMemo(() => {
+    if (!selectedFileEntry) return null;
+    const author = selectedFileEntry.agent.toLowerCase();
+    const issues = issuesQuery.data ?? [];
+    return issues.find((issue) => {
+      const titleLower = issue.title.toLowerCase();
+      const matchAgent = issue.assigneeAgentId && author.includes(issue.assigneeAgentId.toLowerCase());
+      return matchAgent || titleLower.includes(selectedFileEntry.name.toLowerCase());
+    }) ?? issues[0] ?? null;
+  }, [selectedFileEntry, issuesQuery.data]);
+
+  // Diff stats calculation
+  const diffStats = useMemo(() => {
+    if (!fileDetails?.diff) return null;
+    const lines = fileDetails.diff.split("\n");
+    let additions = 0;
+    let deletions = 0;
+    for (const line of lines) {
+      if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+      else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+    }
+    return { additions, deletions };
+  }, [fileDetails?.diff]);
+
   // Recursive tree renderer
   const renderTree = (node: TreeNode, depth = 0) => {
     if (node.name === "root") {
@@ -252,11 +337,10 @@ export function ProjectStructureView({
     if (node.isDir) {
       const isExpanded = expandedDirs[node.path] !== false;
       return (
-        <div key={node.path} className="select-none">
-          <button
-            type="button"
+        <div key={node.path} className="select-none text-xs">
+          <div
             onClick={() => toggleDir(node.path)}
-            className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs font-medium text-foreground hover:bg-muted/60 transition-colors"
+            className="flex items-center gap-1.5 rounded px-2 py-1 cursor-pointer hover:bg-muted/40 transition-colors text-foreground font-medium"
             style={{ paddingLeft: `${depth * 14 + 8}px` }}
           >
             {isExpanded ? (
@@ -265,12 +349,12 @@ export function ProjectStructureView({
               <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             )}
             {isExpanded ? (
-              <FolderOpen className="h-4 w-4 text-amber-500 shrink-0" />
+              <FolderOpen className="h-3.5 w-3.5 text-blue-500 shrink-0" />
             ) : (
-              <Folder className="h-4 w-4 text-amber-500 shrink-0" />
+              <Folder className="h-3.5 w-3.5 text-blue-500 shrink-0" />
             )}
             <span className="truncate">{node.name}</span>
-          </button>
+          </div>
           {isExpanded && (
             <div className="space-y-0.5">
               {Object.values(node.children).map((child) => renderTree(child, depth + 1))}
@@ -280,75 +364,74 @@ export function ProjectStructureView({
       );
     }
 
-    const file = node.fileData!;
-    const isSelected = selectedFilePath === file.path;
-    const isFlashing = flashFiles.has(file.path);
+    const isSelected = selectedFilePath === node.path;
+    const isFlashed = flashFiles.has(node.path);
+    const file = node.fileData;
 
     return (
-      <button
-        key={file.path}
-        type="button"
-        onClick={() => setSelectedFilePath(file.path)}
-        className={`flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs transition-all ${
+      <div
+        key={node.path}
+        onClick={() => setSelectedFilePath(node.path)}
+        className={`group flex items-center justify-between rounded px-2 py-1 cursor-pointer text-xs transition-colors select-none ${
           isSelected
             ? "bg-primary/10 text-primary font-semibold ring-1 ring-primary/30"
-            : "text-foreground hover:bg-muted/50"
-        } ${isFlashing ? "bg-amber-400/20 ring-2 ring-amber-400 animate-pulse" : ""}`}
+            : isFlashed
+            ? "bg-amber-500/20 text-foreground animate-pulse"
+            : "hover:bg-muted/40 text-foreground/80 hover:text-foreground"
+        }`}
         style={{ paddingLeft: `${depth * 14 + 18}px` }}
       >
-        <div className="flex min-w-0 items-center gap-1.5">
-          {getFileIcon(file.name)}
+        <div className="flex items-center gap-1.5 min-w-0">
+          {getFileIcon(node.name)}
           <span className="truncate">{node.name}</span>
         </div>
-        <div className="ml-2 flex shrink-0 items-center gap-1">
-          {file.is_new && (
-            <span className="rounded bg-emerald-500/10 px-1 py-0.2 text-[9px] font-medium text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-              Mới
+
+        <div className="flex items-center gap-1 shrink-0 ml-2">
+          {file?.status === "new" && (
+            <span className="rounded bg-emerald-500/15 px-1 py-0.2 text-[9px] font-semibold text-emerald-600 dark:text-emerald-400">
+              NEW
             </span>
           )}
-          {file.is_modified && (
-            <span className="rounded bg-amber-500/10 px-1 py-0.2 text-[9px] font-medium text-amber-600 dark:text-amber-400 border border-amber-500/20">
-              Đã sửa
+          {file?.status === "modified" && (
+            <span className="rounded bg-amber-500/15 px-1 py-0.2 text-[9px] font-semibold text-amber-600 dark:text-amber-400">
+              MOD
             </span>
           )}
-          <span className="text-[10px] text-muted-foreground/70 hidden sm:inline">
-            {formatBytes(file.size)}
-          </span>
         </div>
-      </button>
+      </div>
     );
   };
 
   return (
-    <div className="space-y-4">
-      {/* Top Header Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+    <div className="space-y-5" data-testid="project-outputs">
+      {/* ── Top Header Controls ── */}
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card p-4 sm:p-5 shadow-xs">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-foreground">Cấu trúc dự án & Mã nguồn</h2>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-base font-semibold text-foreground">Outputs & Deliverables</h2>
             {isError ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                <AlertTriangle className="h-3 w-3" /> Mất kết nối, đang thử lại…
+                <AlertTriangle className="h-3 w-3" /> Connection error, retrying...
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
                 Real-time Sync
               </span>
             )}
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Theo dõi cây thư mục và file code được AI Agent tạo ra hoặc chỉnh sửa theo thời gian thực.
+          <p className="mt-1 text-xs text-muted-foreground">
+            Explore agent-generated files, code deliverables, and inspect real-time diffs.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Search Box */}
           <div className="relative w-44 sm:w-56">
             <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
             <Input
               type="text"
-              placeholder="Tìm file…"
+              placeholder="Search files..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-8 pl-8 pr-2 text-xs"
@@ -362,10 +445,10 @@ export function ProjectStructureView({
               onChange={(e) => setAgentFilter(e.target.value)}
               className="h-8 rounded-md border border-border bg-background px-2.5 text-xs text-foreground focus:ring-1 focus:ring-primary"
             >
-              <option value="all">Tất cả Agent ({data?.files.length ?? 0})</option>
+              <option value="all">All Agents ({data?.files.length ?? 0})</option>
               {uniqueAgents.map((ag) => (
                 <option key={ag} value={ag}>
-                  Chỉ file: {ag}
+                  Author: {ag}
                 </option>
               ))}
             </select>
@@ -378,38 +461,38 @@ export function ProjectStructureView({
             className="h-8 text-xs gap-1.5"
             onClick={downloadAllZip}
             disabled={!data?.files?.length}
-            title="Tải toàn bộ mã nguồn của workspace về máy"
+            title="Download complete workspace ZIP archive"
           >
-            <Download className="h-3.5 w-3.5" /> Tải toàn bộ ZIP
+            <Download className="h-3.5 w-3.5" /> Download ZIP
           </Button>
         </div>
       </div>
 
-      {/* Main 2-Column Split Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-[580px]">
-        {/* Left Column: Explorer Tree (4 cols on lg) */}
-        <div className="lg:col-span-4 rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between border-b border-border/80 px-3 py-2 bg-muted/30">
+      {/* ── Main 3-Column Split Workspace ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-[620px]">
+        {/* ── Left Column: Explorer Tree (3.5 cols on lg) ── */}
+        <div className="lg:col-span-3 rounded-xl border border-border bg-card overflow-hidden flex flex-col shadow-xs">
+          <div className="flex items-center justify-between border-b border-border/80 px-3.5 py-2.5 bg-muted/30">
             <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               <Folder className="h-3.5 w-3.5 text-primary" />
-              <span>{data?.root_name ? `${data.root_name}/` : "Workspace Files"}</span>
+              <span className="truncate">{data?.root_name ? `${data.root_name}/` : "Workspace Files"}</span>
             </div>
-            <span className="text-[11px] text-muted-foreground">
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
               {filteredFiles.length} file{filteredFiles.length === 1 ? "" : "s"}
             </span>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-2 max-h-[620px]">
+          <div className="flex-1 overflow-y-auto p-2.5 max-h-[660px]">
             {loading && !data ? (
               <div className="flex items-center justify-center p-8 text-xs text-muted-foreground">
-                <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Đang tải cây thư mục…
+                <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Loading directory tree...
               </div>
             ) : filteredFiles.length === 0 ? (
-              <div className="p-6 text-center text-xs text-muted-foreground">
+              <div className="p-8 text-center text-xs text-muted-foreground">
                 <FileCode2 className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
-                <p className="font-medium">Chưa có file mã nguồn nào</p>
-                <p className="mt-1 text-[11px]">
-                  Khi AI Agent (Backend, Frontend...) bắt đầu viết code, các file sẽ lập tức xuất hiện tại đây.
+                <p className="font-medium text-foreground">No generated files yet</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Files and deliverables generated by agents will appear here in real time.
                 </p>
               </div>
             ) : (
@@ -418,26 +501,20 @@ export function ProjectStructureView({
           </div>
         </div>
 
-        {/* Right Column: Code & Diff Viewer (8 cols on lg) */}
-        <div className="lg:col-span-8 rounded-xl border border-border bg-card overflow-hidden flex flex-col">
+        {/* ── Center Column: Code & Diff Viewer (6 cols on lg) ── */}
+        <div className="lg:col-span-6 rounded-xl border border-border bg-card overflow-hidden flex flex-col shadow-xs">
           {selectedFilePath && fileDetails ? (
             <>
               {/* File Viewer Toolbar */}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/80 px-4 py-2.5 bg-muted/20">
                 <div className="flex items-center gap-2 min-w-0">
                   {getFileIcon(fileDetails.name)}
-                  <span className="font-mono text-xs font-semibold text-foreground truncate">
+                  <span className="font-mono text-xs font-semibold text-foreground truncate" title={fileDetails.path}>
                     {fileDetails.path}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     ({formatBytes(fileDetails.size)})
                   </span>
-                  {data?.files.find((f) => f.path === fileDetails.path)?.agent && (
-                    <span className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                      <Bot className="h-2.5 w-2.5" />
-                      {data.files.find((f) => f.path === fileDetails.path)!.agent}
-                    </span>
-                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -451,7 +528,7 @@ export function ProjectStructureView({
                           viewMode === "code" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        Mã nguồn
+                        Source Code
                       </button>
                       <button
                         type="button"
@@ -473,10 +550,10 @@ export function ProjectStructureView({
                     variant="ghost"
                     className="h-7 px-2 text-xs gap-1"
                     onClick={copyContent}
-                    title="Sao chép toàn bộ nội dung file"
+                    title="Copy full file content"
                   >
                     {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                    <span>{copied ? "Đã chép" : "Sao chép"}</span>
+                    <span>{copied ? "Copied" : "Copy"}</span>
                   </Button>
 
                   {/* Single Download */}
@@ -485,7 +562,7 @@ export function ProjectStructureView({
                     variant="ghost"
                     className="h-7 px-2 text-xs gap-1"
                     onClick={downloadSingleFile}
-                    title="Tải file này về máy"
+                    title="Download this file"
                   >
                     <Download className="h-3 w-3" />
                   </Button>
@@ -493,14 +570,14 @@ export function ProjectStructureView({
               </div>
 
               {/* File Content Body */}
-              <div className="flex-1 overflow-auto bg-background p-4 font-mono text-xs leading-relaxed max-h-[580px]">
+              <div className="flex-1 overflow-auto bg-background p-4 font-mono text-xs leading-relaxed max-h-[620px]">
                 {fileLoading ? (
                   <div className="flex items-center justify-center p-12 text-muted-foreground">
-                    <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Đang tải nội dung file…
+                    <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Loading file content...
                   </div>
                 ) : fileError ? (
                   <div className="rounded-md border border-red-500/20 bg-red-500/10 p-4 text-xs text-red-600 dark:text-red-400">
-                    Lỗi đọc file: {fileError}
+                    Failed to load file: {fileError}
                   </div>
                 ) : viewMode === "diff" && fileDetails.diff ? (
                   <pre className="text-xs font-mono whitespace-pre-wrap select-text">
@@ -545,10 +622,137 @@ export function ProjectStructureView({
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center p-12 text-center text-muted-foreground">
               <FileCode2 className="h-12 w-12 text-muted-foreground/30 mb-3" />
-              <p className="text-sm font-medium">Chọn một file bên trái để xem nội dung</p>
+              <p className="text-sm font-medium text-foreground">Select a file to inspect</p>
               <p className="mt-1 text-xs text-muted-foreground/70 max-w-sm">
-                Bạn có thể xem mã nguồn, so sánh bản Diff đã sửa, sao chép code hoặc tải file về máy.
+                Preview source code, compare changes, and review agent authorship metadata.
               </p>
+            </div>
+          )}
+        </div>
+
+        {/* ── Right Column: Artifact & File Metadata Panel (2.5 cols on lg) ── */}
+        <div className="lg:col-span-3 rounded-xl border border-border bg-card overflow-hidden flex flex-col shadow-xs">
+          <div className="border-b border-border/80 px-4 py-2.5 bg-muted/30 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Info className="h-3.5 w-3.5 text-primary" />
+              File & Artifact Metadata
+            </span>
+          </div>
+
+          {selectedFileEntry ? (
+            <div className="p-4 space-y-4 text-xs overflow-y-auto max-h-[660px]">
+              {/* File Identity */}
+              <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/20">
+                <div>
+                  <span className="text-[10px] uppercase font-semibold text-muted-foreground">File Name</span>
+                  <p className="font-mono font-bold text-foreground break-all">{selectedFileEntry.name}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-semibold text-muted-foreground">Path</span>
+                  <p className="font-mono text-[11px] text-muted-foreground break-all">{selectedFileEntry.path}</p>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-border/60">
+                  <span className="text-muted-foreground">Status</span>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                      selectedFileEntry.status === "new"
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        : selectedFileEntry.status === "modified"
+                        ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {selectedFileEntry.status === "new" ? "New File" : selectedFileEntry.status === "modified" ? "Modified" : "Unchanged"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Category</span>
+                  <span className="font-medium text-foreground">{getFileCategory(selectedFileEntry.path)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Size</span>
+                  <span className="font-mono tabular-nums">{formatBytes(selectedFileEntry.size)}</span>
+                </div>
+              </div>
+
+              {/* Agent Authorship */}
+              <div className="rounded-lg border border-border p-3 space-y-2.5">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground block">
+                  Agent Authorship
+                </span>
+                <div className="flex items-center gap-2">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Bot className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">{selectedFileEntry.agent}</p>
+                    <span className="text-[10px] text-muted-foreground">AI Role Author</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Workflow Stage & Task Attribution */}
+              <div className="rounded-lg border border-border p-3 space-y-2.5">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground block">
+                  Workflow Attribution
+                </span>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Related Stage:</span>
+                  <p className="font-medium text-foreground flex items-center gap-1.5 mt-0.5">
+                    <Layers className="h-3.5 w-3.5 text-primary" />
+                    {(relatedNode?.data as any)?.title ?? `${selectedFileEntry.agent} Stage`}
+                  </p>
+                </div>
+                {onNavigateTab && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full h-7 text-[11px] gap-1"
+                    onClick={() => onNavigateTab("live-monitor")}
+                  >
+                    <ExternalLink className="h-3 w-3" /> Jump to Workflow Node
+                  </Button>
+                )}
+                {relatedTask && (
+                  <div className="pt-2 border-t border-border/60">
+                    <span className="text-[10px] text-muted-foreground">Related Task:</span>
+                    <p className="font-medium text-foreground flex items-center gap-1.5 mt-0.5 truncate">
+                      <ListTodo className="h-3.5 w-3.5 text-blue-500" />
+                      {relatedTask.title}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Change Summary */}
+              {diffStats && (
+                <div className="rounded-lg border border-border p-3 space-y-2">
+                  <span className="text-[10px] uppercase font-semibold text-muted-foreground block">
+                    Change Summary
+                  </span>
+                  <div className="flex items-center gap-4 text-xs font-mono">
+                    <span className="text-emerald-600 dark:text-emerald-400">+{diffStats.additions} lines</span>
+                    <span className="text-red-600 dark:text-red-400">-{diffStats.deletions} lines</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Timestamps */}
+              <div className="rounded-lg border border-border p-3 space-y-1.5 text-[11px] text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" /> Last Modified:
+                  </span>
+                  <span className="font-mono">
+                    {new Date(selectedFileEntry.modified_at * 1000).toLocaleString("en-US")}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center p-8 text-center text-muted-foreground">
+              <Info className="h-8 w-8 text-muted-foreground/30 mb-2" />
+              <p className="text-xs">Select a file to inspect metadata and agent authorship.</p>
             </div>
           )}
         </div>

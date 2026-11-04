@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ExecutionBlocker } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { activityApi } from "../api/activity";
-import { api } from "../api/client";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -26,20 +25,7 @@ export function ExecutionBlockerNotice({ companyId, issueId, blocker, onRetried,
   const modelRejected = failedRun?.errorCode === "native_provider_model_rejected";
   const gatewayFailure = failedRun?.adapterType === "ai_company_external" &&
     /fetch failed|Codex gateway .*unavailable|Codex gateway .*request failed/i.test(blocker.runError ?? "");
-  const runtimeHealth = useQuery({
-    queryKey: ["ai-company-runtime-health", companyId],
-    queryFn: async () => {
-      const result = await api.post<{ data: { reachable: boolean; reason: string | null; checkedAt: string } }>(
-        "/plugins/ai-company-workflow-studio/data/ai-runtime-health",
-        { companyId, params: { companyId } },
-      );
-      return result.data;
-    },
-    enabled: gatewayFailure,
-    retry: false,
-    refetchInterval: gatewayFailure ? 5000 : false,
-  });
-  const connectionRestored = gatewayFailure && runtimeHealth.data?.reachable === true;
+  const connectionRestored = false;
   const retryInFlight = runs?.some(run => run.runId !== blocker.runId &&
     (run.retryOfRunId === blocker.runId || Boolean(failedRun?.finishedAt && run.createdAt > failedRun.finishedAt)) &&
     ["queued", "running"].includes(run.status));
@@ -64,9 +50,7 @@ export function ExecutionBlockerNotice({ companyId, issueId, blocker, onRetried,
             <p>Retry this task to continue. Restarting Paperclip preserves the previous run's history.</p>
           </>
         ) : <p>{modelRejected ? "Model unavailable." : "Recovery needed."}{blocker.runError ? ` ${blocker.runError}` : ""}</p>}
-        {gatewayFailure && !connectionRestored && !retryInFlight && (
-          <p>{runtimeHealth.isError ? "Could not check the AI connection. Inspect the run before retrying." : runtimeHealth.isPending ? "Checking the AI gateway connection…" : `AI gateway is unavailable (${runtimeHealth.data?.reason ?? "connection failed"}). Start the host gateway before retrying.`}</p>
-        )}
+        {gatewayFailure && !retryInFlight && <p>Inspect the native run, verify the model gateway, then retry this task.</p>}
         {modelRejected && <p>Choose a supported model or clear the task's model override, then retry.</p>}
         {blocker.workspaceRepairRequired ? (
           <>

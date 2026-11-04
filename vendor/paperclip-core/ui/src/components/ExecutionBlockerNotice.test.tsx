@@ -6,13 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ExecutionBlockerNotice } from "./ExecutionBlockerNotice";
 import { agentsApi } from "../api/agents";
 import { activityApi } from "../api/activity";
-import { api } from "../api/client";
 vi.mock("../lib/router", () => ({
   Link: ({ to, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }) => <a href={to} {...props} />,
 }));
 vi.mock("../api/agents", () => ({ agentsApi: { retryFailedRun: vi.fn() } }));
 vi.mock("../api/activity", () => ({ activityApi: { runsForIssue: vi.fn() } }));
-vi.mock("../api/client", () => ({ api: { post: vi.fn() } }));
 
 describe("stopped task recovery notice", () => {
   let root: Root;
@@ -172,9 +170,8 @@ describe("stopped task recovery notice", () => {
     expect(onRetried).not.toHaveBeenCalled();
   });
 
-  it.each([true, false])("checks gateway availability without replaying a stopped external run: %s", async reachable => {
+  it("directs gateway failures to native run inspection and retry", async () => {
     vi.mocked(activityApi.runsForIssue).mockResolvedValue([{ runId: "gateway-run", agentId: "agent", status: "failed", adapterType: "ai_company_external" }] as never);
-    vi.mocked(api.post).mockResolvedValue({ data: { reachable, reason: reachable ? null : "ECONNREFUSED" } });
     await act(async () => root.render(<QueryClientProvider client={client}>
       <ExecutionBlockerNotice companyId="company" issueId="gateway-task" onRetried={onRetried} blocker={{
         recoveryActionId: "recovery", runId: "gateway-run", agentId: "agent",
@@ -183,10 +180,8 @@ describe("stopped task recovery notice", () => {
       }} />
     </QueryClientProvider>));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
-    expect(api.post).toHaveBeenCalledWith("/plugins/ai-company-workflow-studio/data/ai-runtime-health", { companyId: "company", params: { companyId: "company" } });
-    expect(container.textContent).toContain(reachable ? "AI connection restored" : "AI gateway is unavailable");
-    expect(container.querySelector("button")?.textContent).toBe(reachable ? "Retry task" : "Retry");
+    expect(container.textContent).toContain("verify the model gateway");
+    expect(container.querySelector("button")?.textContent).toBe("Retry");
     expect(agentsApi.retryFailedRun).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("fetch failed");
   });
 });

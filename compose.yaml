@@ -1,5 +1,6 @@
 services:
   core-api:
+    profiles: [legacy-core]
     build: .
     environment:
       DATABASE_URL: postgresql+psycopg://core:core@core-postgres:5432/core
@@ -18,6 +19,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
   worker:
+    profiles: [legacy-core]
     build: .
     command: ["python", "-m", "apps.worker.main"]
     environment:
@@ -62,26 +64,9 @@ services:
       timeout: 3s
       retries: 12
   review-ui:
+    profiles: [legacy-core]
     build: ./apps/review-ui
     ports: ["8080:80"]
-    depends_on:
-      core-api: {condition: service_healthy}
-  paperclip-adapter:
-    build: ./apps/paperclip-adapter
-    environment:
-      CORE_API_URL: http://core-api:8000
-      CORE_PUBLIC_URL: ${CORE_PUBLIC_URL:-http://localhost:8001}
-      SERVICE_TOKEN: dev-service-token
-      PAPERCLIP_API_URL: ${PAPERCLIP_API_URL:-http://paperclip:3100}
-      PAPERCLIP_API_KEY: ${PAPERCLIP_API_KEY:-}
-      PAPERCLIP_COMPANY_ID: ${PAPERCLIP_COMPANY_ID:-}
-      PORT: 8090
-    ports: ["8090:8090"]
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/health').then(r=>{if(!r.ok) process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
     depends_on:
       core-api: {condition: service_healthy}
   paperclip:
@@ -90,16 +75,12 @@ services:
       dockerfile: infra/paperclip/Dockerfile
     ports: ["127.0.0.1:3100:3100"]
     environment:
-      CORE_API_URL: http://core-api:8000
-      SERVICE_TOKEN: dev-service-token
       # Paperclip is local-only in the demo. Keep the board usable without
       # an external organization account; never expose this mode beyond host.
       PAPERCLIP_DEPLOYMENT_MODE: local_trusted
       PAPERCLIP_BIND: loopback
       CODEX_GATEWAY_URL: ${CODEX_GATEWAY_URL:-http://host.docker.internal:8400}
       CODEX_GATEWAY_TOKEN: ${CODEX_GATEWAY_TOKEN:-dev-codex-gateway}
-    depends_on:
-      core-api: {condition: service_healthy}
     volumes: ["paperclip-data:/home/node/.paperclip"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/api/health').then(r=>{if(!r.ok) process.exit(1)}).catch(()=>process.exit(1))"]

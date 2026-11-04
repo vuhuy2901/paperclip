@@ -15,4 +15,5 @@ dist/
 *.tsbuildinfo
 *.log
 .gemini/
+backups/
 vendor/**/.git_backup/

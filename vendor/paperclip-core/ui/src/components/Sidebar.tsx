@@ -22,6 +22,7 @@ import {
   GanttChartSquare,
   LayoutGrid,
   Users,
+  Building2,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -175,6 +176,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
               Cmd/Ctrl+K remains the keyboard path (command palette). */}
           <SidebarNavItem to="/search" label="Search" icon={Search} />
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem to="/office" label="3D Office" icon={Building2} />
           {!combinedInboxTasks ? (
             <SidebarNavItem
               to="/inbox"

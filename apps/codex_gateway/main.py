@@ -10,6 +10,8 @@ import uuid
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 
 HOST_ROOT = Path(os.getenv("CODEX_HOST_WORKSPACE_ROOT", Path.cwd())).resolve()
@@ -17,6 +19,58 @@ TOKEN = os.getenv("CODEX_GATEWAY_TOKEN", "dev-codex-gateway")
 CODEX_BIN = os.getenv("CODEX_BIN") or shutil.which("codex") or "codex"
 ACTIVE: dict[str, tuple[subprocess.Popen, threading.Event]] = {}
 ACTIVE_LOCK = threading.Lock()
+
+
+def run_ollama(payload: dict) -> dict:
+    """Use Ollama's native HTTP API; it is not a Codex-compatible endpoint."""
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+    model = str(payload.get("model") or os.getenv("OLLAMA_MODEL", "qwen2.5-coder:3b"))
+    if model in {"configured-at-runtime", "runtime-configured"}:
+        model = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:3b")
+    request_id = str(payload.get("request_id") or uuid.uuid4())
+    body = json.dumps({
+        "model": model,
+        "stream": False,
+        "messages": [{"role": "user", "content": str(payload["prompt"])}],
+        # Native task delegation is intentionally short-form. A bounded local
+        # response prevents a small Ollama model from monopolising the gateway
+        # while Paperclip waits for a completion contract.
+        "options": {"temperature": 0.1, "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "512"))},
+    }).encode("utf-8")
+    request = urlrequest.Request(
+        f"{base_url}/api/chat",
+        data=body,
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    timeout = max(1, int(payload.get("timeout_seconds", 900)))
+    try:
+        with urlrequest.urlopen(request, timeout=timeout) as response:
+            raw = json.loads(response.read().decode("utf-8"))
+    except (urlerror.URLError, TimeoutError, OSError) as exc:
+        return {
+            "status": "failed",
+            "summary": f"Ollama request failed: {exc}",
+            "events": [],
+            "failure_category": "ollama_connection",
+            "request_id": request_id,
+        }
+    message = str((raw.get("message") or {}).get("content") or "").strip()
+    if not message:
+        return {
+            "status": "failed",
+            "summary": "Ollama returned no assistant message",
+            "events": [],
+            "failure_category": "ollama_empty_response",
+            "request_id": request_id,
+        }
+    return {
+        "status": "completed",
+        "summary": "Ollama completed through host gateway",
+        "events": [{"type": "item.completed", "item": {"type": "agent_message", "text": message}}],
+        "request_id": request_id,
+        "model": model,
+    }
 
 
 def map_path(raw: str) -> Path:
@@ -103,7 +157,8 @@ class Handler(BaseHTTPRequestHandler):
             command = [CODEX_BIN, "exec", "--json", "--ephemeral", "--ignore-user-config"]
             provider = str(payload.get("provider") or os.getenv("CODEX_GATEWAY_PROVIDER", "ollama")).lower()
             if provider == "ollama":
-                command.extend(["--oss", "--local-provider", "ollama", "-c", "model_provider=ollama"])
+                self.send_json(200, run_ollama(payload))
+                return
             elif provider != "openai":
                 raise ValueError(f"unsupported provider: {provider}")
             if sandbox == "workspace-write":
