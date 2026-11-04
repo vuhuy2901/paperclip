@@ -132,7 +132,15 @@ def process_once():
                         "and return immediately after writing them."
                     )
                 try:
-                    handoff = TaskExecutor(configured_runner, manager).execute(task.id, task_prompt, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
+                    enable_pm_arena = os.getenv("ENABLE_PM_ARENA", "true").lower() in {"true", "1", "yes"}
+                    if task.role == "project-manager" and enable_pm_arena:
+                        from apps.roles.pm_arena import PMArenaRunner
+                        change_prompt = change.text if change and change.text else task_prompt
+                        handoff = PMArenaRunner(configured_runner, manager).execute(
+                            task.id, change_prompt, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model")
+                        )
+                    else:
+                        handoff = TaskExecutor(configured_runner, manager).execute(task.id, task_prompt, worktree, scope, f"task: {task.role} {task.id}", model=role_cfg.get("model"))
                 finally:
                     stop_monitor.set(); monitor.join(timeout=2)
                 payload_obj = {"schema_version":"1", "task_id":task.id, "status":handoff.status, "summary":handoff.runner_summary, "result_commit":handoff.result_commit, "files_changed":handoff.files_changed, "mode":role_cfg.get("runner"), "failure_category":handoff.failure_category}
