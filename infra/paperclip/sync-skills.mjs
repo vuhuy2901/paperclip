@@ -8,7 +8,6 @@ const roleToAgent = {
   "project-manager": "Project Manager",
   "backend-developer": "Backend Engineer",
   "frontend-developer": "Frontend Engineer",
-  "ui-ux-designer": "UI UX Designer",
   tester: "QA Tester",
   "code-reviewer": "Code Reviewer",
   devops: "DevOps Engineer",

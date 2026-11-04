@@ -73,7 +73,13 @@ export function serviceWorkerBuildIdPlugin(
     },
     closeBundle() {
       const swPath = path.resolve(outDir, serviceWorkerFileName);
-      const source = fs.readFileSync(swPath, "utf8");
+      let source = fs.existsSync(swPath) ? fs.readFileSync(swPath, "utf8") : "";
+      if (!source.includes(SERVICE_WORKER_BUILD_ID_PLACEHOLDER)) {
+        const publicSwPath = path.resolve("public", serviceWorkerFileName);
+        if (fs.existsSync(publicSwPath)) {
+          source = fs.readFileSync(publicSwPath, "utf8");
+        }
+      }
       const stamped = stampServiceWorkerBuildId(source, buildId ?? "build");
       fs.writeFileSync(swPath, stamped);
     },

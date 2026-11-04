@@ -301,6 +301,15 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="projects" element={<Projects />} />
       <Route path="projects/:projectId" element={<ProjectDetail />} />
       <Route path="projects/:projectId/overview" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/activity" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/tasks" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/tasks/:filter" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/outputs" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/team" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/history" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/diagnostics" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/settings" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/plugin-operations" element={<ProjectDetail />} />
       <Route path="projects/:projectId/structure" element={<ProjectDetail />} />
       <Route path="projects/:projectId/advanced" element={<ProjectDetail />} />
       <Route path="projects/:projectId/issues" element={<ProjectDetail />} />
@@ -885,6 +894,15 @@ export function App() {
           <Route path="projects" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/overview" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/activity" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/tasks" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/tasks/:filter" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/outputs" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/team" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/history" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/diagnostics" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/settings" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/plugin-operations" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/structure" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/advanced" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/issues" element={<UnprefixedBoardRedirect />} />

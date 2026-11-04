@@ -270,7 +270,7 @@ def roles(db: Session = Depends(get_db)):
 def update_role(role_id: str, body: RoleUpdate, db: Session = Depends(get_db)):
     configs = snapshot(db)
     if role_id not in configs: raise HTTPException(404, "role not found")
-    if body.runner not in {"local-deterministic", "codex-cli", "codex-gateway"}: raise HTTPException(422, "runner is not installed; no silent fallback is allowed")
+    if body.runner not in {"local-deterministic", "ollama", "codex-cli", "codex-gateway"}: raise HTTPException(422, "runner is not installed; no silent fallback is allowed")
     if body.sandbox not in {"read-only", "workspace-write"}: raise HTTPException(422, "unsupported sandbox")
     for path in body.file_scope:
         if path.startswith("/") or ".." in path.replace("\\", "/").split("/"): raise HTTPException(422, "file_scope must stay relative")

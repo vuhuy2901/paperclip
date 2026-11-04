@@ -39,7 +39,6 @@ import {
   Table as TableIcon,
   Terminal,
   TrendingUp,
-  UserCheck,
   Users,
   WifiOff,
   X,
@@ -55,6 +54,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
 import { heartbeatsApi } from "../api/heartbeats";
+import { activityApi } from "../api/activity";
+import { artifactsApi } from "../api/artifacts";
 import { useToastActions } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 
@@ -254,15 +255,18 @@ export function ProjectOperationsView({
     refetchInterval: 3000,
   });
 
-  // 3. Fetch project workspace tree files (outputs / deliverables)
-  const workspaceFilesQuery = useQuery({
-    queryKey: ["project-workspace-tree", project.id],
-    queryFn: async () => {
-      const res = await fetch(`/api/projects/${project.id}/workspace/tree`);
-      if (!res.ok) return [];
-      const data = await res.json();
-      return (data.files ?? []) as WorkspaceFileInfo[];
-    },
+  // 3. Fetch native Paperclip artifacts (outputs / deliverables)
+  const artifactsQuery = useQuery({
+    queryKey: ["project-artifacts", companyId, project.id],
+    queryFn: () => artifactsApi.list(companyId, { projectId: project.id, limit: 200 }),
+    refetchInterval: 4000,
+  });
+
+  // Native audit events are the activity source of truth. Issue-derived events
+  // remain below only as a readable fallback for older records.
+  const nativeActivityQuery = useQuery({
+    queryKey: ["project-native-activity", companyId, project.id],
+    queryFn: () => activityApi.list(companyId, { limit: 500 }),
     refetchInterval: 4000,
   });
 
@@ -284,6 +288,8 @@ export function ProjectOperationsView({
   const inProgressTasks = useMemo(() => issues.filter((i) => i.status === "in_progress"), [issues]);
   const inReviewTasks = useMemo(() => issues.filter((i) => i.status === "in_review"), [issues]);
   const blockedTasks = useMemo(() => issues.filter((i) => i.status === "blocked"), [issues]);
+  const waitingTasks = useMemo(() => blockedTasks.filter((i) => (i.blockerAttention?.unresolvedBlockerCount ?? 0) > 0 && i.blockerAttention?.state !== "needs_attention" && !i.activeRecoveryAction), [blockedTasks]);
+  const attentionTasks = useMemo(() => blockedTasks.filter((i) => !waitingTasks.includes(i)).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()), [blockedTasks, waitingTasks]);
   const todoTasks = useMemo(() => issues.filter((i) => i.status === "todo"), [issues]);
   const openTasks = useMemo(
     () => issues.filter((i) => i.status !== "done" && i.status !== "cancelled"),
@@ -313,20 +319,36 @@ export function ProjectOperationsView({
 
   // Overall project status
   const projectStatus = useMemo(() => {
-    if (blockedTasks.length > 0) {
-      return {
-        label: "Blocked / Action Required",
-        tone: "blocked",
-        badge: statusBadgeInfo("blocked"),
-        description: `${blockedTasks.length} task${blockedTasks.length > 1 ? "s are" : " is"} blocked.`,
-      };
-    }
     if (inProgressTasks.length > 0) {
       return {
         label: "In Progress",
         tone: "in_progress",
         badge: statusBadgeInfo("in_progress"),
-        description: `${inProgressTasks.length} active task${inProgressTasks.length > 1 ? "s" : ""} running across ${activeAgentIds.size} agents.`,
+        description: `${inProgressTasks.length} running · ${attentionTasks.length} need attention · ${waitingTasks.length} waiting on dependencies.`,
+      };
+    }
+    if (todoTasks.length > 0) {
+      return {
+        label: "Ready for Work",
+        tone: "ready",
+        badge: statusBadgeInfo("todo"),
+        description: `${todoTasks.length} ready · ${attentionTasks.length} need attention · ${waitingTasks.length} waiting on dependencies.`,
+      };
+    }
+    if (attentionTasks.length > 0) {
+      return {
+        label: "Needs Attention",
+        tone: "attention",
+        badge: statusBadgeInfo("in_review"),
+        description: `${attentionTasks.length} blocked tasks need a decision; ${waitingTasks.length} are waiting on dependencies.`,
+      };
+    }
+    if (waitingTasks.length > 0) {
+      return {
+        label: "Waiting on Dependencies",
+        tone: "waiting",
+        badge: statusBadgeInfo("todo"),
+        description: `${waitingTasks.length} tasks are waiting for predecessor work.`,
       };
     }
     if (issues.length > 0 && openTasks.length === 0) {
@@ -351,19 +373,20 @@ export function ProjectOperationsView({
       badge: statusBadgeInfo("todo"),
       description: "No tasks have started yet. Assign tasks to launch autonomous execution.",
     };
-  }, [blockedTasks, inProgressTasks, issues, openTasks, activeAgentIds]);
+  }, [attentionTasks, waitingTasks, inProgressTasks, todoTasks, issues, openTasks]);
 
   const completionPercentage = useMemo(() => {
     if (issues.length === 0) return 0;
     return Math.round((completedTasks.length / issues.length) * 100);
   }, [completedTasks.length, issues.length]);
 
-  const totalWorkspaceFiles = workspaceFilesQuery.data?.length ?? 0;
-  const newOrModifiedFiles = (workspaceFilesQuery.data ?? []).filter((f) => f.is_new || f.is_modified).length;
+  const projectArtifacts = artifactsQuery.data?.artifacts ?? [];
+  const totalWorkspaceFiles = projectArtifacts.length;
+  const newOrModifiedFiles = projectArtifacts.filter((artifact) => Date.now() - new Date(artifact.updatedAt).getTime() < 86400000).length;
 
   // Last Activity info
   const lastActivity = useMemo(() => {
-    if (issues.length === 0 && (workspaceFilesQuery.data ?? []).length === 0) {
+    if (issues.length === 0 && projectArtifacts.length === 0) {
       return { time: "No activity yet", note: "Awaiting task assignment" };
     }
     // Find newest task update
@@ -380,7 +403,7 @@ export function ProjectOperationsView({
       };
     }
     return { time: "Recently", note: "Project files synchronized" };
-  }, [issues, workspaceFilesQuery.data, agentById]);
+  }, [issues, projectArtifacts, agentById]);
 
   /* ── Activity Stream Synthesis (Tasks, Delegations, Events) ── */
 
@@ -398,7 +421,7 @@ export function ProjectOperationsView({
         items.push({
           id: `delegation-${issue.id}`,
           type: "delegation",
-          timestamp: issue.createdAt,
+          timestamp: String(issue.createdAt),
           agentId: agent.id,
           agentName: agent.name,
           agentRole: agent.role ?? undefined,
@@ -418,7 +441,7 @@ export function ProjectOperationsView({
         items.push({
           id: `in_progress-${issue.id}`,
           type: "started",
-          timestamp: issue.updatedAt,
+          timestamp: String(issue.updatedAt),
           agentId: agent?.id,
           agentName: agent?.name,
           agentRole: agent?.role ?? undefined,
@@ -433,7 +456,7 @@ export function ProjectOperationsView({
         items.push({
           id: `done-${issue.id}`,
           type: "completed",
-          timestamp: issue.updatedAt,
+          timestamp: String(issue.updatedAt),
           agentId: agent?.id,
           agentName: agent?.name,
           agentRole: agent?.role ?? undefined,
@@ -448,7 +471,7 @@ export function ProjectOperationsView({
         items.push({
           id: `blocked-${issue.id}`,
           type: "blocked",
-          timestamp: issue.updatedAt,
+          timestamp: String(issue.updatedAt),
           agentId: agent?.id,
           agentName: agent?.name,
           agentRole: agent?.role ?? undefined,
@@ -463,7 +486,7 @@ export function ProjectOperationsView({
         items.push({
           id: `review-${issue.id}`,
           type: "review",
-          timestamp: issue.updatedAt,
+          timestamp: String(issue.updatedAt),
           agentId: agent?.id,
           agentName: agent?.name,
           agentRole: agent?.role ?? undefined,
@@ -478,7 +501,7 @@ export function ProjectOperationsView({
         items.push({
           id: `created-${issue.id}`,
           type: "created",
-          timestamp: issue.createdAt,
+          timestamp: String(issue.createdAt),
           agentId: agent?.id,
           agentName: agent?.name,
           agentRole: agent?.role ?? undefined,
@@ -492,15 +515,42 @@ export function ProjectOperationsView({
       }
     }
 
-    // Sort newest first
-    return items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [issues, agentById, issueById]);
+    const projectIssueIds = new Set(issues.map((issue) => issue.id));
+    const nativeItems: ActivityFeedItem[] = (nativeActivityQuery.data ?? [])
+      .filter((event) =>
+        (event.entityType === "project" && event.entityId === project.id) ||
+        (event.entityType === "issue" && projectIssueIds.has(event.entityId)),
+      )
+      .map((event) => {
+        const issue = issueById.get(event.entityId);
+        const agent = event.agentId ? agentById.get(event.agentId) : null;
+        const action = event.action.toLowerCase();
+        const type: ActivityFeedItem["type"] = action.includes("block") ? "blocked" : action.includes("complete") || action.includes("done") ? "completed" : action.includes("start") || action.includes("run") ? "started" : action.includes("review") ? "review" : action.includes("assign") || action.includes("delegat") ? "delegation" : "created";
+        return {
+          id: `native-${event.id}`,
+          type,
+          timestamp: String(event.createdAt),
+          agentId: event.agentId ?? undefined,
+          agentName: agent?.name ?? (event.actorType === "user" ? "Board" : "Paperclip"),
+          agentRole: agent?.role ?? undefined,
+          issueId: issue?.id ?? event.entityId,
+          issueIdentifier: issue?.identifier,
+          issueTitle: issue?.title ?? "Project",
+          priority: issue?.priority,
+          status: issue?.status,
+          message: `${agent?.name ?? (event.actorType === "user" ? "Board" : "Paperclip")} · ${event.action.replaceAll("_", " ")}`,
+        };
+      });
+    const source = nativeItems.length > 0 ? nativeItems : items;
+    return source.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [issues, agentById, issueById, nativeActivityQuery.data, project.id]);
 
   /* ── Team Members Ledger Synthesis ── */
 
   const teamMembers = useMemo(() => {
-    const workspaceFiles = workspaceFilesQuery.data ?? [];
-    return agents.map((agent) => {
+    const participantIds = new Set(issues.flatMap((issue) => issue.assigneeAgentId ? [issue.assigneeAgentId] : []));
+    for (const run of liveRunsQuery.data ?? []) if (run.agentId && issues.some((issue) => issue.id === run.issueId)) participantIds.add(run.agentId);
+    return agents.filter((agent) => participantIds.has(agent.id)).map((agent) => {
       const agentTasks = issues.filter((i) => i.assigneeAgentId === agent.id);
       const activeTask =
         agentTasks.find((i) => i.status === "in_progress") ??
@@ -521,15 +571,9 @@ export function ProjectOperationsView({
       }
 
       // Outputs attribution
-      const authorFiles = workspaceFiles.filter((f) => {
-        const fileAgent = f.agent.toLowerCase();
-        return (
-          fileAgent === agent.name.toLowerCase() ||
-          (agent.role && fileAgent === agent.role.toLowerCase())
-        );
-      });
-      const filesCreated = authorFiles.filter((f) => f.is_new).length;
-      const filesModified = authorFiles.filter((f) => f.is_modified).length;
+      const authorFiles = projectArtifacts.filter((artifact) => artifact.createdByAgent?.id === agent.id);
+      const filesCreated = authorFiles.length;
+      const filesModified = 0;
 
       return {
         id: agent.id,
@@ -544,7 +588,7 @@ export function ProjectOperationsView({
         totalOutputs: authorFiles.length,
       };
     });
-  }, [agents, issues, liveRunsQuery.data, workspaceFilesQuery.data]);
+  }, [agents, issues, liveRunsQuery.data, projectArtifacts]);
 
   /* ── Task Creation Dialog State ── */
 
@@ -553,31 +597,19 @@ export function ProjectOperationsView({
   const [dialogTitle, setDialogTitle] = useState("");
   const [dialogDescription, setDialogDescription] = useState("");
   const [dialogPriority, setDialogPriority] = useState<"urgent" | "high" | "normal" | "low">("normal");
+  const boardEntryAgent = useMemo(
+    () => agents.find((agent) => !agent.reportsTo && (agent.name.toLowerCase() === "po" || /product[ -_]?owner/i.test(`${agent.name} ${agent.role ?? ""}`))),
+    [agents],
+  );
 
-  const openAssignTaskDialog = (preferredRole?: "ceo" | "pm") => {
+  const openAssignTaskDialog = (_preferredRole?: "po" | "pm") => {
     let targetAgent: Agent | undefined;
     let suggestedTitle = "";
     let suggestedDescription = "";
 
-    if (preferredRole === "ceo") {
-      targetAgent = agents.find(
-        (a) => /ceo/i.test(a.name) || /ceo/i.test(a.role ?? ""),
-      );
-      suggestedTitle = "Initial Project Vision & Leadership Plan";
-      suggestedDescription =
-        "Analyze the project brief, define technical roadmap, and delegate architectural analysis to Solution Architect and Project Manager.";
-    } else if (preferredRole === "pm") {
-      targetAgent = agents.find(
-        (a) => /project manager|pm/i.test(a.name) || /project manager|pm/i.test(a.role ?? ""),
-      );
-      suggestedTitle = "Decompose Requirements & Task Breakdown";
-      suggestedDescription =
-        "Review requirements, plan implementation tasks, and delegate actionable issues to specialist agents.";
-    }
-
-    if (!targetAgent && agents.length > 0) {
-      targetAgent = agents[0];
-    }
+    targetAgent = boardEntryAgent;
+    suggestedTitle = "Product Brief & Acceptance Criteria";
+    suggestedDescription = "Board request. Product Owner must clarify the outcome and acceptance criteria, then delegate a native child task to their direct-report Project Manager. Every later handoff must use direct-report delegation and native blockers.";
 
     setDialogAgentId(targetAgent?.id ?? "");
     setDialogTitle(suggestedTitle);
@@ -589,7 +621,10 @@ export function ProjectOperationsView({
   const createTaskMutation = useMutation({
     mutationFn: async () => {
       if (!dialogTitle.trim() || !dialogAgentId) {
-        throw new Error("Please specify task title and select an assignee agent.");
+        throw new Error("A root Product Owner is required before the Board can create work.");
+      }
+      if (!boardEntryAgent || dialogAgentId !== boardEntryAgent.id) {
+        throw new Error("Board tasks may only be assigned to the root Product Owner. PO must delegate to PM natively.");
       }
       return issuesApi.create(companyId, {
         projectId: project.id,
@@ -616,7 +651,7 @@ export function ProjectOperationsView({
     onError: (err: any) => {
       pushToast({
         title: "Failed to create task",
-        description: err?.message || "An unexpected error occurred.",
+        body: err?.message || "An unexpected error occurred.",
         tone: "error",
       });
     },
@@ -849,11 +884,8 @@ ${teamMembers
           specification, and implementation by autonomous AI specialists.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Button size="sm" onClick={() => openAssignTaskDialog("ceo")} className="gap-1.5">
-            <Sparkles className="h-4 w-4" /> Assign Task to CEO
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => openAssignTaskDialog("pm")} className="gap-1.5">
-            <UserCheck className="h-4 w-4" /> Assign Task to Project Manager
+          <Button size="sm" onClick={() => openAssignTaskDialog("po")} className="gap-1.5">
+            <Sparkles className="h-4 w-4" /> Assign Task to Product Owner
           </Button>
           <Button size="sm" variant="outline" onClick={() => onNavigateTab?.("tasks")} className="gap-1.5">
             <ListChecks className="h-4 w-4" /> Open Task Board
@@ -868,18 +900,20 @@ ${teamMembers
      ───────────────────────────────────────────────────────────────────────────── */
 
   const renderActionCenter = () => {
-    if (blockedTasks.length === 0 && inReviewTasks.length === 0) return null;
+    if (attentionTasks.length === 0 && inReviewTasks.length === 0 && waitingTasks.length === 0) return null;
 
     return (
       <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:p-5 shadow-xs" aria-label="Action Center">
         <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-semibold text-sm">
           <AlertCircle className="h-4 w-4" />
-          <span>Action Center ({blockedTasks.length + inReviewTasks.length} items needing attention)</span>
+          <span>Action Center ({attentionTasks.length + inReviewTasks.length} items needing attention)</span>
         </div>
+
+        {waitingTasks.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{waitingTasks.length} tasks are waiting for native dependencies. They do not require a manual retry.</p>}
 
         <div className="mt-3 space-y-2.5">
           {/* Blocked Tasks */}
-          {blockedTasks.map((task) => {
+          {attentionTasks.slice(0, 5).map((task) => {
             const agent = task.assigneeAgentId ? agentById.get(task.assigneeAgentId) : null;
             return (
               <div
@@ -895,7 +929,7 @@ ${teamMembers
                     {task.identifier && <span className="font-mono text-muted-foreground text-[10px]">({task.identifier})</span>}
                   </div>
                   <p className="text-muted-foreground">
-                    Assigned to {agent?.name ?? "Specialist"}. Check logs or unblock dependencies to resume work.
+                    Assigned to {agent?.name ?? "Specialist"}. {task.activeRecoveryAction?.nextAction ?? "Open the task to inspect the blocker and its run history."}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -906,6 +940,7 @@ ${teamMembers
               </div>
             );
           })}
+          {attentionTasks.length > 5 && <button type="button" onClick={() => onNavigateTab?.("tasks")} className="text-xs font-medium text-primary hover:underline">View all {attentionTasks.length} blocked tasks in Tasks →</button>}
 
           {/* In Review Tasks */}
           {inReviewTasks.map((task) => {
@@ -1050,7 +1085,7 @@ ${teamMembers
                     )}
                   </div>
 
-                  {(workspaceFilesQuery.data ?? []).length === 0 ? (
+                  {projectArtifacts.length === 0 ? (
                     <div className="py-8 text-center text-xs text-muted-foreground">
                       <FileCode2 className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
                       <p className="font-medium text-foreground">No outputs generated yet</p>
@@ -1058,27 +1093,17 @@ ${teamMembers
                     </div>
                   ) : (
                     <div className="divide-y divide-border/40 font-mono text-xs">
-                      {(workspaceFilesQuery.data ?? []).slice(0, 5).map((file) => (
-                        <div key={file.path} className="py-2.5 flex items-center justify-between gap-2">
+                      {projectArtifacts.slice(0, 5).map((artifact) => (
+                        <div key={artifact.id} className="py-2.5 flex items-center justify-between gap-2">
                           <div className="min-w-0 flex-1">
-                            <p className="font-medium text-foreground truncate" title={file.path}>
-                              {file.path}
+                            <p className="font-medium text-foreground truncate" title={artifact.title}>
+                              {artifact.title}
                             </p>
                             <span className="font-sans text-[10px] text-muted-foreground">
-                              By {file.agent} · {(file.size / 1024).toFixed(1)} KB
+                              By {artifact.createdByAgent?.name ?? "Paperclip"} · {artifact.issue.identifier}
                             </span>
                           </div>
-                          <div>
-                            {file.is_new ? (
-                              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-emerald-600 dark:text-emerald-400">
-                                NEW
-                              </span>
-                            ) : file.is_modified ? (
-                              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-amber-600 dark:text-amber-400">
-                                MODIFIED
-                              </span>
-                            ) : null}
-                          </div>
+                          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-emerald-600 dark:text-emerald-400">{artifact.mediaKind.toUpperCase()}</span>
                         </div>
                       ))}
                     </div>
@@ -1086,7 +1111,7 @@ ${teamMembers
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-border/50 text-[11px] text-muted-foreground flex items-center justify-between">
-                  <span>{totalWorkspaceFiles} workspace deliverables</span>
+                  <span>{totalWorkspaceFiles} native artifacts</span>
                   {onNavigateTab && (
                     <button
                       type="button"
@@ -1755,7 +1780,7 @@ ${teamMembers
             <DialogTitle>Assign Native Task</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Create a native Paperclip task and assign it to an AI agent. The agent will execute this task autonomously.
+            Board creates work through the Product Owner. PO delegates to PM; every later handoff must follow direct-report permissions and native blockers.
           </p>
 
           <div className="space-y-3 pt-2">
@@ -1775,13 +1800,10 @@ ${teamMembers
                 className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs"
                 value={dialogAgentId}
                 onChange={(e) => setDialogAgentId(e.target.value)}
+                disabled
               >
-                <option value="">Select an Agent...</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.role ?? "Agent"})
-                  </option>
-                ))}
+                <option value="">No root Product Owner configured</option>
+                {boardEntryAgent ? <option value={boardEntryAgent.id}>{boardEntryAgent.name} ({boardEntryAgent.role ?? "Product Owner"})</option> : null}
               </select>
             </div>
 

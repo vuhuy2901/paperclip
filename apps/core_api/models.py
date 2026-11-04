@@ -160,8 +160,8 @@ class Deployment(Base):
 class RoleConfig(Base):
     __tablename__ = "role_configs"
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
-    runner: Mapped[str] = mapped_column(String(80), default="local-deterministic")
-    model: Mapped[str] = mapped_column(String(200), default="configured-at-runtime")
+    runner: Mapped[str] = mapped_column(String(80), default="ollama")
+    model: Mapped[str] = mapped_column(String(200), default="llama3.2:3b")
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
     sandbox: Mapped[str] = mapped_column(String(40), default="workspace-write")
     tool_policy: Mapped[list] = mapped_column(JSON, default=list)

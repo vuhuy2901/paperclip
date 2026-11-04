@@ -13,11 +13,11 @@ docker compose ps
 
 ## AI providers
 
-Role defaults are documented in `.env.example`: Project Manager, Architect, Backend and Frontend use OpenRouter Free; UI/UX, Tester and DevOps use Ollama; Code Reviewer uses Ollama by default. Copy `.env.example` to `.env` and add `OPENROUTER_API_KEY` locally if needed.
+All roles use Ollama by default with `llama3.2:3b`. Copy `.env.example` to `.env` only if you want to override the local model or database settings; no OpenRouter or Codex gateway credential is required.
 
-Start the local Ollama service on Windows with `powershell -ExecutionPolicy Bypass -File scripts/setup_ai_providers.ps1`. This creates a persistent `ollama-data` volume and pulls `qwen2.5:0.5b` (use `-OllamaModel llama3.2:3b` later if the larger model is desired).
+Compose starts Ollama, creates the persistent `ollama-data` volume, and pulls `OLLAMA_MODEL` automatically.
 
-The current execution contract still supports `local-deterministic`, `codex-cli` and `codex-gateway` runners only. Provider model defaults are prepared for the provider adapter; they do not silently turn deterministic runs into model runs.
+The default execution runner is `ollama` using `llama3.2:3b`. It calls the Ollama container directly and does not require a Codex gateway. `local-deterministic`, `codex-cli` and the legacy `codex-gateway` remain available only for compatibility.
 
 Nếu dùng Codex CLI đã đăng nhập trên Windows, bật gateway và cấu hình đủ tám role bằng một lệnh:
 
@@ -47,7 +47,7 @@ Contract export: `python scripts/export_contracts.py`. PostgreSQL migration: `al
 
 Runtime pin chính: Python 3.13, LangGraph `0.6.11`, xxhash `4.0.2`; xem `pyproject.toml` để biết các dải tương thích còn lại.
 
-Mặc định Compose chạy `local-deterministic` để có thể khởi động offline. Để bật runner model thật, đặt `DEFAULT_RUNNER=codex-cli` và `DEFAULT_MODEL=<model>`; trên Windows dùng `python scripts/enable_codex_demo.py` sau khi Compose healthy. Project phải có repo/file scope và credential phù hợp. Deterministic artifacts luôn được gắn nhãn fixture và không được dùng làm bằng chứng model thật.
+Mặc định Compose chạy `ollama` với `llama3.2:3b`; Ollama được khởi động cùng stack và không cần Codex gateway. Có thể đổi model bằng `OLLAMA_MODEL`/`DEFAULT_MODEL`. Deterministic artifacts chỉ dùng khi chọn runner fixture một cách rõ ràng.
 
 Compose exposes Core API at `http://localhost:8001` (container port `8000`), Paperclip at `http://localhost:3100`, review UI at `http://localhost:8080`, storefront API at `http://localhost:8200`, storefront UI at `http://localhost:8201`, adapter at `http://localhost:8090`, and the isolated preview manager at `http://localhost:8300`. Paperclip is configured for local-only `local_trusted` demo access, so refresh `http://localhost:3100` without accepting an organization invite; it is intentionally bound to localhost and must not be exposed to a network.
 

@@ -11,7 +11,7 @@ export type RoomId =
   | "reception"
   | "hallway";
 
-export type AgentVisualStatus = "idle" | "running" | "waiting" | "paused" | "error" | "completed";
+export type AgentVisualStatus = "idle" | "running" | "waiting" | "paused" | "error" | "completed" | "reviewing" | "blocked";
 
 export type CharacterAction =
   | "sitting"
@@ -22,7 +22,30 @@ export type CharacterAction =
   | "handoff_receive"
   | "reviewing"
   | "testing"
-  | "error";
+  | "error"
+  | "blocked";
+
+export type OfficeSystemEventType =
+  | "task_started"
+  | "task_completed"
+  | "task_blocked"
+  | "handoff"
+  | "comment";
+
+export interface OfficeSystemEvent {
+  id: string;
+  timestamp: string; // ISO8601
+  type: OfficeSystemEventType;
+  agentId: string;
+  agentName: string;
+  role: string;
+  taskId?: string;
+  taskTitle?: string;
+  summary: string;
+  artifacts?: string[];
+  toAgentId?: string;
+  toAgentName?: string;
+}
 
 export interface DeskDefinition {
   id: string;
@@ -71,6 +94,8 @@ export interface AgentOfficeState {
   isMoving: boolean;
   handoffTargetAgentId: string | null;
   lastActiveTimestamp: Date;
+  activeChatBubble?: string | null;
+  isBlocked?: boolean;
 }
 
 export interface HandoffVisualEvent {
@@ -141,4 +166,23 @@ export interface AgentContributionRecord {
   testsExecuted: number;
   totalDurationSeconds: number;
   lastActivity: Date | null;
+}
+
+export interface OfficeToastItem {
+  id: string;
+  type: OfficeSystemEventType;
+  title: string;
+  message: string;
+  agentName: string;
+  role: string;
+  timestamp: Date;
+  artifacts?: string[];
+}
+
+export interface AgentChatBubble {
+  agentId: string;
+  message: string;
+  type: OfficeSystemEventType;
+  createdAt: number;
+  expiresAt: number;
 }

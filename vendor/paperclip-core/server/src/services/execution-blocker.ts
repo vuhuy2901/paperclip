@@ -25,6 +25,10 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
     assigneeAgentId: issues.assigneeAgentId }).from(issues).where(and(
     eq(issues.companyId, companyId), eq(issues.id, issueId),
   )).limit(1);
+  // A terminal task cannot execute again. Historical reconciliation evidence
+  // remains in the audit log, but must not keep Cancel/Hide/Delete controls
+  // locked or paint the task as requiring runtime recovery.
+  if (conversation && ["done", "cancelled"].includes(conversation.status)) return null;
   // Resetting model context cannot repair or recover a workspace. This hold
   // survives conversation boundaries until the existing repair/reconciliation path clears it.
   const [restoreHold] = await db.select().from(issueRecoveryActions).where(and(

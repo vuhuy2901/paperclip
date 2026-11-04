@@ -23,6 +23,7 @@ import { useCombinedInboxTasksEnabled } from "../hooks/useCombinedInboxTasksEnab
 import { useDialogActions } from "../context/DialogContext";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Inbox } from "./Inbox";
+import { TaskCommandCenter } from "./TaskCommandCenter";
 import {
   ORGANIZATION_SCOPED_PARAMS,
   TASK_VIEW_PARAM,
@@ -88,11 +89,7 @@ export function buildIssuesSearchUrl(currentHref: string, search: string): strin
  * get the same Views control in their toolbar, so the switch reads as one page.
  */
 export function Issues() {
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
-  const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
-  // The merged surface is Combined Inbox + Task List only. With the flag off, and always in
-  // the legacy shell, Tasks is the plain task list and Inbox keeps its pages.
-  return streamlinedUiEnabled && combinedInboxTasksEnabled ? <StreamlinedTasks /> : <OrganizationIssues />;
+  return <TaskCommandCenter />;
 }
 
 function StreamlinedTasks() {

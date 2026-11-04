@@ -5,10 +5,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://core:core@core-postgres:5432/core
       SERVICE_TOKEN: dev-service-token
-      DEFAULT_RUNNER: ${DEFAULT_RUNNER:-local-deterministic}
-      DEFAULT_MODEL: ${DEFAULT_MODEL:-configured-at-runtime}
-      CODEX_GATEWAY_URL: ${CODEX_GATEWAY_URL:-http://host.docker.internal:8400}
-      CODEX_GATEWAY_TOKEN: ${CODEX_GATEWAY_TOKEN:-dev-codex-gateway}
+      DEFAULT_RUNNER: ${DEFAULT_RUNNER:-ollama}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-llama3.2:3b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      FORCE_OLLAMA: "true"
     ports: ["8001:8000"]
     volumes: ["core-data:/app/data", ".:/workspace:ro"]
     healthcheck:
@@ -25,16 +26,14 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://core:core@core-postgres:5432/core
       SERVICE_TOKEN: dev-service-token
-      DEFAULT_RUNNER: ${DEFAULT_RUNNER:-local-deterministic}
-      DEFAULT_MODEL: ${DEFAULT_MODEL:-configured-at-runtime}
+      DEFAULT_RUNNER: ${DEFAULT_RUNNER:-ollama}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-llama3.2:3b}
       VERIFICATION_ROOT: /workspace
       PREVIEW_MANAGER_URL: http://preview-manager:8300
       WORKSPACE_ROOT: /workspace/data/worktrees
-      CODEX_GATEWAY_URL: ${CODEX_GATEWAY_URL:-http://host.docker.internal:8400}
-      CODEX_GATEWAY_TOKEN: ${CODEX_GATEWAY_TOKEN:-dev-codex-gateway}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      FORCE_OLLAMA: "true"
       AI_PM_MODEL: ${AI_PM_MODEL:-llama3.2:3b}
       AI_ARCHITECT_MODEL: ${AI_ARCHITECT_MODEL:-llama3.2:3b}
       AI_UIUX_MODEL: ${AI_UIUX_MODEL:-llama3.2:3b}
@@ -47,6 +46,7 @@ services:
     depends_on:
       core-api: {condition: service_healthy}
       postgres: {condition: service_healthy}
+      ollama: {condition: service_healthy}
       preview-manager: {condition: service_healthy}
   preview-manager:
     build:
@@ -79,14 +79,16 @@ services:
       # an external organization account; never expose this mode beyond host.
       PAPERCLIP_DEPLOYMENT_MODE: local_trusted
       PAPERCLIP_BIND: loopback
-      CODEX_GATEWAY_URL: ${CODEX_GATEWAY_URL:-http://host.docker.internal:8400}
-      CODEX_GATEWAY_TOKEN: ${CODEX_GATEWAY_TOKEN:-dev-codex-gateway}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
     volumes: ["paperclip-data:/home/node/.paperclip"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/api/health').then(r=>{if(!r.ok) process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 12
+    depends_on:
+      ollama: {condition: service_healthy}
   storefront-api:
     build:
       context: .
@@ -121,7 +123,10 @@ services:
           - core-postgres
   ollama:
     image: ollama/ollama:latest
-    profiles: [ai]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama serve & pid=$$!; until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull $${OLLAMA_MODEL:-llama3.2:3b}; wait $$pid"]
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
     ports: ["11434:11434"]
     volumes:
       - ollama-data:/root/.ollama

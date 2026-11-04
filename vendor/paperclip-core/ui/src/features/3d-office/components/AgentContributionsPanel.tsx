@@ -1,6 +1,7 @@
 import React from "react";
 import type { AgentContributionRecord } from "../types/OfficeTypes";
-import { Award, Bot, CheckCircle2, Clock, GitPullRequest, Search, Terminal, XCircle, Camera } from "lucide-react";
+import { useOfficeStore } from "../store/useOfficeStore";
+import { Award, Bot, CheckCircle2, Clock, GitPullRequest, Search, Terminal, XCircle, Camera, FileCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface AgentContributionsPanelProps {
@@ -9,21 +10,25 @@ interface AgentContributionsPanelProps {
 }
 
 export function AgentContributionsPanel({ contributions, onFocusAgent }: AgentContributionsPanelProps) {
+  const storedEvents = useOfficeStore((state) => state.events);
+
   return (
     <div className="flex flex-col h-full overflow-hidden p-4 gap-3 bg-card/60 backdrop-blur">
       <div className="pb-2 border-b border-border/60">
-        <h2 className="text-sm font-bold text-foreground">Agent Contributions</h2>
-        <p className="text-[11px] text-muted-foreground">Verified task outputs and execution performance</p>
+        <h2 className="text-sm font-bold text-foreground">Agent Contributions & Logs</h2>
+        <p className="text-[11px] text-muted-foreground">Verified task outputs, deliverables, and event history</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1">
+      <div className="flex-1 overflow-y-auto flex flex-col gap-2.5 pr-1">
         {contributions.map((record) => {
           const durationHours = (record.totalDurationSeconds / 3600).toFixed(1);
+          // Find recent events authored by this agent
+          const agentEvents = storedEvents.filter((e) => e.agentId === record.agentId);
 
           return (
             <div
               key={record.agentId}
-              className="p-3 rounded-lg border border-border/50 bg-muted/20 hover:bg-muted/40 transition-colors flex flex-col gap-2.5 text-xs"
+              className="p-3 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/40 transition-colors flex flex-col gap-2.5 text-xs"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -50,26 +55,46 @@ export function AgentContributionsPanel({ contributions, onFocusAgent }: AgentCo
 
               {/* Metric stats grid */}
               <div className="grid grid-cols-3 gap-1.5 text-center text-[11px]">
-                <div className="p-1.5 rounded bg-muted/50 border border-border/30">
+                <div className="p-1.5 rounded-lg bg-muted/50 border border-border/30">
                   <span className="text-[9px] uppercase font-semibold text-muted-foreground block">Completed</span>
-                  <span className="font-bold text-emerald-500">{record.tasksCompleted}</span>
+                  <span className="font-bold text-emerald-500">
+                    {Math.max(record.tasksCompleted, agentEvents.filter((e) => e.type === "task_completed").length)}
+                  </span>
                 </div>
-                <div className="p-1.5 rounded bg-muted/50 border border-border/30">
+                <div className="p-1.5 rounded-lg bg-muted/50 border border-border/30">
                   <span className="text-[9px] uppercase font-semibold text-muted-foreground block">Active</span>
-                  <span className="font-bold text-blue-500">{record.activeTasks}</span>
+                  <span className="font-bold text-sky-500">{record.activeTasks}</span>
                 </div>
-                <div className="p-1.5 rounded bg-muted/50 border border-border/30">
-                  <span className="text-[9px] uppercase font-semibold text-muted-foreground block">Runtime</span>
-                  <span className="font-bold text-foreground">{durationHours}h</span>
+                <div className="p-1.5 rounded-lg bg-muted/50 border border-border/30">
+                  <span className="text-[9px] uppercase font-semibold text-muted-foreground block">Logged Events</span>
+                  <span className="font-bold text-foreground">{agentEvents.length}</span>
                 </div>
               </div>
 
-              {/* Secondary deliverables */}
-              {(record.reviewsCompleted > 0 || record.testsExecuted > 0 || record.filesAuthored > 0) && (
-                <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1 border-t border-border/30 flex-wrap">
-                  {record.filesAuthored > 0 && <span>Files: {record.filesAuthored}</span>}
-                  {record.reviewsCompleted > 0 && <span>Reviews: {record.reviewsCompleted}</span>}
-                  {record.testsExecuted > 0 && <span>Tests: {record.testsExecuted}</span>}
+              {/* Recent Event Log Items for this agent */}
+              {agentEvents.length > 0 && (
+                <div className="flex flex-col gap-1 pt-1.5 border-t border-border/30">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Recent Logs ({agentEvents.length})
+                  </span>
+                  {agentEvents.slice(0, 2).map((evt) => (
+                    <div
+                      key={evt.id}
+                      className="p-1.5 rounded bg-muted/40 border border-border/20 text-[11px] flex flex-col gap-0.5"
+                    >
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="font-semibold text-primary capitalize">{evt.type.replace("_", " ")}</span>
+                        <span className="text-muted-foreground">{new Date(evt.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                      </div>
+                      <p className="text-foreground/90 line-clamp-1">{evt.summary}</p>
+                      {evt.artifacts && evt.artifacts.length > 0 && (
+                        <div className="flex items-center gap-1 text-[9px] text-sky-400 font-mono">
+                          <FileCode className="h-2.5 w-2.5" />
+                          <span>{evt.artifacts[0].split("/").pop()}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

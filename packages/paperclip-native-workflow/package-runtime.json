@@ -1,0 +1,12 @@
+{
+  "name": "paperclip-plugin-ai-company-native-workflow",
+  "version": "1.1.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "2026.1023.0",
+    "@xyflow/react": "12.8.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  }
+}

@@ -17,15 +17,15 @@ export class FurnitureBuilder3D {
   private chairMat = new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.7 });
 
   /**
-   * Builds an individual employee workstation with desk, dual monitors, keyboard, and ergonomic chair
+   * Builds an individual employee workstation with desk, dual monitors, keyboard, coffee mug, and ergonomic chair
    */
-  createWorkstation(desk: DeskDefinition, isRunning = false): THREE.Group {
+  createWorkstation(desk: DeskDefinition, status: string = "idle"): THREE.Group {
     const group = new THREE.Group();
     group.name = `workstation_${desk.id}`;
     group.position.set(...desk.position);
     group.rotation.y = desk.rotation;
 
-    // Desk top
+    // Desk top (warm wood finish)
     const deskTop = new THREE.Mesh(this.deskTopGeo, this.woodMat);
     deskTop.position.y = 0.72;
     deskTop.castShadow = true;
@@ -43,17 +43,37 @@ export class FurnitureBuilder3D {
     rightLeg.castShadow = true;
     group.add(rightLeg);
 
-    // Dual Monitors with emissive screen
-    const screenColor = isRunning ? "#38bdf8" : "#0284c7";
+    // Dual Monitors with emissive screen colored by status
+    let screenColor = "#64748b";
+    let emissiveIntensity = 0.3;
+
+    if (status === "running") {
+      screenColor = "#38bdf8";
+      emissiveIntensity = 0.85;
+    } else if (status === "blocked" || status === "error") {
+      screenColor = "#ef4444";
+      emissiveIntensity = 0.95;
+    } else if (status === "reviewing") {
+      screenColor = "#a855f7";
+      emissiveIntensity = 0.75;
+    } else if (status === "waiting") {
+      screenColor = "#f59e0b";
+      emissiveIntensity = 0.65;
+    } else if (status === "completed") {
+      screenColor = "#10b981";
+      emissiveIntensity = 0.85;
+    }
+
     const screenMat = new THREE.MeshStandardMaterial({
       color: screenColor,
       emissive: screenColor,
-      emissiveIntensity: isRunning ? 0.65 : 0.3,
+      emissiveIntensity,
       roughness: 0.2,
     });
 
-    // Monitor 1 (Main)
+    // Monitor 1 (Main display)
     const m1 = new THREE.Mesh(this.monitorScreenGeo, screenMat);
+    m1.name = `screen_${desk.id}_main`;
     m1.position.set(-0.3, 1.02, 0.15);
     m1.rotation.y = 0.12;
     group.add(m1);
@@ -62,8 +82,9 @@ export class FurnitureBuilder3D {
     s1.position.set(-0.3, 0.85, 0.17);
     group.add(s1);
 
-    // Monitor 2 (Side)
+    // Monitor 2 (Side display)
     const m2 = new THREE.Mesh(this.monitorScreenGeo, screenMat);
+    m2.name = `screen_${desk.id}_side`;
     m2.position.set(0.3, 1.02, 0.15);
     m2.rotation.y = -0.16;
     group.add(m2);
@@ -78,9 +99,15 @@ export class FurnitureBuilder3D {
     kbMesh.position.set(-0.05, 0.76, -0.12);
     group.add(kbMesh);
 
+    // Ceramic Coffee Mug
+    const mugGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.08, 8);
+    const mugMat = new THREE.MeshStandardMaterial({ color: "#f8fafc", roughness: 0.3 });
+    const mug = new THREE.Mesh(mugGeo, mugMat);
+    mug.position.set(0.55, 0.79, -0.12);
+    group.add(mug);
+
     // Ergonomic Chair positioned at chairPosition relative to desk
     const chairGroup = new THREE.Group();
-    // Offset chair backwards
     chairGroup.position.set(0, 0, -0.75);
 
     const seat = new THREE.Mesh(this.chairSeatGeo, this.chairMat);

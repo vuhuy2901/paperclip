@@ -10,7 +10,7 @@ export const models = [
 ];
 export const agentConfigurationDoc = `# AI Software Company adapter
 
-Runs Paperclip-assigned work through the configured model gateway. Paperclip remains
+Runs Paperclip-assigned work through Ollama directly. Paperclip remains
 the source of truth for task assignment, task hierarchy, dependencies, wakeups,
 heartbeat history, and activity logs.
 `;
@@ -52,53 +52,102 @@ function skillSnapshot(context: any, desiredSkills: string[] = []) {
 export async function listSkills(context: any) { return skillSnapshot(context); }
 export async function syncSkills(context: any, desiredSkills: string[]) { return skillSnapshot(context, desiredSkills); }
 
-let cachedCodexProbe: { at: number; result: { ok: boolean; detail: string } } | null = null;
-let pendingCodexProbe: Promise<{ ok: boolean; detail: string }> | null = null;
+let cachedOllamaProbe: { at: number; result: { ok: boolean; detail: string } } | null = null;
+let pendingOllamaProbe: Promise<{ ok: boolean; detail: string }> | null = null;
 
-async function codexProbe() {
-  if (cachedCodexProbe && Date.now() - cachedCodexProbe.at < 60_000) return cachedCodexProbe.result;
-  if (!pendingCodexProbe) pendingCodexProbe = (async () => {
+async function ollamaProbe() {
+  if (cachedOllamaProbe && Date.now() - cachedOllamaProbe.at < 60_000) return cachedOllamaProbe.result;
+  if (!pendingOllamaProbe) pendingOllamaProbe = (async () => {
     try {
-      const gateway = (process.env.CODEX_GATEWAY_URL ?? "http://host.docker.internal:8400").replace(/\/$/, "");
-      const health = await fetch(`${gateway}/health`, { signal: AbortSignal.timeout(5_000) });
-      if (!health.ok) return { ok: false, detail: `Codex gateway health returned HTTP ${health.status}` };
-      const response = await fetch(`${gateway}/run`, {
+      const ollama = (process.env.OLLAMA_BASE_URL ?? "http://ollama:11434").replace(/\/$/, "");
+      const health = await fetch(`${ollama}/api/tags`, { signal: AbortSignal.timeout(5_000) });
+      if (!health.ok) return { ok: false, detail: `Ollama health returned HTTP ${health.status}` };
+      const response = await fetch(`${ollama}/api/chat`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-gateway-token": process.env.CODEX_GATEWAY_TOKEN ?? "dev-codex-gateway" },
-        body: JSON.stringify({ cwd: "/workspace", sandbox: "read-only", provider: "ollama", model: process.env.OLLAMA_MODEL ?? "llama3.2:3b", timeout_seconds: 90, prompt: "Reply with exactly READY and do not use tools." }),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: process.env.OLLAMA_MODEL ?? "llama3.2:3b", stream: false, messages: [{ role: "user", content: "Reply with exactly READY and do not use tools." }] }),
         signal: AbortSignal.timeout(100_000),
       });
-      if (!response.ok) return { ok: false, detail: `Codex gateway probe returned HTTP ${response.status}` };
-      const body = await response.json() as { status?: string; summary?: string };
-      return { ok: body.status === "completed", detail: body.status === "completed" ? "Model gateway completed an authenticated Ollama probe" : String(body.summary ?? body.status ?? "unknown failure").slice(0, 300) };
+      if (!response.ok) return { ok: false, detail: `Ollama probe returned HTTP ${response.status}` };
+      const body = await response.json() as { message?: { content?: string } };
+      const ready = String(body.message?.content ?? "").trim();
+      return { ok: Boolean(ready), detail: ready ? "Ollama model probe completed" : "Ollama returned no assistant message" };
     } catch (error: any) {
-      return { ok: false, detail: `Codex gateway unavailable: ${String(error?.message ?? error).slice(0, 200)}` };
+      return { ok: false, detail: `Ollama unavailable: ${String(error?.message ?? error).slice(0, 200)}` };
     }
   })().then((result) => {
-    cachedCodexProbe = { at: Date.now(), result };
+    cachedOllamaProbe = { at: Date.now(), result };
     return result;
-  }).finally(() => { pendingCodexProbe = null; });
-  return pendingCodexProbe;
+  }).finally(() => { pendingOllamaProbe = null; });
+  return pendingOllamaProbe;
 }
 
 export async function testEnvironment() {
   const checks: Array<{ code: string; level: "info" | "error"; message: string }> = [];
-  const probe = await codexProbe();
-  checks.push({ code: probe.ok ? "codex_hello_probe_passed" : "codex_hello_probe_failed", level: probe.ok ? "info" : "error", message: probe.detail });
+  const probe = await ollamaProbe();
+  checks.push({ code: probe.ok ? "ollama_probe_passed" : "ollama_probe_failed", level: probe.ok ? "info" : "error", message: probe.detail });
   return { adapterType: type, status: checks.some((check) => check.level === "error") ? "fail" : "pass", checks, testedAt: new Date().toISOString() };
 }
 
 const roleDirectories: Record<string, string> = {
-  "CEO": "ceo",
   "PO": "product-owner",
   "Solution Architect": "architect", "Project Manager": "project-manager",
   "Backend Engineer": "backend-developer", "Frontend Engineer": "frontend-developer",
-  "UI UX Designer": "ui-ux-designer", "QA Tester": "tester",
+  "QA Tester": "tester",
   "Code Reviewer": "code-reviewer", "DevOps Engineer": "devops",
 };
 
 function executionResult(ok: boolean, summary: string, resultJson: Record<string, unknown> = {}) {
   return { exitCode: ok ? 0 : 1, signal: null, timedOut: false, errorMessage: ok ? null : summary, summary, resultJson };
+}
+
+function identityText(agent: any): string {
+  return `${String(agent?.role ?? "")} ${String(agent?.name ?? "")}`.toLowerCase().replace(/[_\s]+/g, "-");
+}
+
+function allowedDelegationTarget(actor: any, target: any): boolean {
+  const actorText = identityText(actor);
+  const targetText = identityText(target);
+  if (actorText.includes("product-owner") || actorText.endsWith("-po") || actorText === "po") {
+    return targetText.includes("project-manager") || targetText.endsWith("-pm") || targetText === "pm";
+  }
+  if (actorText.includes("project-manager") || actorText.endsWith("-pm") || actorText === "pm") {
+    return ["solution-architect", "code-reviewer", "qa-tester"].some((role) => targetText.includes(role));
+  }
+  if (actorText.includes("architect") || actorText.includes("cto")) {
+    return ["backend-engineer", "frontend-engineer", "devops-engineer"].some((role) => targetText.includes(role));
+  }
+  return false;
+}
+
+function delegationTargetMatchesTask(actor: any, target: any, action: NativeTaskAction): boolean {
+  const actorText = identityText(actor);
+  if (!(actorText.includes("project-manager") || actorText.endsWith("-pm") || actorText === "pm")) return true;
+  const targetText = identityText(target);
+  const taskText = `${String(action.title ?? "")} ${String(action.description ?? "")}`.toLowerCase();
+  const hasAny = (terms: string[]) => terms.some((term) => taskText.includes(term));
+  if (targetText.includes("code-reviewer")) return hasAny(["review", "pull request", "pr ", "security audit", "correctness"]);
+  if (targetText.includes("qa-tester")) return hasAny(["test", "qa", "regression", "e2e", "acceptance", "validation"]);
+  if (targetText.includes("solution-architect")) return !hasAny(["review only", "code review", "pull request", "security audit", "regression test", "e2e test", "qa test"]);
+  return true;
+}
+
+function preferredDelegationRole(action: NativeTaskAction): string {
+  const title = String(action.title ?? "").toLowerCase();
+  const taskText = `${title} ${String(action.description ?? "")}`.toLowerCase();
+  if (/(review|pull request|\bpr\b|security audit|correctness)/.test(taskText)) return "code-reviewer";
+  if (/(wireframe|user flow|usability|visual design|prototype|design system|ui\/ux)/.test(taskText)) return "solution-architect";
+  if (/^(test|qa|regression|e2e|acceptance)|\b(run|execute) (the )?(test|qa|regression|e2e)/.test(title)) return "qa-tester";
+  return "solution-architect";
+}
+
+function resolveDelegationTarget(actor: any, requested: any, action: NativeTaskAction, directReports: any[]): any {
+  if (requested && directReports.some((candidate) => String(candidate.id) === String(requested.id)) && delegationTargetMatchesTask(actor, requested, action)) {
+    return requested;
+  }
+  const preferred = preferredDelegationRole(action);
+  return directReports.find((candidate) => identityText(candidate).includes(preferred))
+    ?? directReports.find((candidate) => delegationTargetMatchesTask(actor, candidate, action));
 }
 
 async function nativeAgentInstructions(agentId: string, request: PaperclipRequest): Promise<string> {
@@ -121,28 +170,51 @@ async function applyNativeTaskActions(
   request: PaperclipRequest,
 ): Promise<Array<{ identifier?: string; id: string; title: string }>> {
   if (actions.length === 0) return [];
+  // Workflow templates already provision every native issue and blocker edge.
+  // Agents complete their assigned step; creating children here would start a
+  // second, parallel orchestration path and bypass the template dependencies.
+  if (String(issue.originKind ?? "") === "plugin:ai-company-native-workflow") return [];
   // Only managers with reporting scope may fan work out. This is an
   // authorization boundary, not a workflow: specialists still execute their
   // assigned Paperclip task directly and cannot accidentally recurse work.
-  if (!["ceo", "pm", "cto"].includes(String(agent?.role ?? "").toLowerCase())) {
+  const role = `${String(agent?.role ?? "")} ${String(agent?.name ?? "")}`.toLowerCase().replace(/[_\s]+/g, "-");
+  if (!(role.includes("product-owner") || role.includes("project-manager") || role.includes("architect") || role.includes("cto") || role.endsWith("-po") || role.endsWith("-pm") || role === "po" || role === "pm")) {
     throw new Error(`${agent?.name ?? "This agent"} has no reporting scope for child-task delegation.`);
   }
   const companyId = String(issue.companyId ?? "");
   if (!companyId) throw new Error("The assigned issue has no company scope for native delegation.");
   const agents = await request(`/api/companies/${encodeURIComponent(companyId)}/agents`);
   const knownAgents = new Map((Array.isArray(agents) ? agents : []).map((agent: any) => [String(agent.id), agent]));
+  const directReports = (Array.isArray(agents) ? agents : []).filter((candidate: any) =>
+    String(candidate.reportsTo ?? "") === String(agent.id) &&
+    candidate.status !== "terminated" &&
+    candidate.lifecycleState !== "terminated" &&
+    candidate.lifecycleState !== "rejected" &&
+    allowedDelegationTarget(agent, candidate),
+  );
+  const eligible = directReports.map((candidate: any) =>
+    `${candidate.name ?? candidate.id} (${candidate.role ?? "role unknown"}; ${candidate.capabilities ?? "capabilities not recorded"})`,
+  );
+  if (directReports.length === 0) {
+    throw new Error(`${agent?.name ?? agent.id} has no eligible direct reports in the current native Paperclip hierarchy.`);
+  }
   const existing = issue.projectId
     ? await request(`/api/companies/${encodeURIComponent(companyId)}/issues?projectId=${encodeURIComponent(issue.projectId)}&limit=200&offset=0`)
     : [];
   const created: Array<{ identifier?: string; id: string; title: string }> = [];
-  for (const action of actions) {
-    const target = knownAgents.get(action.assigneeAgentId);
-    if (!target) throw new Error(`Delegation target ${action.assigneeAgentId} is not an agent in this company.`);
-    if (String(target.reportsTo ?? "") !== String(agent.id)) {
-      throw new Error(`Delegation target ${target.name ?? action.assigneeAgentId} is not a direct report of ${agent.name ?? agent.id}.`);
-    }
+  const isPoOrPm = role.includes("product-owner") || role.includes("project-manager") || role.endsWith("-po") || role.endsWith("-pm") || role === "po" || role === "pm";
+  const authorizedActions = isPoOrPm ? actions.slice(0, 1) : actions;
+  for (const action of authorizedActions) {
+    const requested = knownAgents.get(action.assigneeAgentId);
+    const target = resolveDelegationTarget(agent, requested, action, directReports);
+    if (!target) throw new Error(`No valid direct report can receive "${action.title}". Route implementation and design work to Solution Architect, review work to Code Reviewer, and testing work to QA Tester.`);
+    const routedAction = target.id === action.assigneeAgentId ? action : { ...action, assigneeAgentId: target.id };
     const duplicate = Array.isArray(existing) ? existing.find((candidate: any) =>
-      candidate.parentId === issue.id && candidate.assigneeAgentId === action.assigneeAgentId && candidate.title === action.title,
+      candidate.parentId === issue.id &&
+      candidate.assigneeAgentId === routedAction.assigneeAgentId &&
+      candidate.title === routedAction.title &&
+      candidate.status !== "done" &&
+      candidate.status !== "cancelled",
     ) : null;
     if (duplicate) {
       created.push({ id: duplicate.id, identifier: duplicate.identifier, title: duplicate.title });
@@ -155,7 +227,7 @@ async function applyNativeTaskActions(
         description: action.description,
         status: "todo",
         priority: action.priority ?? "medium",
-        assigneeAgentId: action.assigneeAgentId,
+        assigneeAgentId: routedAction.assigneeAgentId,
         parentId: issue.id,
         ...(issue.projectId ? { projectId: issue.projectId } : {}),
       },
@@ -188,8 +260,8 @@ export async function execute(ctx: any) {
   let issue: any = null;
   let checkedOut = false;
   let phase = "paperclip";
-  let gatewaySubmitted = false;
-  const gateway = (process.env.CODEX_GATEWAY_URL ?? "http://host.docker.internal:8400").replace(/\/$/, "");
+  let ollamaSubmitted = false;
+  const ollama = (process.env.OLLAMA_BASE_URL ?? "http://ollama:11434").replace(/\/$/, "");
   try {
     const resolved = await resolveAssignedTask(ctx, request);
     if (!resolved.issue) {
@@ -218,7 +290,7 @@ export async function execute(ctx: any) {
     const roleDir = roleDirectories[ctx.agent?.name];
     const rolePrompt = roleDir ? await readFile(`/opt/role-assets/${roleDir}/prompt.md`, "utf8") : "";
     const roleSkills = roleDir ? await readFile(`/opt/role-assets/${roleDir}/skills.md`, "utf8") : "";
-    const planning = ["project-manager", "architect", "ui-ux-designer", "code-reviewer"].includes(roleDir ?? "");
+    const planning = ["project-manager", "architect", "code-reviewer"].includes(roleDir ?? "");
     const cwd = ctx.config?.gatewayCwd ?? issue.project?.codebase?.localFolder ?? "/workspace";
     // Codex CLI's read-only sandbox on this Windows host rejects even file
     // reads through its shell tool. Planning stays read-only by instruction;
@@ -226,69 +298,83 @@ export async function execute(ctx: any) {
     const sandbox = "workspace-write";
     const companyAgents = await request(`/api/companies/${encodeURIComponent(issue.companyId)}/agents`);
     const roster = (Array.isArray(companyAgents) ? companyAgents : []).map((agent: any) => ({ id: agent.id, name: agent.name, role: agent.role, reportsTo: agent.reportsTo, capabilities: agent.capabilities })).filter((agent: any) => agent.id && agent.name);
+    const directReports = roster.filter((agent: any) => String(agent.reportsTo ?? "") === String(ctx.agent.id) && allowedDelegationTarget(ctx.agent, agent));
+    const eligibleDelegationTargets = directReports
+      .map((agent: any) => `${agent.name} [${agent.id}] capabilities=${agent.capabilities ?? "not recorded"}`)
+      .join("; ");
     const companyGoals = await request(`/api/companies/${encodeURIComponent(issue.companyId)}/goals`);
     const nativeInstructions = await nativeAgentInstructions(ctx.agent.id, request);
-    const mayDelegate = ["ceo", "pm", "cto"].includes(String(ctx.agent.role ?? "").toLowerCase());
+    const normalizedRole = `${String(ctx.agent.role ?? "")} ${String(ctx.agent.name ?? "")}`.toLowerCase().replace(/[_\s]+/g, "-");
+    const mayDelegate = directReports.length > 0 && (
+      normalizedRole.includes("product-owner") ||
+      normalizedRole.includes("project-manager") ||
+      normalizedRole.includes("architect") ||
+      normalizedRole.includes("cto") ||
+      normalizedRole.includes("lead") ||
+      normalizedRole.endsWith("-po") ||
+      normalizedRole.endsWith("-pm") ||
+      normalizedRole === "po" ||
+      normalizedRole === "pm"
+    );
     const delegationContract = mayDelegate
-      ? "If and only if this task explicitly needs delegation, emit exactly one plain JSON <paperclip-actions>{\"actions\":[{\"type\":\"create_task\",\"title\":\"...\",\"description\":\"...\",\"assigneeAgentId\":\"exact-agent-id\",\"priority\":\"medium\"}]}</paperclip-actions> block. Do not wrap it in Markdown, XML, or another code block. Each action creates a native Paperclip child task and Paperclip's assignment wakeup coordinator notifies the assignee. Never create a task for yourself, never use a future dependency as a scheduler, and delegate only to an appropriate reporting descendant. Do not put any other action type in this block."
+      ? `If and only if this task explicitly needs delegation, emit exactly one plain JSON <paperclip-actions>{"actions":[{"type":"create_task","title":"...","description":"...","assigneeAgentId":"exact-agent-id","priority":"medium"}]}</paperclip-actions> block. Do not wrap it in Markdown, XML, or another code block. Each action creates one native Paperclip child task and Paperclip's assignment wakeup coordinator notifies the assignee. HARD RULE: your only eligible delegation targets are these current direct reports: ${eligibleDelegationTargets || "none"}. Choose an assigneeAgentId from that list only. Never target the human CEO, an ancestor, yourself, a sibling, or an unrelated agent. Never skip levels to reach a specialist. Never use a future dependency as a scheduler. Do not put any other action type in this block.`
       : "You are an individual contributor for this task. Do not delegate, create child tasks, or emit paperclip-actions. Complete the assigned work yourself and report the evidence.";
     const workPrompt = [rolePrompt, roleSkills, nativeInstructions ? `Native Paperclip AGENTS.md:\n${nativeInstructions}` : "", prompt, `Paperclip issue ID: ${taskId}`,
       `Company goals (native Paperclip source of truth):\n${JSON.stringify(Array.isArray(companyGoals) ? companyGoals : [])}`,
       `Company agent roster (use these exact IDs only when delegating):\n${JSON.stringify(roster)}`,
+      `Current direct reports eligible for native delegation (use only these IDs):\n${JSON.stringify(directReports)}`,
       delegationContract,
       "Return your substantive deliverable in the final response so Paperclip can save it as a task comment. Explain completed work, evidence, and remaining blockers. Finish with a plain <paperclip-result>{\"status\":\"done\"}</paperclip-result> only if this assigned task's deliverables are complete; do not wrap it in Markdown or XML. Use status blocked for missing prerequisites or in_progress for unfinished work. Never claim completion on a question, tool failure, or plan for an implementation task.",
       planning ? "This is a read-only planning/review task. Provide the full plan, specification, or review in your final response. Do not implement code or deploy." : "Do not modify unrelated projects or deploy without the user's approval.",
     ].filter(Boolean).join("\n\n");
     // Refuse an unavailable runtime before checkout or posting a started comment.
-    phase = "gateway_health";
-    const health = await fetch(`${gateway}/health`, { signal: AbortSignal.timeout(5000) });
-    if (!health.ok || (await health.json() as { status?: string }).status !== "ok") {
-      throw new Error(`Gateway health check failed (HTTP ${health.status}).`);
-    }
     phase = "paperclip";
     const expectedStatuses = ["todo", "in_progress", "backlog"];
     if (issue.status === "blocked" && isAdmittedRecoveryContinuation(issue, ctx)) expectedStatuses.push("blocked");
     await request(`/api/issues/${taskId}/checkout`, { method: "POST", body: { agentId: ctx.agent.id, expectedStatuses } });
     checkedOut = true;
     await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: `${ctx.agent.name} started ${issue.identifier}.\n\nRun: ${ctx.runId}\nModel: ${ctx.config?.model ?? "runtime default"}\nProject requirements and dependencies loaded.`, } });
-    phase = "gateway_run";
+    phase = "ollama_run";
     ctx.onDispatch?.();
-    const response = await fetch(`${gateway}/run`, {
+    const response = await fetch(`${ollama}/api/chat`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-gateway-token": process.env.CODEX_GATEWAY_TOKEN ?? "dev-codex-gateway" },
-      body: JSON.stringify({ cwd, sandbox, timeout_seconds: Number(ctx.config?.timeoutSec ?? 900), provider: ctx.config?.provider ?? "ollama", model: ctx.config?.model, prompt: workPrompt }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: ctx.config?.model ?? process.env.OLLAMA_MODEL ?? "llama3.2:3b", stream: false, messages: [{ role: "user", content: workPrompt }], options: { temperature: 0.1, num_predict: Number(process.env.OLLAMA_NUM_PREDICT ?? 2048) } }),
       signal: ctx.signal,
     });
-    if (!response.ok) throw new Error(`Codex gateway returned HTTP ${response.status}`);
-    gatewaySubmitted = true;
-    const body = await response.json() as { status?: string; summary?: string; events?: Array<{ type?: string; item?: { type?: string; text?: string } }> };
+    if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
+    ollamaSubmitted = true;
+    const ollamaBody = await response.json() as { message?: { content?: string } };
+    const body = { status: ollamaBody.message?.content ? "completed" : "failed", summary: ollamaBody.message?.content ?? "Ollama returned no assistant message" };
     phase = "paperclip_result";
-    const assistantText = body.events?.filter((event) => event.type === "item.completed" && event.item?.type === "agent_message").map((event) => event.item?.text ?? "").filter(Boolean).at(-1);
-    const summary = assistantText || body.summary || "Codex gateway returned no summary";
+    const summary = body.summary;
     await ctx.onLog?.("stdout", `${summary}\n`);
     const outcome = taskResult(summary);
     const delegated = body.status === "completed" ? await applyNativeTaskActions(nativeTaskActions(summary), issue, ctx.agent, request) : [];
     const delegationReport = delegated.length
       ? `\n\nNative Paperclip child task(s): ${delegated.map((child) => `${child.identifier ?? child.id} (${child.title})`).join(", ")}.`
       : "";
-    await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: `${ctx.agent.name}: ${body.status === "completed" ? outcome.status : "execution failed"}\n\n${outcome.report}${delegationReport}` } });
+    const shouldPostComment = outcome.status !== "in_progress" || delegated.length > 0 || (outcome.report && !outcome.report.includes("No substantive deliverable was returned."));
+    if (shouldPostComment) {
+      await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: `${ctx.agent.name}: ${body.status === "completed" ? outcome.status : "execution failed"}\n\n${outcome.report}${delegationReport}` } });
+    }
     if (body.status === "completed" && outcome.status !== "in_progress") {
       const update = outcome.status === "blocked"
         ? { status: "blocked", unblockDescriptor: { owner: { agentId: ctx.agent.id }, action: "Review the blocker report in this issue, supply the missing prerequisite, then move the task to Todo and retry." } }
         : { status: outcome.status };
       await request(`/api/issues/${taskId}`, { method: "PATCH", body: update });
     }
-    return executionResult(body.status === "completed", outcome.report.slice(0, 4000), { issueId: taskId, issueIdentifier: issue.identifier, taskStatus: body.status === "completed" ? outcome.status : "in_progress", gatewayStatus: body.status, model: ctx.config?.model ?? null, delegatedIssueIds: delegated.map((child) => child.id), eventCount: body.events?.length ?? 0 });
+    return executionResult(body.status === "completed", outcome.report.slice(0, 4000), { issueId: taskId, issueIdentifier: issue.identifier, taskStatus: body.status === "completed" ? outcome.status : "in_progress", ollamaStatus: body.status, model: ctx.config?.model ?? null, delegatedIssueIds: delegated.map((child) => child.id) });
   } catch (error: any) {
     const connectionCode = String(error?.cause?.code ?? "");
-    const summary = phase === "gateway_health" || phase === "gateway_run"
-      ? `Task execution failed: Codex gateway ${new URL(gateway).host} ${phase === "gateway_health" ? "is unavailable before task execution" : "request failed"} (${connectionCode || String(error?.message ?? error)}). ${phase === "gateway_health" ? "Start the host gateway, then retry this task." : "Inspect the previous run before retrying; the request outcome may be uncertain."}`
+    const summary = phase === "ollama_run"
+      ? `Task execution failed: Ollama ${new URL(ollama).host} request failed (${connectionCode || String(error?.message ?? error)}). Start Ollama and retry this task.`
       : `Task execution failed: ${String(error?.message ?? error).slice(0, 500)}`;
     await ctx.onLog?.("stderr", `${summary}\n`);
     if (issue && taskId && checkedOut) {
       try { await request(`/api/issues/${taskId}/comments`, { method: "POST", body: { body: summary } }); } catch { /* Preserve the original error if reporting also fails. */ }
     }
-    return executionResult(false, summary, { issueId: taskId || null, failurePhase: phase, connectionCode: connectionCode || null, gatewaySubmitted });
+    return executionResult(false, summary, { issueId: taskId || null, failurePhase: phase, connectionCode: connectionCode || null, ollamaSubmitted });
   }
 }
 

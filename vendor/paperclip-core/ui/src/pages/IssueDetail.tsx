@@ -7466,7 +7466,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                       !isTerminalIssue)
                   }
                   canResume={canResumeLeafWork || canResumeSubtree}
-                  canCancel={canShowSubtreeControls}
+                  canCancel={canManageTreeControl && !isTerminalIssue}
                   canRestore={canRestoreSubtree}
                   pending={executeTreeControl.isPending}
                   onPause={() => {
@@ -7666,7 +7666,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               className={shellSectionClass}
               action={issue.activeRecoveryAction ?? null} canManage={canManageBoardRuntime} onQueued={invalidateIssueDetail} />
           )}
-          {resolvedDetailTab === "chat" && issue.executionBlocker && (
+          {resolvedDetailTab === "chat" && !isTerminalIssue && issue.executionBlocker && (
             <ExecutionBlockerNotice className={shellSectionClass} companyId={issue.companyId} issueId={issue.id} blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />
           )}
 

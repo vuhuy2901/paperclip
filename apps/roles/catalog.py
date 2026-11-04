@@ -9,8 +9,7 @@ from pathlib import PurePosixPath
 
 ROLE_ARTIFACTS: dict[str, tuple[str, ...]] = {
     "project-manager": ("prd.md", "acceptance.json", "task-graph.json"),
-    "architect": ("architecture.md", "impact-map.json", "openapi.yaml", "migration-plan.md"),
-    "ui-ux-designer": ("design-system/MASTER.md", "user-flows.md", "wireframe.html", "states.json"),
+    "architect": ("architecture.md", "impact-map.json", "openapi.yaml", "migration-plan.md", "design-system/MASTER.md", "user-flows.md", "wireframe.html", "states.json"),
     "backend-developer": ("handoff.json", "test-report.json", "diff.patch"),
     "frontend-developer": ("handoff.json", "screenshot-manifest.json", "diff.patch"),
     "code-reviewer": ("review.json",),

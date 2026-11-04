@@ -1,6 +1,8 @@
-import React from "react";
+import React, { useMemo, useRef, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@/lib/router";
 import type { AgentOfficeState } from "../types/OfficeTypes";
+import { heartbeatsApi } from "@/api/heartbeats";
 import {
   Bot,
   Briefcase,
@@ -14,6 +16,7 @@ import {
   AlertCircle,
   Camera,
   Layers,
+  RotateCw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +28,8 @@ interface AgentDetailsPanelProps {
 }
 
 export function AgentDetailsPanel({ officeAgent, onFocusCamera, onClose }: AgentDetailsPanelProps) {
+  const terminalBottomRef = useRef<HTMLDivElement>(null);
+
   if (!officeAgent) {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground h-full">
@@ -39,16 +44,67 @@ export function AgentDetailsPanel({ officeAgent, onFocusCamera, onClose }: Agent
 
   const { agent, assignedDesk, visualStatus, activeTask, activeLiveRun, lastActiveTimestamp } = officeAgent;
 
+  // Query latest run for this agent (either active or last completed)
+  const { data: recentRuns = [], refetch: refetchRuns } = useQuery({
+    queryKey: ["agent-latest-run", agent.id],
+    queryFn: () => (agent.companyId ? heartbeatsApi.list(agent.companyId, agent.id, 1) : Promise.resolve([])),
+    enabled: !!agent.id,
+    refetchInterval: visualStatus === "running" ? 3000 : 12000,
+  });
+
+  const latestRun = recentRuns[0] ?? null;
+  const effectiveRunId = activeLiveRun?.runId ?? latestRun?.id ?? null;
+  const isCurrentlyExecuting = visualStatus === "running" || latestRun?.status === "running";
+
+  // Query the real streaming heartbeat logs for the run
+  const {
+    data: runLogData,
+    isLoading: isLogLoading,
+    refetch: refetchLogs,
+  } = useQuery({
+    queryKey: ["heartbeat-run-log", effectiveRunId],
+    queryFn: () => (effectiveRunId ? heartbeatsApi.log(effectiveRunId) : Promise.resolve(null)),
+    enabled: !!effectiveRunId,
+    refetchInterval: isCurrentlyExecuting ? 2000 : false,
+  });
+
+  // Parse ndjson lines into clean terminal output
+  const parsedLogLines = useMemo(() => {
+    if (!runLogData?.content) return [];
+    const rawLines = runLogData.content.split("\n").filter((l) => l.trim().length > 0);
+    return rawLines.map((line) => {
+      try {
+        const obj = JSON.parse(line);
+        return {
+          ts: obj.ts ? new Date(obj.ts).toLocaleTimeString() : "",
+          stream: (obj.stream as string) ?? "stdout",
+          text: (obj.chunk as string) ?? line,
+        };
+      } catch {
+        return {
+          ts: "",
+          stream: "stdout",
+          text: line,
+        };
+      }
+    });
+  }, [runLogData]);
+
+  // Auto scroll to bottom when new logs arrive while running
+  useEffect(() => {
+    if (isCurrentlyExecuting) {
+      terminalBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [parsedLogLines, isCurrentlyExecuting]);
+
   const statusColor =
     visualStatus === "running"
-      ? "bg-blue-500/10 text-blue-500 border-blue-500/20"
-      : visualStatus === "error"
+      ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+      : visualStatus === "error" || visualStatus === "blocked"
         ? "bg-red-500/10 text-red-500 border-red-500/20"
         : visualStatus === "paused"
           ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-          : visualStatus === "waiting"
-            ? "bg-muted text-muted-foreground border-border/50"
-            : "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
+          : "bg-muted text-muted-foreground border-border/50";
 
   return (
     <div className="flex flex-col h-full overflow-y-auto p-4 gap-4 bg-card/60 backdrop-blur">
@@ -136,33 +192,91 @@ export function AgentDetailsPanel({ officeAgent, onFocusCamera, onClose }: Agent
         )}
       </div>
 
-      {/* Live Runtime & Heartbeat Output */}
-      {activeLiveRun && (
-        <div className="flex flex-col gap-2">
+      {/* Live AI Execution Heartbeat & Terminal Log Stream */}
+      <div className="flex flex-col gap-2 flex-1 min-h-[190px]">
+        <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-            <Terminal className="h-3.5 w-3.5 text-blue-500 animate-pulse" />
+            <Terminal className={`h-3.5 w-3.5 ${isCurrentlyExecuting ? "text-emerald-500 animate-pulse" : "text-primary"}`} />
             Live Execution Heartbeat
           </span>
-          <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 flex flex-col gap-1.5 text-xs">
-            {activeLiveRun.currentToolName && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-semibold uppercase text-blue-400">Tool:</span>
-                <code className="text-[11px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono">
-                  {activeLiveRun.currentToolName}
-                </code>
-              </div>
-            )}
-            {activeLiveRun.currentStatusMessage && (
-              <p className="text-[11px] text-foreground font-medium">{activeLiveRun.currentStatusMessage}</p>
-            )}
-            {activeLiveRun.lastAssistantSnippet && (
-              <p className="text-[11px] text-muted-foreground font-mono bg-background/50 p-2 rounded border border-border/30 line-clamp-3">
-                {activeLiveRun.lastAssistantSnippet}
-              </p>
-            )}
+          <div className="flex items-center gap-1.5">
+            {isCurrentlyExecuting ? (
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
+                Active Run
+              </span>
+            ) : latestRun ? (
+              <span className="text-[10px] font-medium text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded">
+                Run #{latestRun.id.slice(0, 6)} ({latestRun.status})
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                refetchRuns();
+                refetchLogs();
+              }}
+              title="Refresh log"
+              className="text-muted-foreground hover:text-foreground p-1 transition-colors cursor-pointer"
+            >
+              <RotateCw className="h-3 w-3" />
+            </button>
           </div>
         </div>
-      )}
+
+        {/* Real Monospace Terminal Output */}
+        <div className="flex-1 rounded-lg border border-border/70 bg-zinc-950 p-3 flex flex-col font-mono text-[11px] leading-relaxed text-zinc-300 overflow-y-auto max-h-[260px] shadow-inner select-text">
+          {parsedLogLines.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              {parsedLogLines.map((item, idx) => (
+                <div key={idx} className="flex items-start gap-2 break-all">
+                  {item.ts && (
+                    <span className="text-[10px] text-zinc-500 shrink-0 select-none">
+                      [{item.ts}]
+                    </span>
+                  )}
+                  <span
+                    className={
+                      item.stream === "stderr"
+                        ? "text-red-400 font-semibold"
+                        : item.text.includes("```json") || item.text.includes("\"actions\"")
+                          ? "text-cyan-300 font-semibold whitespace-pre-wrap"
+                          : item.text.includes("Selected") || item.text.includes("Loading")
+                            ? "text-emerald-400 font-medium"
+                            : "text-zinc-200 whitespace-pre-wrap"
+                    }
+                  >
+                    {item.text}
+                  </span>
+                </div>
+              ))}
+              {isCurrentlyExecuting && (
+                <div className="flex items-center gap-1.5 text-emerald-400 text-[11px] mt-1 pt-1 border-t border-zinc-800">
+                  <span className="animate-pulse">▶ AI reasoning & executing...</span>
+                  <span className="animate-ping inline-block h-2 w-1 bg-emerald-400 ml-1" />
+                </div>
+              )}
+              <div ref={terminalBottomRef} />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center text-zinc-500 py-6">
+              <Terminal className="h-6 w-6 opacity-30 mb-2" />
+              {isLogLoading ? (
+                <span>Loading execution stream...</span>
+              ) : isCurrentlyExecuting ? (
+                <span className="text-emerald-400 animate-pulse">Heartbeat initialized. Awaiting LLM output...</span>
+              ) : (
+                <>
+                  <p className="font-semibold text-zinc-400">Standing by</p>
+                  <p className="text-[10px] mt-1 text-zinc-500 max-w-[220px]">
+                    When this agent starts a task, real-time thoughts, tool calls, and logs stream here.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Quick Actions */}
       <div className="flex items-center gap-2 pt-2 border-t border-border/50 mt-auto">

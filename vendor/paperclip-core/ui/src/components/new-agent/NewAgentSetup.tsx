@@ -512,12 +512,12 @@ function Setup({
       }
       const existing = agents.data ?? [];
       const leader = existing.find(
-        (agent) => agent.role === "ceo" && agent.status !== "terminated",
+        (agent) => agent.name.toLowerCase() === "po" || ["product-owner", "product_owner"].includes(agent.role ?? ""),
       );
       const response = await agentsApi.hire(companyId, {
         name: name.trim(),
         appearance: appearanceDraft.appearance,
-        role: existing.length ? "general" : "ceo",
+        role: existing.length ? "general" : "product-owner",
         ...(leader ? { reportsTo: leader.id } : {}),
         adapterType,
         adapterConfig: config,

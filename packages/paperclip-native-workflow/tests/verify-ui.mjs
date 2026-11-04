@@ -1,0 +1,72 @@
+// Run manually against the local instance. Verification templates are archived afterward.
+import { chromium, expect } from '../../../vendor/paperclip-core/node_modules/@playwright/test/index.mjs';
+const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const page = await browser.newPage({ viewport:{width:1680,height:1000} });
+const errors = [];
+page.on('pageerror', error => errors.push(error.message));
+const root = process.env.WORKFLOW_URL ?? 'http://127.0.0.1:3100/AIS/workflow-designer';
+const name = `Workflow UI verification ${Date.now()}`;
+const card = value => page.locator('.wfs-card').filter({has:page.getByRole('heading',{name:value,exact:true})});
+const openMenu = async value => { await card(value).getByRole('button',{name:`Actions for ${value}`,exact:true}).click(); };
+const archive = async value => {
+  await openMenu(value);
+  await card(value).getByRole('button',{name:'Archive',exact:true}).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button',{name:'Archive workflow',exact:true}).click();
+  await expect(card(value)).toHaveCount(0);
+};
+try {
+  await page.goto(root);
+  await expect(page.getByRole('heading',{name:'Workflows',exact:true})).toBeVisible({timeout:60000});
+  for (const leftover of await page.locator('.wfs-card-title').allTextContents()) {
+    if (leftover.startsWith('Workflow UI verification ')) await archive(leftover);
+  }
+  await expect(page.locator('.wfs-card')).toHaveCount(5);
+  await expect(page.locator('.react-flow')).toHaveCount(0);
+  await page.getByLabel('Search workflows',{exact:true}).fill('AI Software Development Lifecycle');
+  await expect(page.locator('.wfs-card')).toHaveCount(4);
+  await page.getByLabel('Search workflows',{exact:true}).fill('');
+  await page.getByTitle('Compact list view').click();
+  await expect(page.locator('.wfs-compact-row')).toHaveCount(5);
+  await page.getByTitle('Grid view',{exact:true}).click();
+  await card('AI Software Development Lifecycle').getByRole('button',{name:'Open Designer'}).click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(13);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(14);
+  await page.locator('.wfs-step-row').filter({hasText:'Implement frontend'}).click();
+  await expect(page.getByLabel('Step title',{exact:true})).toHaveValue('Implement frontend');
+  await page.reload();
+  await expect(page.locator('.react-flow__node')).toHaveCount(13);
+  await page.getByRole('button',{name:'All workflows',exact:true}).click();
+  await expect(page.locator('.react-flow')).toHaveCount(0);
+  await page.getByRole('button',{name:'Create Workflow',exact:true}).click();
+  await page.getByRole('dialog').getByRole('textbox').fill(name);
+  await page.getByRole('button',{name:'Create & Open Designer',exact:true}).click();
+  await expect(page.locator('.wfs-title')).toHaveText(name);
+  await page.locator('.wfs-library-item').filter({hasText:'Product Owner'}).first().click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  await page.getByLabel('Step title',{exact:true}).fill('Verified requirements step');
+  await page.getByLabel('Expected outputs',{exact:true}).fill('Requirements document');
+  const pm = page.locator('.wfs-library-item').filter({hasText:'AI Project Manager'}).first();
+  await pm.dragTo(page.locator('.wfs-canvas'),{targetPosition:{x:380,y:250}});
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  await expect(page.getByText('Workflow saved',{exact:true})).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await page.locator('.wfs-step-row').filter({hasText:'Verified requirements step'}).click();
+  await expect(page.getByRole('textbox',{name:'Expected outputs',exact:true})).toHaveValue('Requirements document');
+  await page.getByRole('button',{name:'All workflows',exact:true}).click();
+  await openMenu(name);
+  await card(name).getByRole('button',{name:'Duplicate',exact:true}).click();
+  await expect(card(`${name} copy`)).toHaveCount(1);
+  await openMenu(`${name} copy`);
+  await card(`${name} copy`).getByRole('button',{name:'Rename',exact:true}).click();
+  await page.getByRole('dialog').getByRole('textbox').fill(`${name} renamed`);
+  await page.getByRole('dialog').getByRole('button',{name:'Rename',exact:true}).click();
+  await expect(card(`${name} renamed`)).toHaveCount(1);
+  await archive(`${name} renamed`);
+  await archive(name);
+  await expect(page.locator('.wfs-card')).toHaveCount(5);
+  expect(errors).toEqual([]);
+  console.log(JSON.stringify({listCards:5,recoveredGraph:{nodes:13,edges:14},verified:['list/details/back','search','grid/list','direct detail reload','step inspector','create','agent click','agent drag and drop','draft save and reload','duplicate','rename','archive without deletion'],javascriptErrors:errors},null,2));
+} finally { await browser.close(); }

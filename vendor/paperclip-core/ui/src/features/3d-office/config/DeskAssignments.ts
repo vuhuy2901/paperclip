@@ -2,15 +2,19 @@ import type { Agent } from "@paperclipai/shared";
 import type { DeskDefinition } from "../types/OfficeTypes";
 import { ROOM_DEFINITIONS } from "./RoomDefinitions";
 
+/** A terminated lifecycle is authoritative even when the legacy status field is stale. */
+export function isActiveOfficeAgent(agent: Agent): boolean {
+  const lifecycleState = (agent as Agent & { lifecycleState?: string | null }).lifecycleState;
+  return agent.status !== "terminated" && lifecycleState !== "terminated" && lifecycleState !== "rejected";
+}
+
 /**
  * Normalizes an agent's role or name into a key for desk matching
  */
 function normalizeRole(role: string, name: string): string {
   const combined = `${role} ${name}`.toLowerCase();
-  if (combined.includes("ceo") || combined.includes("chief executive")) return "ceo";
   if (combined.includes("project manager") || combined.includes("pm") || combined.includes("lead")) return "project_manager";
   if (combined.includes("product owner") || combined.includes("po") || combined.includes("product")) return "product_owner";
-  if (combined.includes("designer") || combined.includes("ui") || combined.includes("ux")) return "ui_ux_designer";
   if (combined.includes("architect") || combined.includes("solution")) return "solution_architect";
   if (combined.includes("backend") || combined.includes("api")) return "backend_engineer";
   if (combined.includes("frontend") || combined.includes("web") || combined.includes("ui dev")) return "frontend_engineer";
@@ -38,7 +42,7 @@ export function assignAgentsToDesks(agents: Agent[]): Map<string, DeskDefinition
 
   // Pass 1: Exact / Best role match
   for (const agent of agents) {
-    if (agent.status === "terminated") continue;
+    if (!isActiveOfficeAgent(agent)) continue;
     const normalized = normalizeRole(agent.role ?? "", agent.name ?? "");
     const matchingDesk = allDesks.find(
       (d) => !occupiedDeskIds.has(d.id) && d.roleHint === normalized,
@@ -55,7 +59,7 @@ export function assignAgentsToDesks(agents: Agent[]): Map<string, DeskDefinition
   let deskIdx = 0;
 
   for (const agent of agents) {
-    if (agent.status === "terminated") continue;
+    if (!isActiveOfficeAgent(agent)) continue;
     if (!assignmentMap.has(agent.id)) {
       if (deskIdx < remainingDesks.length) {
         const desk = remainingDesks[deskIdx]!;

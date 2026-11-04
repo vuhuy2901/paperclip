@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { usePaperclipOfficeData } from "../data/PaperclipOfficeAdapter";
+import { useOfficeStore } from "../store/useOfficeStore";
 import { OfficeHeader } from "../components/OfficeHeader";
 import { OfficeCanvas } from "../components/OfficeCanvas";
 import { AgentDetailsPanel } from "../components/AgentDetailsPanel";
@@ -7,6 +8,8 @@ import { LiveActivityFeed } from "../components/LiveActivityFeed";
 import { ProjectFilesPanel } from "../components/ProjectFilesPanel";
 import { AgentContributionsPanel } from "../components/AgentContributionsPanel";
 import { Office2DFallback } from "../components/Office2DFallback";
+import { OfficeToastCenter } from "../components/OfficeToastCenter";
+import { officeMockSimulation } from "../services/OfficeMockSimulation";
 import { ArrowRight, Bot, CheckCircle2, Sparkles, X } from "lucide-react";
 
 export function OfficeViewPage() {
@@ -20,14 +23,18 @@ export function OfficeViewPage() {
     agentContributions,
     workspaceFiles,
     isWorkspaceFilesLoading,
-    selectedAgentId,
-    setSelectedAgentId,
     connectionStatus,
     stats,
   } = usePaperclipOfficeData();
 
-  const [activePresetKey, setActivePresetKey] = useState("overview");
-  const [followActiveAgent, setFollowActiveAgent] = useState(false);
+  // Zustand centralized store hooks
+  const selectedAgentId = useOfficeStore((state) => state.selectedAgentId);
+  const setSelectedAgentId = useOfficeStore((state) => state.setSelectedAgentId);
+  const activePresetKey = useOfficeStore((state) => state.activePresetKey);
+  const setActivePresetKey = useOfficeStore((state) => state.setActivePresetKey);
+  const followActiveAgent = useOfficeStore((state) => state.followActiveAgent);
+  const setFollowActiveAgent = useOfficeStore((state) => state.setFollowActiveAgent);
+
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeSideTab, setActiveSideTab] = useState<"agent" | "files" | "contributions">("agent");
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(true);
@@ -62,6 +69,13 @@ export function OfficeViewPage() {
     setIsSidePanelOpen(true);
   };
 
+  // Sync real office agents to mock simulation service
+  useEffect(() => {
+    if (officeAgents && officeAgents.length > 0) {
+      officeMockSimulation.setOfficeAgents(officeAgents);
+    }
+  }, [officeAgents]);
+
   // Banner dismiss timer
   useEffect(() => {
     if (handoffBanner) {
@@ -77,7 +91,7 @@ export function OfficeViewPage() {
       ref={containerRef}
       className="flex flex-col w-full h-[calc(100vh-3.5rem)] bg-background text-foreground overflow-hidden select-none"
     >
-      {/* Top Header */}
+      {/* Top Header with KPIs & Controls */}
       <OfficeHeader
         companyName={companyName}
         projects={projects}
@@ -97,12 +111,14 @@ export function OfficeViewPage() {
           setActiveSideTab(tab);
           setIsSidePanelOpen(true);
         }}
+        officeAgents={officeAgents}
+        onSelectAgent={handleSelectAgent}
       />
 
       {/* Main Workspace (3D Canvas + Right Panel) */}
       <div className="relative flex flex-1 min-h-0 overflow-hidden">
         {/* Left / Center 3D Office Scene */}
-        <div className="flex-1 relative h-full min-w-0 bg-slate-950">
+        <div className="flex-1 relative h-full min-w-0 bg-slate-100 dark:bg-slate-900">
           {!use2DFallback ? (
             <OfficeCanvas
               officeAgents={officeAgents}
@@ -140,7 +156,7 @@ export function OfficeViewPage() {
             <button
               type="button"
               onClick={() => setUse2DFallback(!use2DFallback)}
-              className="text-[11px] font-medium px-2.5 py-1 rounded bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60 backdrop-blur transition-colors"
+              className="text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 text-slate-200 border border-slate-700/60 shadow-lg backdrop-blur transition-all"
             >
               {use2DFallback ? "Switch to 3D Scene" : "Switch to 2D Blueprint"}
             </button>
@@ -190,6 +206,9 @@ export function OfficeViewPage() {
           setSelectedAgentId(agentId);
         }}
       />
+
+      {/* Floating Toast Notification Center */}
+      <OfficeToastCenter />
     </div>
   );
 }

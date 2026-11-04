@@ -56,7 +56,6 @@ def seed_tasks(db: Session, run: WorkflowRun, change_text: str):
         ("code-reviewer", "Review candidate diff against acceptance criteria", ["backend-developer", "frontend-developer"]),
         ("tester", "Run trusted tests and regression suite", ["code-reviewer"]),
         ("devops", "Build preview and run smoke checks", ["tester"]),
-        ("ui-ux-designer", "Specify user flow and interaction states", ["project-manager"]),
     ]
     for role, goal, deps in tasks:
         task = Task(run_id=run.id, role=role, goal=f"{goal}: {change_text}", depends_on=deps, required_artifacts=required_artifacts(role))

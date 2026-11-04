@@ -87,7 +87,13 @@ export async function taskPrompt(issue: any, request: PaperclipRequest): Promise
     sections.push(`Completed predecessor ${blocker.identifier ?? blocker.id}: ${blocker.title}\n${comments.slice(-3).map((comment: any) => String(comment.body).slice(0, 12000)).join("\n\n")}`);
   }
   const comments = await request(`/api/issues/${encodeURIComponent(issue.id)}/comments`);
-  if (comments.length) sections.push(`Task discussion:\n${comments.slice(-5).map((comment: any) => String(comment.body).slice(0, 12000)).join("\n\n")}`);
+  const meaningfulComments = (Array.isArray(comments) ? comments : []).filter((c: any) => {
+    const body = String(c?.body ?? "").trim();
+    if (body.includes("Project requirements and dependencies loaded.")) return false;
+    if (body.includes("No substantive deliverable was returned.")) return false;
+    return true;
+  });
+  if (meaningfulComments.length) sections.push(`Task discussion:\n${meaningfulComments.slice(-5).map((comment: any) => String(comment.body).slice(0, 12000)).join("\n\n")}`);
   sections.push("Work only on the current assigned task, its explicit source requirement, and completed dependencies.");
   return sections.join("\n\n");
 }
@@ -107,9 +113,17 @@ export function taskResult(message: string): { status: "done" | "blocked" | "in_
         .replace(/```(?:json)?\s*\{\s*"paperclip-actions"[\s\S]*?\}\s*```/gi, "")
         .trim();
       const actionOnlyCompletion = nativeTaskActions(message).length > 0;
+      const effectiveStatus = (report || actionOnlyCompletion || status === "done" || status === "blocked") ? status : "in_progress";
+      const defaultReport = actionOnlyCompletion
+        ? "Native Paperclip child-task delegation completed."
+        : status === "done"
+          ? "Task completed as requested."
+          : status === "blocked"
+            ? "Task is blocked by external dependencies."
+            : "No substantive deliverable was returned.";
       return {
-        status: report || actionOnlyCompletion ? status : "in_progress",
-        report: report || (actionOnlyCompletion ? "Native Paperclip child-task delegation completed." : "No substantive deliverable was returned."),
+        status: effectiveStatus,
+        report: report || defaultReport,
       };
     } catch { /* Try the next model-provided JSON block. */ }
   }

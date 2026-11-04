@@ -23,6 +23,7 @@ import {
   LayoutGrid,
   Users,
   Building2,
+  Workflow,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -236,6 +237,13 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           ) : null}
           <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
           <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
+          {selectedCompany ? (
+            <SidebarNavItem
+              to={`/${selectedCompany.issuePrefix}/workflow-designer`}
+              label="Workflow Designer"
+              icon={Workflow}
+            />
+          ) : null}
           {showCases ? (
             <SidebarNavItem to="/cases" label="Cases" icon={Layers} textBadge="beta" />
           ) : null}

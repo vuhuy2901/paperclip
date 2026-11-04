@@ -1,1 +1,0 @@
-{"role":"ui-ux-designer","mode":"scoped","allowed_tools":["read_repo","write_scoped_files","run_trusted_checks","publish_handoff"],"forbidden_tools":["write_outside_scope","direct_main_merge","host_docker_socket"]}

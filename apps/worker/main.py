@@ -81,10 +81,10 @@ def process_once():
             heartbeat_run(db, run.id, owner)
             task.status = "running"
             emit(db, run.id, "task.started", {"task_id": task.id, "role": task.role})
-            role_cfg = (run.config_snapshot or {}).get("roles", {}).get(task.role, {"runner":"local-deterministic"})
-            agent_run = AgentRun(task_id=task.id, attempt=1, runner=role_cfg.get("runner", "local-deterministic"), model=role_cfg.get("model"), status="running", usage={"status": "unknown"})
+            role_cfg = (run.config_snapshot or {}).get("roles", {}).get(task.role, {"runner":"ollama", "model": "llama3.2:3b"})
+            agent_run = AgentRun(task_id=task.id, attempt=1, runner=role_cfg.get("runner", "ollama"), model=role_cfg.get("model", "llama3.2:3b"), status="running", usage={"status": "unknown"})
             db.add(agent_run); db.flush(); db.commit()
-            if role_cfg.get("runner") in {"codex-cli", "codex-gateway"}:
+            if role_cfg.get("runner") in {"ollama", "codex-cli", "codex-gateway"}:
                 scope = role_cfg.get("file_scope", [])
                 if not project or not project.repo or not scope:
                     task.status = "failed"; emit(db, run.id, "task.failed", {"task_id": task.id, "reason": "codex-cli requires project.repo and non-empty role file_scope"})
@@ -187,7 +187,7 @@ def process_once():
             db.add(Artifact(run_id=run.id, type="role-handoff-manifest", relative_path=manifest["relative_path"], sha256=manifest["sha256"], size=manifest["size"], producer=task.role))
             produced = []
             for relative_path in task.required_artifacts:
-                if role_cfg.get("runner") in {"codex-cli", "codex-gateway"}:
+                if role_cfg.get("runner") in {"ollama", "codex-cli", "codex-gateway"}:
                     if not candidate_root:
                         task.status = "failed"
                         emit(db, run.id, "task.failed", {"task_id": task.id, "reason": "real runner artifact requires a candidate worktree", "artifact": relative_path})

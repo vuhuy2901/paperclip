@@ -57,34 +57,23 @@ export const CAMERA_PRESETS: Record<string, CameraPreset> = {
 export const ROOM_DEFINITIONS: RoomDefinition[] = [
   {
     id: "management",
-    name: "Executive & Management Office",
+    name: "Delivery Management Office",
     shortName: "Management",
     departmentKey: "management",
     bounds: { minX: -18, maxX: -6, minZ: -13, maxZ: -2.5 },
     center: [-12, 0, -7.75],
-    wallColor: "#334155",
-    floorColor: "#1e293b",
-    accentColor: "#3b82f6",
+    wallColor: "#94a3b8",
+    floorColor: "#e0f2fe", // soft sky blue
+    accentColor: "#0284c7",
     cameraPreset: CAMERA_PRESETS.management,
     doorways: [
       { id: "door_management", position: [-12, 0, -2.5], connectsTo: "hallway" },
     ],
     desks: [
       {
-        id: "desk_ceo",
-        roomId: "management",
-        deskNumber: 1,
-        label: "CEO Station",
-        roleHint: "ceo",
-        position: [-14.5, 0, -8.5],
-        rotation: Math.PI / 2,
-        chairPosition: [-15.7, 0, -8.5],
-        interactPosition: [-13.3, 0, -8.5],
-      },
-      {
         id: "desk_pm",
         roomId: "management",
-        deskNumber: 2,
+        deskNumber: 1,
         label: "Project Manager Station",
         roleHint: "project_manager",
         position: [-9.5, 0, -8.5],
@@ -101,9 +90,9 @@ export const ROOM_DEFINITIONS: RoomDefinition[] = [
     departmentKey: "product",
     bounds: { minX: -6, maxX: 6, minZ: -13, maxZ: -2.5 },
     center: [0, 0, -7.75],
-    wallColor: "#334155",
-    floorColor: "#1e293b",
-    accentColor: "#8b5cf6",
+    wallColor: "#94a3b8",
+    floorColor: "#f3e8ff", // soft violet
+    accentColor: "#7c3aed",
     cameraPreset: CAMERA_PRESETS.product,
     doorways: [
       { id: "door_product", position: [0, 0, -2.5], connectsTo: "hallway" },
@@ -124,25 +113,25 @@ export const ROOM_DEFINITIONS: RoomDefinition[] = [
   },
   {
     id: "design",
-    name: "Design Studio",
-    shortName: "Design",
-    departmentKey: "design",
+    name: "Architecture Design Lab",
+    shortName: "Architecture",
+    departmentKey: "architecture",
     bounds: { minX: 6, maxX: 18, minZ: -13, maxZ: -2.5 },
     center: [12, 0, -7.75],
-    wallColor: "#334155",
-    floorColor: "#1e293b",
-    accentColor: "#ec4899",
+    wallColor: "#94a3b8",
+    floorColor: "#fce7f3", // soft rose
+    accentColor: "#db2777",
     cameraPreset: CAMERA_PRESETS.design,
     doorways: [
       { id: "door_design", position: [12, 0, -2.5], connectsTo: "hallway" },
     ],
     desks: [
       {
-        id: "desk_designer",
+        id: "desk_architect",
         roomId: "design",
         deskNumber: 1,
-        label: "UI/UX Designer Station",
-        roleHint: "ui_ux_designer",
+        label: "Solution Architect Station",
+        roleHint: "solution_architect",
         position: [12, 0, -8.5],
         rotation: 0,
         chairPosition: [12, 0, -9.8],
@@ -157,29 +146,18 @@ export const ROOM_DEFINITIONS: RoomDefinition[] = [
     departmentKey: "engineering",
     bounds: { minX: -18, maxX: -4, minZ: 2.5, maxZ: 13 },
     center: [-11, 0, 7.75],
-    wallColor: "#334155",
-    floorColor: "#1e293b",
-    accentColor: "#06b6d4",
+    wallColor: "#94a3b8",
+    floorColor: "#ecfeff", // soft cyan
+    accentColor: "#0891b2",
     cameraPreset: CAMERA_PRESETS.engineering,
     doorways: [
       { id: "door_engineering", position: [-11, 0, 2.5], connectsTo: "hallway" },
     ],
     desks: [
       {
-        id: "desk_architect",
-        roomId: "engineering",
-        deskNumber: 1,
-        label: "Solution Architect Station",
-        roleHint: "solution_architect",
-        position: [-14.5, 0, 6.5],
-        rotation: Math.PI,
-        chairPosition: [-14.5, 0, 7.8],
-        interactPosition: [-14.5, 0, 5.0],
-      },
-      {
         id: "desk_backend",
         roomId: "engineering",
-        deskNumber: 2,
+        deskNumber: 1,
         label: "Backend Engineer Station",
         roleHint: "backend_engineer",
         position: [-11.0, 0, 6.5],
@@ -190,7 +168,7 @@ export const ROOM_DEFINITIONS: RoomDefinition[] = [
       {
         id: "desk_frontend",
         roomId: "engineering",
-        deskNumber: 3,
+        deskNumber: 2,
         label: "Frontend Engineer Station",
         roleHint: "frontend_engineer",
         position: [-7.5, 0, 6.5],
@@ -207,9 +185,9 @@ export const ROOM_DEFINITIONS: RoomDefinition[] = [
     departmentKey: "qa",
     bounds: { minX: -4, maxX: 6, minZ: 2.5, maxZ: 13 },
     center: [1, 0, 7.75],
-    wallColor: "#334155",
-    floorColor: "#1e293b",
-    accentColor: "#10b981",
+    wallColor: "#94a3b8",
+    floorColor: "#ecfdf5", // soft mint
+    accentColor: "#059669",
     cameraPreset: CAMERA_PRESETS.qa,
     doorways: [
       { id: "door_qa", position: [1, 0, 2.5], connectsTo: "hallway" },
@@ -246,9 +224,9 @@ export const ROOM_DEFINITIONS: RoomDefinition[] = [
     departmentKey: "devops",
     bounds: { minX: 6, maxX: 18, minZ: 2.5, maxZ: 13 },
     center: [12, 0, 7.75],
-    wallColor: "#334155",
-    floorColor: "#1e293b",
-    accentColor: "#f59e0b",
+    wallColor: "#94a3b8",
+    floorColor: "#fffbeb", // soft amber
+    accentColor: "#d97706",
     cameraPreset: CAMERA_PRESETS.devops,
     doorways: [
       { id: "door_devops", position: [12, 0, 2.5], connectsTo: "hallway" },

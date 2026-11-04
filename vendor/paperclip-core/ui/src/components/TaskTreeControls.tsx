@@ -58,7 +58,7 @@ export function TaskTreeControlMenuItems({
           onClick={onCancel}
         >
           <XCircle className="h-3 w-3" />
-          Cancel subtree...
+          {scope === "leaf" ? "Cancel task..." : "Cancel subtree..."}
         </button>
       ) : null}
       {canRestore ? (

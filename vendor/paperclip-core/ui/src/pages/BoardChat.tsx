@@ -266,12 +266,12 @@ export function BoardChat() {
     enabled: !!selectedCompanyId,
   });
 
-  const ceoAgent = useMemo(
-    () => agents?.find((a) => a.role === "ceo" && a.status !== "terminated"),
+  const poAgent = useMemo(
+    () => agents?.find((a) => a.status !== "terminated" && (a.name.toLowerCase() === "po" || ["product-owner", "product_owner"].includes(a.role ?? ""))),
     [agents],
   );
 
-  // Pull the company's top-level goal so the CEO's welcome can reference
+  // Pull the company's top-level goal so the PO's welcome can reference
   // the mission verbatim.
   const { data: goals } = useQuery({
     queryKey: queryKeys.goals.list(selectedCompanyId!),
@@ -390,7 +390,7 @@ export function BoardChat() {
   // needed to render the welcome bubble. This guarantees the animation is
   // visible at the moment the user arrives, even if agent/goal queries
   // take a beat to resolve.
-  const canRenderWelcome = !!ceoAgent && !!selectedCompany;
+  const canRenderWelcome = !!poAgent && !!selectedCompany;
   useEffect(() => {
     if (!canRenderWelcome) return;
     if (welcomeRevealed) return;
@@ -676,7 +676,7 @@ export function BoardChat() {
             />
             <div className="min-w-0 flex-1">
               <h3 className="text-sm font-semibold">
-                {ceoAgent?.name ?? "Conference Room"}
+                {poAgent?.name ?? "Conference Room"}
               </h3>
               <p className="text-xs text-muted-foreground">
                 {selectedCompany?.name ?? "Your organization"}
@@ -727,14 +727,14 @@ export function BoardChat() {
                    visible even while agent/goal data is still loading. */}
               {!welcomeRevealed && <TypingBubble />}
 
-              {welcomeRevealed && ceoAgent && selectedCompany && (() => {
-                const ceoName = ceoAgent.name;
+              {welcomeRevealed && poAgent && selectedCompany && (() => {
+                const poName = poAgent.name;
                 const companyName = selectedCompany.name;
                 const missionLine = missionText
                   ? ` — your mission is "${missionText}".`
                   : ".";
                 const welcomeBody =
-                  `Welcome to **${companyName}**! I'm ${ceoName}, your team lead. I've read through what you shared in the wizard${missionLine}\n\n` +
+                  `Welcome to **${companyName}**! I'm ${poName}, your Product Owner. I've read through what you shared in the wizard${missionLine}\n\n` +
                   `Here are a few things I can help you put on paper right now. Pick one below and I'll draft it for you using everything you told us.`;
 
                 const userHasReplied = sortedComments.some(
@@ -763,7 +763,7 @@ export function BoardChat() {
                 return (
                   <>
                     <div className="flex flex-col items-start">
-                      <AgentBubbleHeader agent={{ ...ceoAgent, name: ceoName }} />
+                      <AgentBubbleHeader agent={{ ...poAgent, name: poName }} />
                       <div
                         className={cn(
                           boardChatBubbleShell,
@@ -815,7 +815,7 @@ export function BoardChat() {
                 // the room speaks the same bubble language as the task thread.
                 const agent = comment.authorAgentId
                   ? agentMap.get(comment.authorAgentId) ?? null
-                  : ceoAgent ?? null;
+                  : poAgent ?? null;
                 const agentName = agent?.name ?? "Assistant";
                 const agentIconValue = agent?.icon ?? null;
                 return (
@@ -869,8 +869,8 @@ export function BoardChat() {
               {/* Streaming response */}
               {streamingText && (
                 <div className="flex flex-col items-start">
-                  {ceoAgent && (
-                    <AgentBubbleHeader agent={ceoAgent} />
+                  {poAgent && (
+                    <AgentBubbleHeader agent={poAgent} />
                   )}
                   <div
                     className={cn(

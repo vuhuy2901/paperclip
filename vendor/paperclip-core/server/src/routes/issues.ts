@@ -14690,6 +14690,26 @@ export function issueRoutes(
         }
       }
 
+      if (issue.status === "cancelled") {
+        // Cancellation is the board's explicit terminal disposition. Preserve
+        // recovery evidence, but release no-replay locks so the cancelled task
+        // can be hidden/removed and cannot block future work.
+        await db
+          .update(issueRecoveryActions)
+          .set({
+            outcome: "cancelled",
+            evidence: sql`jsonb_set(${issueRecoveryActions.evidence}, '{automaticRecovery,replay}', '"cancelled"'::jsonb, true)`,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(issueRecoveryActions.companyId, issue.companyId),
+              eq(issueRecoveryActions.sourceIssueId, issue.id),
+              sql`${issueRecoveryActions.evidence}->'automaticRecovery'->>'replay' = 'blocked'`,
+            ),
+          );
+      }
+
       if (req.body.assigneeAgentId !== undefined) {
         await retainBacklogHumanAssignment(db, issue, actor);
       }
