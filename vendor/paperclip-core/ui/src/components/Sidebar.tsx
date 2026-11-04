@@ -240,7 +240,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           {selectedCompany ? (
             <SidebarNavItem
               to={`/${selectedCompany.issuePrefix}/workflow-designer`}
-              label="Workflow Designer"
+              label="Workflows"
               icon={Workflow}
             />
           ) : null}

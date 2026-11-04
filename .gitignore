@@ -12,6 +12,8 @@ node_modules/
 dist/
 !vendor/paperclip-core/ui/dist/
 !vendor/paperclip-core/ui/dist/**
+!packages/paperclip-native-workflow/dist/
+!packages/paperclip-native-workflow/dist/**
 *.tsbuildinfo
 *.log
 .gemini/

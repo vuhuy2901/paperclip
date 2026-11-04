@@ -12,7 +12,7 @@ const reactFlowStyles = await readFile("node_modules/@xyflow/react/dist/style.cs
 // shims do not expose from the external react-dom module.
 await build({
   ...common,
-  entryPoints: ["src/ui/designer.tsx"],
+  entryPoints: ["src/ui/index.tsx"],
   outfile: "dist/ui/index.js",
   platform: "browser",
   external: ["react", "@paperclipai/plugin-sdk/ui"],

@@ -51,6 +51,109 @@ async function setTemplates(ctx: any, companyId: string, templates: WorkflowTemp
   await ctx.state.set({ scopeKind: "company", scopeId: companyId, namespace: NAMESPACE, stateKey: INDEX_KEY }, templates);
 }
 
+function buildDefaultSdlcTemplate(companyId: string, agents: any[]): WorkflowTemplate {
+  const byName = new Map(agents.map((a: any) => [a.name, a]));
+  const byRole = new Map(agents.map((a: any) => [a.role || a.title, a]));
+  const findAgent = (name: string, roleAlt?: string) => byName.get(name) || (roleAlt ? byRole.get(roleAlt) : null) || null;
+
+  const po = findAgent('PO', 'Product Owner');
+  const pm = findAgent('Project Manager', 'PM');
+  const arch = findAgent('Solution Architect', 'Architect');
+  const backend = findAgent('Backend Engineer', 'Backend Developer');
+  const frontend = findAgent('Frontend Engineer', 'Frontend Developer');
+  const reviewer = findAgent('Code Reviewer', 'Security');
+  const qa = findAgent('QA Tester', 'Tester');
+  const devops = findAgent('DevOps Engineer', 'DevOps');
+
+  const makeTask = (id: string, x: number, y: number, agent: any, title: string, desc: string, ac: string, outputs: string, priority = 'high', kind: 'task' | 'approval' = 'task'): TemplateNode => ({
+    id,
+    type: 'workflowNode',
+    position: { x, y },
+    data: {
+      kind,
+      title,
+      description: desc,
+      agentId: agent?.id ?? null,
+      agentName: agent?.name ?? null,
+      agentRole: agent?.title ?? agent?.role ?? null,
+      acceptanceCriteria: ac,
+      expectedOutputs: outputs,
+      priority,
+    },
+  });
+
+  const makeControl = (id: string, x: number, y: number, kind: 'start' | 'end' | 'parallel' | 'join', title: string, desc: string): TemplateNode => ({
+    id,
+    type: 'workflowNode',
+    position: { x, y },
+    data: {
+      kind,
+      title,
+      description: desc,
+      agentId: null,
+      agentName: null,
+      agentRole: null,
+      acceptanceCriteria: '',
+      expectedOutputs: '',
+      priority: 'medium',
+    },
+  });
+
+  const nodes: TemplateNode[] = [
+    makeTask('po-requirements', 0, 240, po, 'PO confirms requirements', 'Clarify the CEO request, define product scope, priorities and measurable acceptance criteria.', 'Scope, priorities and acceptance criteria are explicit and approved for planning.', 'Product requirements and acceptance criteria.', 'high'),
+    makeTask('pm-plan', 280, 240, pm, 'PM creates delivery plan', 'Break the accepted requirement into architecture and design, implementation, review, test and release work.', 'Plan names owners, dependencies, risks and delivery checkpoints.', 'Delivery plan and task breakdown.', 'high'),
+    makeTask('architecture', 560, 240, arch, 'Architecture and product design', 'Define system boundaries, data flow, API contracts, security constraints, user flows, responsive screens, interaction states, visual system and implementation-ready handoffs.', 'Backend and frontend contracts are implementable; UI states and acceptance criteria are complete; key risks are resolved.', 'Architecture decision record, API contract, data design, user flows, wireframes, states and visual specification.', 'high'),
+    makeTask('backend', 1100, 100, backend, 'Backend implementation', 'Implement services, APIs, persistence and migrations against the approved architecture.', 'Backend meets the API contract, handles errors and includes implementation evidence.', 'Backend code, migrations and API verification evidence.', 'high'),
+    makeTask('frontend', 1100, 380, frontend, 'Frontend implementation', 'Implement the Solution Architect design specification against the architecture and API contracts.', 'UI matches the approved specification, covers required states and integrates with the real API.', 'Frontend code and UI integration evidence.', 'high'),
+    makeControl('implementation-join', 1400, 240, 'join', 'Implementation complete', 'Wait for both Backend and Frontend implementation before review.'),
+    makeTask('code-review', 1650, 240, reviewer, 'Code review', 'Review the combined implementation for correctness, security, maintainability and regression risk.', 'Blocking findings are resolved and approval evidence is recorded.', 'Review findings and approval evidence.', 'high'),
+    makeTask('qa', 1910, 240, qa, 'QA verification', 'Run functional, integration and regression verification against the PO acceptance criteria.', 'Acceptance criteria pass and defects are resolved or explicitly accepted.', 'Test report, defect evidence and acceptance result.', 'high'),
+    makeTask('deploy', 2170, 240, devops, 'Deployment', 'Prepare and execute deployment with health checks and rollback evidence.', 'Deployment is healthy and rollback instructions are verified.', 'Deployment record, health checks and rollback evidence.', 'high'),
+    makeTask('po-acceptance', 2430, 240, po, 'PO acceptance', 'Validate the delivered result against the original product requirements and acceptance criteria.', 'PO records acceptance or returns concrete gaps for a new workflow revision.', 'Product acceptance decision.', 'high', 'approval'),
+    makeControl('complete', 2700, 240, 'end', 'Workflow complete', 'The accepted delivery is complete.'),
+  ];
+
+  const pairs = [
+    ['po-requirements', 'pm-plan'],
+    ['pm-plan', 'architecture'],
+    ['architecture', 'backend'],
+    ['architecture', 'frontend'],
+    ['backend', 'implementation-join'],
+    ['frontend', 'implementation-join'],
+    ['implementation-join', 'code-review'],
+    ['code-review', 'qa'],
+    ['qa', 'deploy'],
+    ['deploy', 'po-acceptance'],
+    ['po-acceptance', 'complete'],
+  ];
+  const edges: TemplateEdge[] = pairs.map(([source, target]) => ({ id: `${source}->${target}`, source, target, type: 'smoothstep' }));
+  const now = new Date().toISOString();
+
+  return {
+    id: 'default-sdlc-workflow',
+    companyId,
+    name: 'AI Software Development Lifecycle',
+    description: 'PO-led native delivery workflow where Solution Architect owns architecture and all product/UI design, followed by parallel Backend and Frontend implementation, joined review, QA, deployment and PO acceptance.',
+    version: 1,
+    status: 'published',
+    nodes,
+    edges,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function getOrSeedTemplates(ctx: any, companyId: string, agents: any[]): Promise<WorkflowTemplate[]> {
+  let list = await getTemplates(ctx, companyId);
+  const active = list.filter(t => !t.archivedAt);
+  if (active.length === 0) {
+    const defaultTemplate = buildDefaultSdlcTemplate(companyId, agents);
+    list = [defaultTemplate, ...list];
+    await setTemplates(ctx, companyId, list);
+  }
+  return list;
+}
+
 function validateTemplate(template: WorkflowTemplate, agents: any[], publishing = true) {
   const errors: string[] = [];
   if (!template.name.trim()) errors.push("Template name is required.");
@@ -91,11 +194,11 @@ const plugin = definePlugin({
   async setup(ctx) {
     ctx.data.register("workflow-designer-bootstrap", async ({ companyId }: any) => {
       const company = requiredString(companyId, "companyId");
-      const [agents, projects, templates] = await Promise.all([
+      const [agents, projects] = await Promise.all([
         ctx.agents.list({ companyId: company, limit: 200, offset: 0 }),
         ctx.projects.list({ companyId: company, limit: 200, offset: 0 }),
-        getTemplates(ctx, company),
       ]);
+      const templates = await getOrSeedTemplates(ctx, company, agents);
       return { agents, projects, templates: templates.filter(template => !template.archivedAt) };
     });
 

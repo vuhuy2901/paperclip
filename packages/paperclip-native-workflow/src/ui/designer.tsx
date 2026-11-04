@@ -76,7 +76,7 @@ function NativeProjectView({companyId,projectId,navigation}:any) {
   return <>{(data?.issues??[]).map((issue:any)=><a className="wfs-issue" key={issue.id} {...navigation.linkProps(`/issues/${issue.id}`)}><div className="wfs-issue-meta"><span>{issue.identifier}</span><span>{issue.status.replaceAll('_',' ')}</span></div>{issue.title}</a>)}{data?.issues?.length===0&&<p className="wfs-field-note">This project has no native tasks.</p>}</>;
 }
 
-function Designer({context}:PluginPageProps) {
+function Designer({context, initialProjectId}:PluginPageProps & { initialProjectId?: string }) {
   const companyId=context.companyId;
   const {data:bootstrap,loading,error,refresh}=usePluginData<any>('workflow-designer-bootstrap',{companyId});
   const navigation=useHostNavigation();
@@ -90,8 +90,8 @@ function Designer({context}:PluginPageProps) {
   const [edges,setEdges,onEdgesChange]=useEdgesState<Edge>([]);
   const [selectedId,setSelectedId]=useState<string|null>(null);
   const [busy,setBusy]=useState(false),[dirty,setDirty]=useState(false),[search,setSearch]=useState(''),[collapsed,setCollapsed]=useState(false);
-  const [tab,setTab]=useState<'step'|'project'>('step');
-  const [projectId,setProjectId]=useState(''),[requirement,setRequirement]=useState(''),[applyResult,setApplyResult]=useState<string|null>(null);
+  const [tab,setTab]=useState<'step'|'project'>(initialProjectId ? 'project' : 'step');
+  const [projectId,setProjectId]=useState(initialProjectId || ''),[requirement,setRequirement]=useState(''),[applyResult,setApplyResult]=useState<string|null>(null);
   const templates:Template[]=bootstrap?.templates??[],agents:Agent[]=bootstrap?.agents??[],projects:any[]=bootstrap?.projects??[];
   const activeAgents=agents.filter(agent=>agent.status!=='terminated');
   const selected=nodes.find(node=>node.id===selectedId)??null;
@@ -151,4 +151,9 @@ function Designer({context}:PluginPageProps) {
 }
 
 export function WorkflowDesignerPage({context}:PluginPageProps){return <Designer context={context}/>;}
+export function ProjectWorkflowTab({context}:PluginPageProps){
+  const ctx = context as any;
+  const projId = ctx?.projectId || ctx?.entityId || '';
+  return <Designer context={context} initialProjectId={projId}/>;
+}
 export default WorkflowDesignerPage;

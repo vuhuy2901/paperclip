@@ -21,6 +21,7 @@ import {
   GanttChartSquare,
   LayoutGrid,
   Building2,
+  Workflow,
 } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -200,6 +201,13 @@ export function Sidebar() {
             />
           ) : null}
           <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
+          {selectedCompany ? (
+            <SidebarNavItem
+              to={`/${selectedCompany.issuePrefix}/workflow-designer`}
+              label="Workflows"
+              icon={Workflow}
+            />
+          ) : null}
           <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
           {showWorkspacesLink ? (
             <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />

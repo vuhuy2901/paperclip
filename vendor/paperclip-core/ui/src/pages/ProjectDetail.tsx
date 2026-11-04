@@ -58,6 +58,7 @@ import {
   History,
   Wrench,
   ChevronDown,
+  Workflow,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -1049,6 +1050,15 @@ export function ProjectDetail() {
           ) : null}
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {companyPrefix && (
+            <Link
+              to={`/${companyPrefix}/workflow-designer`}
+              className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium border border-border bg-background hover:bg-muted text-foreground transition-colors shadow-xs"
+            >
+              <Workflow className="h-3.5 w-3.5 text-blue-500" />
+              <span>Workflow Designer</span>
+            </Link>
+          )}
           <StarToggle
             size="button"
             starred={projectStarred}

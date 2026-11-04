@@ -1,1 +1,1 @@
-export { WorkflowDesignerPage, default } from './designer';
+export { WorkflowDesignerPage, ProjectWorkflowTab, default } from './designer';

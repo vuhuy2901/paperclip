@@ -16,12 +16,34 @@ const manifest = {
     "plugin.state.read",
     "plugin.state.write",
     "activity.log.write",
-    "ui.page.register"
+    "ui.page.register",
+    "ui.detailTab.register"
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui" },
   ui: {
     slots: [
-      { type: "page", id: "native-workflow-designer", displayName: "Workflow Designer", exportName: "WorkflowDesignerPage", routePath: "workflow-designer" }
+      {
+        type: "page",
+        id: "native-workflow-designer",
+        displayName: "Workflow Designer",
+        exportName: "WorkflowDesignerPage",
+        routePath: "workflow-designer"
+      },
+      {
+        type: "page",
+        id: "workflows-page",
+        displayName: "Workflows",
+        exportName: "WorkflowDesignerPage",
+        routePath: "workflows"
+      },
+      {
+        type: "detailTab",
+        id: "project-workflow-tab",
+        displayName: "Workflows",
+        exportName: "ProjectWorkflowTab",
+        entityTypes: ["project"],
+        order: 25
+      }
     ]
   }
 };
