@@ -24,6 +24,14 @@ import {
   GanttChartSquare,
   LayoutGrid,
   Users,
+  Box,
+  FileUp,
+  Palette,
+  Camera,
+  Calculator,
+  ShoppingBag,
+  Activity,
+  CheckCircle2,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -66,6 +74,7 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
   // Every labeled section is collapsible (session-scoped, default open) —
   // one policy across static nav groups and the data-driven sections.
   const [workOpen, setWorkOpen] = useState(true);
+  const [atelierOpen, setAtelierOpen] = useState(true);
   const [organizationOpen, setOrganizationOpen] = useState(true);
   const { selectedCompanyId, selectedCompany } = useCompany();
   const { collapsed, peeking } = useSidebar();
@@ -161,28 +170,24 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
                 )}
               >
                 <SquarePen className="h-4 w-4 shrink-0" />
-                <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : "truncate"}>New Task</span>
+                <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : "truncate"}>Tạo Công việc</span>
               </button>
             );
             return rail ? (
               <Tooltip>
                 <TooltipTrigger asChild>{newTaskButton}</TooltipTrigger>
-                <TooltipContent side="right">New Task</TooltipContent>
+                <TooltipContent side="right">Tạo Công việc</TooltipContent>
               </Tooltip>
             ) : (
               newTaskButton
             );
           })()}
-          {/* Search moved out of the header so the workspace name keeps the
-              width; a nav row also keeps search reachable from the
-              collapsed rail, where the old header icon was dropped entirely.
-              Cmd/Ctrl+K remains the keyboard path (command palette). */}
-          <SidebarNavItem to="/search" label="Search" icon={Search} />
-          <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem to="/search" label="Tìm kiếm" icon={Search} />
+          <SidebarNavItem to="/dashboard" label="Tổng quan" icon={LayoutDashboard} liveCount={liveRunCount} />
           {!combinedInboxTasks ? (
             <SidebarNavItem
               to="/inbox"
-              label="Inbox"
+              label="Hộp thư"
               icon={Inbox}
               badge={inboxBadge.inbox}
               badgeLabel="unread"
@@ -190,37 +195,45 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
               alert={inboxBadge.failedRuns > 0}
             />
           ) : null}
-          {agentChatEnabled && !chatRail ? <SidebarNavItem to="/chats" label="Chat" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" /> : null}
+          {agentChatEnabled && !chatRail ? <SidebarNavItem to="/chats" label="Hội thoại / Chat" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" /> : null}
           {showDecisions ? (
             <SidebarNavItem
               to="/decisions"
-              label="Decisions"
+              label="Quyết định"
               icon={ListChecks}
               badge={attentionCount}
               badgeLabel="decisions"
             />
           ) : null}
           {showStatusCards ? (
-            <SidebarNavItem to="/status" label="Status" icon={LayoutGrid} textBadge="beta" />
+            <SidebarNavItem to="/status" label="Trạng thái" icon={LayoutGrid} textBadge="beta" />
           ) : null}
           {conferenceRoomChatEnabled ? (
-            <SidebarNavItem to="/board-chat" label="Conference Room" icon={MessagesSquare} />
+            <SidebarNavItem to="/board-chat" label="Phòng họp" icon={MessagesSquare} />
           ) : null}
         </div>
 
-        <SidebarSection label="Work" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
-          {/* Agent Chat: Chat leads the Work group as a single row — the
-              agents you talk to live in the Chat surface's own secondary rail
-              (ChatContextualSidebar), not in the primary nav. */}
+        <SidebarSection
+          label="Thiết kế Nội thất 2D/3D"
+          collapsible={{ open: atelierOpen, onOpenChange: setAtelierOpen }}
+        >
+          <SidebarNavItem to="/design-studio" label="Không gian thiết kế 2D/3D" icon={Box} textBadge="3D" />
+          <SidebarNavItem to="/floorplan-import" label="Nhập mặt bằng 2D" icon={FileUp} />
+          <SidebarNavItem to="/render-compare" label="Phối cảnh" icon={Camera} />
+          <SidebarNavItem to="/materials-catalog" label="Vật liệu & Nội thất" icon={Palette} />
+          <SidebarNavItem to="/cost-estimation" label="Dự toán (BOQ)" icon={Calculator} />
+          <SidebarNavItem to="/shopping-catalog" label="Danh mục mua sắm" icon={ShoppingBag} />
+          <SidebarNavItem to="/system-health" label="Hạ tầng Local-Lite" icon={Activity} />
+        </SidebarSection>
+
+        <SidebarSection label="Điều phối & Công việc" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
           {chatRail ? (
-            <SidebarNavItem to="/chats" label="Chat" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" />
+            <SidebarNavItem to="/chats" label="Hội thoại / Chat" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" />
           ) : null}
-          {/* Combined Inbox + Task List: Inbox is a view inside Tasks, so the
-              unread/failed-run badge rides on Tasks. */}
           {combinedInboxTasks ? (
             <SidebarNavItem
               to="/issues"
-              label="Tasks"
+              label="Công việc / Tasks"
               icon={CircleCheck}
               badge={inboxBadge.inbox}
               badgeLabel="unread"
@@ -228,21 +241,22 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
               alert={inboxBadge.failedRuns > 0}
             />
           ) : (
-            <SidebarNavItem to="/issues" label="Tasks" icon={CircleCheck} />
+            <SidebarNavItem to="/issues" label="Công việc / Tasks" icon={CircleCheck} />
           )}
           {streamlinedUiEnabled ? (
             <>
-              <SidebarNavItem to="/projects" label="Projects" icon={FolderOpen} />
+              <SidebarNavItem to="/projects" label="Dự án" icon={FolderOpen} />
               <SidebarStarredProjects />
             </>
           ) : null}
-          <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
-          <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
+          <SidebarNavItem to="/approvals/pending" label="Chờ duyệt / Approvals" icon={CheckCircle2} />
+          <SidebarNavItem to="/routines" label="Lịch tự động" icon={Repeat} />
+          <SidebarNavItem to="/artifacts" label="Sản phẩm / Artifacts" icon={Package} />
           {showCases ? (
-            <SidebarNavItem to="/cases" label="Cases" icon={Layers} textBadge="beta" />
+            <SidebarNavItem to="/cases" label="Hồ sơ" icon={Layers} textBadge="beta" />
           ) : null}
           {showGoalsLink ? (
-            <SidebarNavItem to="/goals" label="Goals" icon={Target} />
+            <SidebarNavItem to="/goals" label="Mục tiêu" icon={Target} />
           ) : goalsLinkPending ? (
             <div
               data-testid="sidebar-goals-placeholder"
@@ -251,7 +265,7 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
             />
           ) : null}
           {showWorkspacesLink ? (
-            <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />
+            <SidebarNavItem to="/workspaces" label="Không gian làm việc" icon={GitBranch} />
           ) : null}
           <PluginSlotOutlet
             slotTypes={["sidebar"]}
@@ -270,13 +284,14 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
 
         {streamlinedUiEnabled ? (
           <SidebarSection
-            label="Org"
+            label="AI Agents & Hệ thống"
             collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
           >
-            <SidebarNavItem to="/agents" label="Agents" icon={Users} />
-            <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
-            <SidebarNavItem to="/apps" label="Connectors" icon={Unplug} />
-            <SidebarNavItem to="/activity" label="Audit" icon={History} />
+            <SidebarNavItem to="/agents" label="AI Agents" icon={Users} />
+            <SidebarNavItem to="/skills" label="Skills / Skill Studio" icon={Boxes} />
+            <SidebarNavItem to="/apps" label="Apps & Kết nối MCP" icon={Unplug} />
+            <SidebarNavItem to="/activity" label="Lịch sử / Activity" icon={History} />
+            <SidebarNavItem to="/company/settings" label="Cài đặt" icon={Settings} />
           </SidebarSection>
         ) : null}
 

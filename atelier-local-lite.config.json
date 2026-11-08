@@ -1,0 +1,39 @@
+{
+  "$schema": "https://paperclip.ing/schemas/atelier-local-lite.json",
+  "profile": "ATELIER_LOCAL_LITE",
+  "version": "2.0.0",
+  "description": "Cấu hình tối ưu hóa ATELIER AI 2.0 trên nền Paperclip cho máy cá nhân Windows/Linux (8GB RAM + iGPU), không cần Docker, Redis hay RabbitMQ.",
+  "infrastructure": {
+    "database": "embedded-postgres",
+    "requireDocker": false,
+    "requireRedis": false,
+    "requireRabbitMQ": false,
+    "storageProvider": "local_disk",
+    "port": 3100,
+    "cadAndCostSidecarUrl": "http://127.0.0.1:8000"
+  },
+  "featureFlags": {
+    "enableAgentChat": true,
+    "enableStreamlinedUi": true,
+    "enableCombinedInboxTasks": false,
+    "enableCases": true,
+    "enableDecisions": true,
+    "enableAtelierDesignStudio": true,
+    "enablePascalMcpOnDemand": true,
+    "enablePythonCadOnDemand": true,
+    "disableTelemetry": true,
+    "disableSentry": true,
+    "disableCloudSandboxRunners": true,
+    "disableHeavyBackgroundEval": true,
+    "lazyLoadThreeJsViewport": true,
+    "lowSpecGpuFallback": true
+  },
+  "concurrencyLimits": {
+    "maxConcurrentSceneMutationsPerProject": 1,
+    "maxActiveAgentRuns": 2,
+    "workspaceGitScanConcurrency": 1,
+    "heartbeatIntervalSec": 60,
+    "cliAgentTimeoutMs": 120000,
+    "cliAgentMaxMemoryMb": 1024
+  }
+}

@@ -12,6 +12,7 @@ import { Link, useParams } from "@/lib/router";
 import { agentRouteRef } from "@/lib/utils";
 import { TaskDetailSurface } from "./IssueDetail";
 import { isUuidLike, type Issue } from "@paperclipai/shared";
+import { ConversationAtelierSidecar } from "@/features/atelier/ConversationAtelierSidecar";
 
 export function AgentChat() {
   const { agentRef = "" } = useParams<{ agentRef: string }>();
@@ -117,9 +118,14 @@ export function AgentChat() {
       <p className="text-sm text-muted-foreground">Loading conversation…</p>
     );
   return (
-    <TaskDetailSurface
-      key={`${agent.id}:${userId}`}
-      conversation={{ agent, issue: chat.data ?? null, ensureIssue }}
-    />
+    <div className="flex h-full min-h-0 w-full overflow-hidden">
+      <div className="flex-1 min-w-0 overflow-y-auto">
+        <TaskDetailSurface
+          key={`${agent.id}:${userId}`}
+          conversation={{ agent, issue: chat.data ?? null, ensureIssue }}
+        />
+      </div>
+      <ConversationAtelierSidecar agentName={agent.name} />
+    </div>
   );
 }

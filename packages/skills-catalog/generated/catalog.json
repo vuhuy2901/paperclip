@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/skills-catalog",
   "packageVersion": "0.3.1",
-  "generatedAt": "2026-10-06T01:21:47.421Z",
+  "generatedAt": "2026-11-08T17:16:32.217Z",
   "skills": [
     {
       "id": "paperclipai:bundled:docs:doc-maintenance",
@@ -32,11 +32,430 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 4478,
-          "sha256": "fb0353386c5e5e5e13bcbb3233f044e3dccecf371f429d6328f26c26d7cb6169"
+          "sizeBytes": 4553,
+          "sha256": "57e4886f07b13f24edfb63de660018fb65966d24ebc87a6a53c9cec3dbcb25e3"
         }
       ],
-      "contentHash": "sha256:2e02299210fd17c1fe1867b4ee8c144a11b6fe1fe481f83b8268cfbaaf10f9aa"
+      "contentHash": "sha256:1342a654c400bd5dc5756340bda7883b448fcfb9e56f9dace0473016f781f374"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:cad-dxf-ifc-export",
+      "key": "paperclipai/bundled/interior-design/cad-dxf-ifc-export",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "cad-dxf-ifc-export",
+      "name": "cad-dxf-ifc-export",
+      "description": "Xuất hồ sơ kỹ thuật CAD (DXF R2007 chuẩn AutoCAD với layer A-WALL/A-DOOR/A-FURN/A-DIM, mô hình 3D GLB, BIM IFC4 và COLLADA .dae) theo đúng đơn vị mm.",
+      "path": "catalog/bundled/interior-design/cad-dxf-ifc-export",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "engineer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "cad",
+        "dxf",
+        "glb",
+        "ifc"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2691,
+          "sha256": "7e9236ded861279c5f7823f6e05ab12d45ae33bf63a0323ea6d0527328d9731d"
+        }
+      ],
+      "contentHash": "sha256:db9d2a33c527293bd39e4d7a0d11338fb1d2e901b095cbc396ed4ecda0fac1b0"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:design-review-approval",
+      "key": "paperclipai/bundled/interior-design/design-review-approval",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "design-review-approval",
+      "name": "design-review-approval",
+      "description": "Quản lý quy trình trình duyệt đề xuất thiết kế (SceneProposal), so sánh trước/sau (3D diff & chênh lệch chi phí), phê duyệt/từ chối/hoàn tác có nhật ký kiểm toán.",
+      "path": "catalog/bundled/interior-design/design-review-approval",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "ceo",
+        "architect",
+        "product"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "approval",
+        "governance",
+        "scene-diff"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3205,
+          "sha256": "078ced931e484717055529d1bbe451afc0a41d63b70f5d605def6eb0627480bb"
+        }
+      ],
+      "contentHash": "sha256:393b8c93a16a56b9d9324e12dbe4f50442381c8e46a66a55856ea5c3a0563ea0"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:floorplan-understanding",
+      "key": "paperclipai/bundled/interior-design/floorplan-understanding",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "floorplan-understanding",
+      "name": "floorplan-understanding",
+      "description": "Phân tích bản vẽ mặt bằng 2D (PNG, JPG, PDF, DXF) để nhận diện tường, cửa đi, cửa sổ, đơn vị đo (mm), tỷ lệ bản vẽ và đánh giá mức độ tin cậy trước khi dựng hình 3D.",
+      "path": "catalog/bundled/interior-design/floorplan-understanding",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "engineer",
+        "architect",
+        "designer"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "floorplan",
+        "cad",
+        "dxf",
+        "scale-detection"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3758,
+          "sha256": "54bc1d84393e16f71667d8683369abdbdfadb75f152e26e60289994002c5990f"
+        }
+      ],
+      "contentHash": "sha256:b899dd99e3fe71988aa232b5ebae4bfe1ed70ad5e0710d8860c4537346907cbc"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:furniture-product-matching",
+      "key": "paperclipai/bundled/interior-design/furniture-product-matching",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "furniture-product-matching",
+      "name": "furniture-product-matching",
+      "description": "Tìm kiếm và đối khớp đồ nội thất từ Catalog nhà cung cấp Việt Nam theo kích thước lọt lòng cửa/phòng, phân khúc ngân sách (Thấp/Trung/Cao) và nguồn xác minh.",
+      "path": "catalog/bundled/interior-design/furniture-product-matching",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "product",
+        "designer",
+        "researcher"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "shopping",
+        "catalog",
+        "furniture"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2543,
+          "sha256": "505bef72239de81368ab82ef93760727170fa2dc720e5d60db06ccf5133033fd"
+        }
+      ],
+      "contentHash": "sha256:77f600cdb3f608ae92402a2d19c4b169532075dd975674cd8757c5a46a780a1d"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:interior-design-consultation",
+      "key": "paperclipai/bundled/interior-design/interior-design-consultation",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "interior-design-consultation",
+      "name": "interior-design-consultation",
+      "description": "Hội thoại tư vấn thẩm mỹ kiến trúc – lắng nghe, đặt câu hỏi làm rõ khi yêu cầu mơ hồ, ghi nhớ DesignBrief và đề xuất phương án A/B có cấu trúc.",
+      "path": "catalog/bundled/interior-design/interior-design-consultation",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "ceo",
+        "product",
+        "designer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "consultation",
+        "design-brief",
+        "chief-architect"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3391,
+          "sha256": "118830abf69169e9d6718f31cf86fd1ee0ebd3993404e58bc16c85d3c2235eae"
+        }
+      ],
+      "contentHash": "sha256:b4ac5c4644e2c1f2c358ba96f4e0f69a2902a4678e936ab4fe40458f9bce85b0"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:interior-layout-planning",
+      "key": "paperclipai/bundled/interior-design/interior-layout-planning",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "interior-layout-planning",
+      "name": "interior-layout-planning",
+      "description": "Bố trí mặt bằng nội thất theo công năng, kiểm tra khoảng cách lối đi tối thiểu (>=600mm), vùng mở cửa và phát hiện va chạm hình học 2D/3D.",
+      "path": "catalog/bundled/interior-design/interior-layout-planning",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "layout",
+        "clearance",
+        "collision-detection"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2956,
+          "sha256": "47d1ff1b6f38baa66b74535d0e8461de21b8d809adde6ed6d8cc50b79247d349"
+        }
+      ],
+      "contentHash": "sha256:05b2eb6720d2a0b63088efaf0b970b65453afcacee267059db747090fbd45bee"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:materials-and-finishes",
+      "key": "paperclipai/bundled/interior-design/materials-and-finishes",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "materials-and-finishes",
+      "name": "materials-and-finishes",
+      "description": "Tư vấn và phối bảng màu sơn tường (Dulux/Jotun), tường điểm nhấn (Accent Wall), gạch ốp lát và sàn gỗ (An Cường, Eurotile, Đồng Tâm) theo Mục 7B.",
+      "path": "catalog/bundled/interior-design/materials-and-finishes",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "materials",
+        "paint",
+        "flooring",
+        "section-7b"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2878,
+          "sha256": "ae246af62111924ab702aac803e452487ffd21cfb3086700f1f480934057f97b"
+        }
+      ],
+      "contentHash": "sha256:d2573fd0353533da5a9f548c1fce735f887a914620d9b134199563840be5b22f"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:pascal-scene-editing",
+      "key": "paperclipai/bundled/interior-design/pascal-scene-editing",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "pascal-scene-editing",
+      "name": "pascal-scene-editing",
+      "description": "Thao tác có kiểm soát trên mô hình 3D Pascal SceneGraph thông qua MCP Gateway (scene.read, scene.propose, scene.validate, scene.preview, scene.apply, scene.restore) kèm kiểm tra xung đột phiên bản.",
+      "path": "catalog/bundled/interior-design/pascal-scene-editing",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "engineer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "pascal-3d",
+        "mcp",
+        "scenegraph",
+        "bim"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3114,
+          "sha256": "6ea9bdab58e232038c7f2243890953642284f7774a203fe9dcc3441acefccadd"
+        }
+      ],
+      "contentHash": "sha256:0469ae72c80ac0754af91737e892ebd67d70a8eb69f7eceb1e2571cd3a1bbcf0"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:quantity-takeoff",
+      "key": "paperclipai/bundled/interior-design/quantity-takeoff",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "quantity-takeoff",
+      "name": "quantity-takeoff",
+      "description": "Bóc tách khối lượng chính xác (diện tích sàn m2, diện tích tường trừ lỗ mở cửa m2, chu vi phào chân tường md) trực tiếp từ hình học 3D đơn vị mm.",
+      "path": "catalog/bundled/interior-design/quantity-takeoff",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "engineer",
+        "finance",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "quantity-takeoff",
+        "boq",
+        "bim"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2623,
+          "sha256": "2b6381dda2c68107b75d56f09fefee5257049eda039752097a876aa007174aff"
+        }
+      ],
+      "contentHash": "sha256:8155fb3f01046292f56f364320c7c0666f68f1f7a24519fdefbcfba0b99c77bc"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:rendering-review",
+      "key": "paperclipai/bundled/interior-design/rendering-review",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "rendering-review",
+      "name": "rendering-review",
+      "description": "Thiết lập góc máy camera, tạo ảnh phối cảnh tham khảo từ Scene 3D và kiểm tra độ nhất quán giữa hình học 3D với ảnh render.",
+      "path": "catalog/bundled/interior-design/rendering-review",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "rendering",
+        "camera",
+        "visualization"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2475,
+          "sha256": "b6021429ccace32d9e837be04357a5f7d3cfb684b1f3f2e615d618a24284abb3"
+        }
+      ],
+      "contentHash": "sha256:5e20ea56a6364161a805a1675804ccefa9a27871cc3785a8e797165743509b43"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:room-dimension-validation",
+      "key": "paperclipai/bundled/interior-design/room-dimension-validation",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "room-dimension-validation",
+      "name": "room-dimension-validation",
+      "description": "Kiểm tra tính hợp lệ hình học của phòng (tường khép kín, độ cao trần, vị trí cửa, đơn vị mm) và đặt câu hỏi xác nhận ngắn gọn khi thiếu dữ liệu trọng yếu.",
+      "path": "catalog/bundled/interior-design/room-dimension-validation",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "architect",
+        "engineer"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "validation",
+        "geometry",
+        "scale-gate"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3224,
+          "sha256": "ef891998b0b78539c148b3f5ba330125b95ba0f8a4591c5196874e3db9926bbb"
+        }
+      ],
+      "contentHash": "sha256:c39be6f5b9732378d9f4606830af4dc75f7cdacded785f86300bbf7d45a9aa2f"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:vietnam-cost-estimation",
+      "key": "paperclipai/bundled/interior-design/vietnam-cost-estimation",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "vietnam-cost-estimation",
+      "name": "vietnam-cost-estimation",
+      "description": "Tính dự toán chi phí nội thất & hoàn thiện (BOQ) bằng thuật toán xác định theo đơn giá nguồn Việt Nam (VNĐ), tính hao hụt, quy đổi thùng sơn/hộp gạch nguyên, nhân công, vận chuyển và VAT 8%.",
+      "path": "catalog/bundled/interior-design/vietnam-cost-estimation",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "finance",
+        "product",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "cost-estimation",
+        "boq",
+        "vietnam-pricing"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3218,
+          "sha256": "d886c11e5996123a67017682da5ca433d29fca4e2f3154ce045a3d50b72b148f"
+        }
+      ],
+      "contentHash": "sha256:296d86d2306bac0ec165da36f16b34ca2dcf7b1420a63714d931099adb7ac18f"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:issue-triage",
@@ -67,11 +486,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 4042,
-          "sha256": "df5bdc8bf5e017b7ba5f70a4b5323fad51d0c323278f386580f26cf43ad09160"
+          "sizeBytes": 4116,
+          "sha256": "7ce619ff7c61fd2eaf650b352aac587190705412fdda3a4935b056c6d7403c25"
         }
       ],
-      "contentHash": "sha256:88dc13560371fb364963782cb4f6eeb4090fcde92ee3774479428ed6b90e11c1"
+      "contentHash": "sha256:3325f9ecf004298caea90a0ce500b71e21b5c7a231a1057c886ab3ddb024cada"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:reflection-coach",
@@ -102,11 +521,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 12028,
-          "sha256": "083d5fa8dc43c3ce7747e89c1afb6f6f42d0603a31808bffc5f8e56735f2d865"
+          "sizeBytes": 12230,
+          "sha256": "e758eec6e464ab36339d74719c01fff2fc59a03d012d9c1ecb2d03b18a3bfd6b"
         }
       ],
-      "contentHash": "sha256:f2592d81f616628a3eba92636616424f2eed82ec22bb504240a58f6be115e407"
+      "contentHash": "sha256:59c2dc8c0cce4573b303eb23eb21b97a1b419adfe7419d5f293c7f34024aab8a"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:status-card-query",
@@ -137,11 +556,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 6368,
-          "sha256": "0c6140f51d503cbadc98723ce54c0def48e7e31ea159b0935b8ad6369291498a"
+          "sizeBytes": 6505,
+          "sha256": "f2c9c60ba25dcf6138fed3de0f73f959b1f6b1137062793b6e1dc529513d437b"
         }
       ],
-      "contentHash": "sha256:2b6e53bf8491f027afdbd6961ad84f677cfd385a0a6a73616ea84111ca8886ed"
+      "contentHash": "sha256:7d7c18469ea2e055062b575180b09d9f506bd9b97ce520dd3c997174401758bf"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:summarize-status",
@@ -172,11 +591,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 8877,
-          "sha256": "4cb3d177f5d16e3cc2052d2f80e7fb245ab95e79c1e947abdc84cd4ee3d8c61e"
+          "sizeBytes": 8998,
+          "sha256": "941e9023620fb97db5d259a3aba536de8dc7ce1266f80b20ea4106811f5a3aed"
         }
       ],
-      "contentHash": "sha256:3e49ee2b8d83d1371fb0f59197bb96c46b64f722540405f46d4a5a756fbe1b89"
+      "contentHash": "sha256:540616ee79f7d01b102fb99879cd74ce3d12b8987d9bc09b6f7a81ff2ed249d9"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:task-planning",
@@ -207,11 +626,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 1517,
-          "sha256": "48d6501d6ef481d5b19d0e0cd1507436d1cee1acf155e5038e1f0b2f0230d9e1"
+          "sizeBytes": 1553,
+          "sha256": "70c91e251f8ac4c687f58ab7b9cbbf04c94e35d35a08b052be62eb624b6a20f0"
         }
       ],
-      "contentHash": "sha256:a1724bde58be85c445590aeaa2f5f2f1de2bee24fe62f07fa3b579c6e4b28e6d"
+      "contentHash": "sha256:9de6a682706348199126ef98090e9e6fbd3fe193437aa0cbd471669d90667c70"
     },
     {
       "id": "paperclipai:bundled:product:paperclip-capsules",
@@ -245,35 +664,35 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 5831,
-          "sha256": "dd659ccb46e105336eb00fbe689b1d5531347fc69493c3156390d40ee413c93e"
+          "sizeBytes": 5930,
+          "sha256": "11627a3fe84a97ec839f308b84d58c3552085fab378dabb1881c729b5d462511"
         },
         {
           "path": "references/generator-workflows.md",
           "kind": "reference",
-          "sizeBytes": 4356,
-          "sha256": "b5f72e5b6683e8f93f2d852e84c2cc19e6ab438b250bf777dfb2480dd4f6e1b6"
+          "sizeBytes": 4476,
+          "sha256": "cc4756cb494778c8514818659259ad93f642ef99c466ea379be1dedc13b8c591"
         },
         {
           "path": "references/hero-capsule-bank.md",
           "kind": "reference",
-          "sizeBytes": 5981,
-          "sha256": "ec3d34113aa7bb527560d1eb4d8ab7667c73e18284c85a2019122743a767525a"
+          "sizeBytes": 6170,
+          "sha256": "05d16a7408ef6fb3fcb35ce5eeba943ae2fb09fd846470b700c5997579c383f8"
         },
         {
           "path": "references/identicon-prototyper.md",
           "kind": "reference",
-          "sizeBytes": 6669,
-          "sha256": "0b19419efa1396a402097decabe24ea9ae649678569449c8ce855e0678df6bfe"
+          "sizeBytes": 6882,
+          "sha256": "8933c4bef80ddd67850b0ad0083688bf9ba46654d35845d33c5000bd127e67ab"
         },
         {
           "path": "references/individual-status-capsules.md",
           "kind": "reference",
-          "sizeBytes": 5031,
-          "sha256": "be1f2eccf96b4d2deefe45b3bc1dd0a3597278472c2ffedadc43c57161e9103d"
+          "sizeBytes": 5144,
+          "sha256": "532e1b1b3385041ec03e14c7ac88f75294f197d9634fdce4b2a84f08afa3baff"
         }
       ],
-      "contentHash": "sha256:a2b26cf6895affeeb70c85567a061094450a59bd3c4fdcf28ee65858599ac12c"
+      "contentHash": "sha256:d692e17867de66e701e757cb12312ffd87d09214098c903c7e940e511639d6e6"
     },
     {
       "id": "paperclipai:bundled:product:wireframe",
@@ -305,47 +724,47 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 11509,
-          "sha256": "6992047cc97b67211cc8c1183718ab9aa26b8afc34c70d54d20558c215daaf48"
+          "sizeBytes": 11702,
+          "sha256": "aef4aa71ac5b1cc5e911daf5e0bd5157bc61eb2693b3d39c96bc061c0939de7c"
         },
         {
           "path": "assets/site-template.html",
           "kind": "asset",
-          "sizeBytes": 14791,
-          "sha256": "8886ad77c386c17b0457f11624aab136c33db7f28dcd6f10fc18e9d833d0950f"
+          "sizeBytes": 15147,
+          "sha256": "1a8f00bf7cfdc6ad8190b1384997ccb7d932c267d25e4bacb7292e7a18d22dea"
         },
         {
           "path": "assets/template-mobile.svg",
           "kind": "asset",
-          "sizeBytes": 925,
-          "sha256": "dc32af257df1f986b87a7b30a6104de825057dc4d6f12b381f5a28308f0002f0"
+          "sizeBytes": 946,
+          "sha256": "ee8841865f83c2d44b39899b3b877fc3a25f85e90cab1acbefc56fac92d4f83d"
         },
         {
           "path": "assets/template.svg",
           "kind": "asset",
-          "sizeBytes": 1262,
-          "sha256": "63f8adb8eb4b21dea6fd442b9e9312704c419535eb577d4ef0bfb54410fd576b"
+          "sizeBytes": 1286,
+          "sha256": "a21daf45a4b4908a5d2eeafee44a4dd34543762b1cb4f3cb5b6be390e6ef23c9"
         },
         {
           "path": "references/components.md",
           "kind": "reference",
-          "sizeBytes": 14806,
-          "sha256": "4ce18f418d78b13cdfa6fe8070173044a631576cd2b999571e6703f58894496c"
+          "sizeBytes": 15288,
+          "sha256": "1fba5ad8e6f678ab01c1bb8af9f8c71a203c6b7fcefd267936951d2dd213be88"
         },
         {
           "path": "references/examples.md",
           "kind": "reference",
-          "sizeBytes": 16108,
-          "sha256": "18f486e95a578a50cf6c9f93394b82534392771320692e4876edf17054bfae55"
+          "sizeBytes": 16470,
+          "sha256": "07f4093670f9cdb4bb6a3f27d275bbe76c49e44c97e88c3f632f7a550ad3a7fc"
         },
         {
           "path": "references/grid-system.md",
           "kind": "reference",
-          "sizeBytes": 4581,
-          "sha256": "017260d2216859d57e5fa869e0efc6b88c7ed4d8a8a4f5af04fe89a3ef2445bd"
+          "sizeBytes": 4688,
+          "sha256": "fcb8010755fc443e6ab1a1de4fdaa5954908d7923db554677fadd71194a6cc19"
         }
       ],
-      "contentHash": "sha256:7106d84fc9db2053090f692706e41cfc586e7dd85a44f568e3319c4eefbdde46"
+      "contentHash": "sha256:8662f0aea696f150d57a9d49aa3865e990bc213e2386bc872ba1368a2c331094"
     },
     {
       "id": "paperclipai:bundled:quality:qa-acceptance",
@@ -376,11 +795,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 3861,
-          "sha256": "c631b437ab26d104af6cdb963d8f679a9341439041b3cb3ec8835f4ff551b378"
+          "sizeBytes": 3954,
+          "sha256": "b34e40a4ed4ffa0a65ca3c942e820dbd8bee4e8ba89b1cc35cdd81c458535c3f"
         }
       ],
-      "contentHash": "sha256:32372dacaf62e93454b9855968c4eec96456ba78b509f450b3dfaa48e31ef356"
+      "contentHash": "sha256:a4399a3f57325f1efd3b37064c6c7313295e5081c823b21631f140f7e80ddb01"
     },
     {
       "id": "paperclipai:bundled:software-development:github-pr-workflow",
@@ -409,11 +828,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 3970,
-          "sha256": "f498ec4ebb1779dea37adeb1db8a8b22316282798e35ee02e2fc5ff627d7e261"
+          "sizeBytes": 4063,
+          "sha256": "30364fb90972118fc28c25cb0e5d6ff5777a40d2f143c2695bd13f09adc4e8a5"
         }
       ],
-      "contentHash": "sha256:90f278c89aa0711be150c1cd2456ca25620d02f36995b113ca9837d756a37f6c"
+      "contentHash": "sha256:328a47b66440e5318cc2511ca9c4ed7a05b3816c709b22fe6b5662bd1e45f48e"
     },
     {
       "id": "paperclipai:optional:browser:agent-browser",
@@ -444,11 +863,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 5133,
-          "sha256": "362f7b9d02297782bc6f0c093f495b8a0304a75bcf4b42e5c280a42b1f757b7d"
+          "sizeBytes": 5226,
+          "sha256": "a747752e8feb0bce65ed8fe8874a478f4d72505dad8509281393a8b6b4ec3d0e"
         }
       ],
-      "contentHash": "sha256:eabb2c9f7b5e1a27ebb1e05a711d61433a266478154cd671a685e99e67aadea2"
+      "contentHash": "sha256:0a193bd50a39c50364ad9849b0bd1b69ceb45c29f9a4f0ae6fd99dd9c9efd2d4"
     },
     {
       "id": "paperclipai:optional:content:release-announcement",
@@ -479,11 +898,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 6945,
-          "sha256": "d745cca96350518fabae14f5c407d779e1df2c5d091b5b4a5c55bb888b569e5f"
+          "sizeBytes": 7163,
+          "sha256": "d943494a9ca5afe93429f11a1fea62935a5f33eaa17fbc339691e483c3451993"
         }
       ],
-      "contentHash": "sha256:efe8ea89b552df95222609867c9c75f1b40e16f457d34e7e4a124f54daa33efa"
+      "contentHash": "sha256:2015db96bc7f480908b34dbca1ea983a1e7da5ad850966528b9d8e4ca216b087"
     },
     {
       "id": "paperclipai:optional:content:simplified-english",
@@ -515,11 +934,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 1578,
-          "sha256": "a0f7385599873910e2fabf400346016a07dacbc7ece27c0e3616ae8fd94ebfbb"
+          "sizeBytes": 1618,
+          "sha256": "1c4d662e7ca843d77c6340674e1b8298853c81b851df370d72e1399629dde81d"
         }
       ],
-      "contentHash": "sha256:642321f40d51e0125df05c6fbace49aeb07ec30392058756909c259c9c5eac6a"
+      "contentHash": "sha256:2edae5550096a411bbb0bc93f2c90da97cfbc7cfc716ab73003b9af6c58d47bb"
     },
     {
       "id": "paperclipai:optional:finance:ramp",
@@ -552,11 +971,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 7016,
-          "sha256": "698cd69ebf2f2481ed83c8e9477b56ae78288cc4c751d7d35f649ff2483802a3"
+          "sizeBytes": 7114,
+          "sha256": "3d6a18c4b968a463778d63552e76e65d5d9784d1328a742b9c462dae7f8fed2f"
         }
       ],
-      "contentHash": "sha256:276d85e98a4732f278204e26438aa95fde158dd2d15c1e427c4c7c7d492e769d"
+      "contentHash": "sha256:d7fa293de65b3e62460bd598331d81975f4900cc87cffe83dba8a4b8de711c6e"
     },
     {
       "id": "paperclipai:optional:product:design-critique",
@@ -587,11 +1006,11 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 4851,
-          "sha256": "022e619baf6cc25725946279cb8052d22af090dd6cd6dc8c20f17867f71a5d8e"
+          "sizeBytes": 4972,
+          "sha256": "5a9b2e6124c1c6e9e8ab80bdba117de378f1ef4048803cf0cac3240a0994bf0c"
         }
       ],
-      "contentHash": "sha256:429f94df398a0697042b5bbe4755b1ff1a230aa5f41d99118ad37493ac65d21c"
+      "contentHash": "sha256:1e4b3ed46828038f8205fa6babc8d2d593e57e59f91019b7c4b6a4c3ef987b5c"
     },
     {
       "id": "paperclipai:optional:research:last30days",
@@ -1149,17 +1568,17 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 12409,
-          "sha256": "5278d288a0cbfe10fdda4ef3d99cf61e6ed068f4b6c1282406b0e001c9f45253"
+          "sizeBytes": 12639,
+          "sha256": "bbaca494986ed984e48db232f14e0e1c06f2d290eae4d96eab662e01808f5596"
         },
         {
           "path": "examples/notion-mcp-research-gate.md",
           "kind": "markdown",
-          "sizeBytes": 1900,
-          "sha256": "944b13ac67c06c65643eb236e856f1479106749861535648d29334f84cf1b50b"
+          "sizeBytes": 1943,
+          "sha256": "cf3ed32409014d923e39f9c7532eb000457e50744c563d1340b103ec3a8106d9"
         }
       ],
-      "contentHash": "sha256:84f2a28d7d004393719684f2b435e5ee01ddc58591e0dfeb73d72c7605db7f49"
+      "contentHash": "sha256:4732ec12a5a4e85d2c513c68210775e25406077d42a2c8144129cfd41dc1d7fe"
     }
   ]
 }

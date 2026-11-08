@@ -39,6 +39,7 @@ import { createDotRunnerMcpTools, dotRunnerBroker } from "./services/dot-runner-
 import { agentProfileAvatarRoutes } from "./routes/agent-profile-avatar.js";
 import { museTransportRoutes, museBoardRoutes } from "./routes/muse.js";
 import { museQualificationRoutes } from "./routes/muse-qualification.js";
+import { atelierBridgeRoutes } from "./routes/atelier-bridge.js";
 import { startMuseMaintenance } from "./services/muse-maintenance.js";
 import { grokBotRoutes } from "./routes/grok-bot.js";
 import { createGrokRoutineDispatcher } from "./services/grok-bot/dispatcher.js";
@@ -1051,6 +1052,7 @@ export async function createApp(
 
   api.use(museBoardRoutes(db, opts.authPublicBaseUrl));
   api.use(museQualificationRoutes(db));
+  api.use(atelierBridgeRoutes(db));
   app.use("/api", api);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found" });

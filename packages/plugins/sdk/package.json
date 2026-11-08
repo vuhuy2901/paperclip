@@ -13,10 +13,13 @@
     "directory": "packages/plugins/sdk"
   },
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./protocol": {
       "types": "./dist/protocol.d.ts",

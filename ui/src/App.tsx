@@ -42,6 +42,44 @@ import { useCloudInstance } from "./hooks/useCloudInstance";
 import { useStreamlinedUiEnabled } from "./hooks/useStreamlinedUiEnabled";
 import { cloudStackCreateUrl } from "./lib/cloudLinks";
 import { navigateTopLevel } from "@/lib/browserNavigation";
+import { AtelierStudioProvider } from "./features/atelier/AtelierStudioContext";
+import "./features/atelier/atelier-studio.css";
+
+const AtelierDesignStudioPage = lazy(() =>
+  import("./features/atelier/AtelierDesignStudioPage").then((m) => ({
+    default: m.AtelierDesignStudioPage,
+  })),
+);
+const AtelierFloorPlanImportRoute = lazy(() =>
+  import("./features/atelier/AtelierPages").then((m) => ({
+    default: m.AtelierFloorPlanImportRoute,
+  })),
+);
+const AtelierMaterialsCatalogRoute = lazy(() =>
+  import("./features/atelier/AtelierPages").then((m) => ({
+    default: m.AtelierMaterialsCatalogRoute,
+  })),
+);
+const AtelierRenderCompareRoute = lazy(() =>
+  import("./features/atelier/AtelierPages").then((m) => ({
+    default: m.AtelierRenderCompareRoute,
+  })),
+);
+const AtelierCostEstimationRoute = lazy(() =>
+  import("./features/atelier/AtelierPages").then((m) => ({
+    default: m.AtelierCostEstimationRoute,
+  })),
+);
+const AtelierShoppingCatalogRoute = lazy(() =>
+  import("./features/atelier/AtelierPages").then((m) => ({
+    default: m.AtelierShoppingCatalogRoute,
+  })),
+);
+const AtelierSystemHealthRoute = lazy(() =>
+  import("./features/atelier/AtelierPages").then((m) => ({
+    default: m.AtelierSystemHealthRoute,
+  })),
+);
 
 const AuthPage = lazy(() => import("./pages/Auth").then((module) => ({ default: module.AuthPage })));
 const BoardClaimPage = lazy(() => import("./pages/BoardClaim").then((module) => ({ default: module.BoardClaimPage })));
@@ -440,6 +478,13 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="inbox/requests" element={<JoinRequestQueue />} />
       <Route path="u/:userSlug" element={<UserProfile />} />
       <Route path="design-guide" element={<DesignGuide />} />
+      <Route path="design-studio" element={<AtelierDesignStudioPage />} />
+      <Route path="floorplan-import" element={<AtelierFloorPlanImportRoute />} />
+      <Route path="materials-catalog" element={<AtelierMaterialsCatalogRoute />} />
+      <Route path="render-compare" element={<AtelierRenderCompareRoute />} />
+      <Route path="cost-estimation" element={<AtelierCostEstimationRoute />} />
+      <Route path="shopping-catalog" element={<AtelierShoppingCatalogRoute />} />
+      <Route path="system-health" element={<AtelierSystemHealthRoute />} />
       <Route path="instance/settings/adapters" element={<AdapterManager />} />
       <Route path=":pluginRoutePath/*" element={<PluginPage />} />
       <Route path="*" element={<NotFoundPage scope="board" />} />
@@ -776,7 +821,7 @@ export function App() {
   }, [pathname]);
 
   return (
-    <>
+    <AtelierStudioProvider>
       <ConnectionStatusBanner />
       <Suspense fallback={<PaperclipLoading />}><Routes>
         <Route path="oauth-handoff" element={<PaperclipCloudOAuthHandoffPage />} />
@@ -863,6 +908,13 @@ export function App() {
           <Route path="execution-workspaces/:workspaceId/runtime-logs" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/issues" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/routines" element={<UnprefixedExecutionWorkspaceRedirect />} />
+          <Route path="design-studio" element={<UnprefixedBoardRedirect />} />
+          <Route path="floorplan-import" element={<UnprefixedBoardRedirect />} />
+          <Route path="materials-catalog" element={<UnprefixedBoardRedirect />} />
+          <Route path="render-compare" element={<UnprefixedBoardRedirect />} />
+          <Route path="cost-estimation" element={<UnprefixedBoardRedirect />} />
+          <Route path="shopping-catalog" element={<UnprefixedBoardRedirect />} />
+          <Route path="system-health" element={<UnprefixedBoardRedirect />} />
           <Route path=":companyPrefix" element={streamlinedUiEnabled ? <Layout /> : <ProductionLayout />}>
             {boardRoutes(streamlinedUiEnabled, combinedInboxTasksEnabled)}
           </Route>
@@ -871,6 +923,6 @@ export function App() {
         </Route>
       </Routes></Suspense>
       <OnboardingWizardVariant />
-    </>
+    </AtelierStudioProvider>
   );
 }

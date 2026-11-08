@@ -82,11 +82,8 @@ export type DurablePrpControlPlane =
 export type PaperclipSemanticDispatcher =
   import("@paperclipai/paperclip-runner").PaperclipSemanticDispatcher;
 
-const sourceUrl = new URL(
-  "../../../../packages/paperclip-runner/src/index.ts",
-  import.meta.url,
-);
-const runner = (await import(sourceUrl.href)) as RunnerModule;
+import * as runnerModule from "../../../../packages/paperclip-runner/src/index.ts";
+const runner = runnerModule as RunnerModule;
 export const taskDocumentKeySchema = runner.taskDocumentKeySchema;
 
 export const CURSOR_CLOUD_DEFAULT_TIMEOUT_MS = runner.CURSOR_CLOUD_DEFAULT_TIMEOUT_MS;

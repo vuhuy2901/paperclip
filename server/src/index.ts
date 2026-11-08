@@ -1,3 +1,4 @@
+console.log("[ATELIER] Server entry executing...");
 import type { IdleDeadlineOwners } from "./services/idle-deadline-types.js";
 import { registerOwnershipReconciliationWork } from "./services/native-runtime/native-finalization-reconciler.js";
 import { bindIdleDeadlineOwner } from "./services/idle-deadline-owner.js";
