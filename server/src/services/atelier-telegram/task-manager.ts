@@ -79,16 +79,24 @@ export class AtelierTelegramTaskManager {
       .where(eq(agents.companyId, companyId));
 
     return rows.map((a) => {
-      let key = "agent_general";
-      const nameLower = a.name.toLowerCase();
-      if (nameLower.includes("chief") || nameLower.includes("kts") || nameLower.includes("kiến trúc")) key = "agent_chief_architect";
-      else if (nameLower.includes("floor") || nameLower.includes("mặt bằng")) key = "agent_floorplan";
-      else if (nameLower.includes("geometry") || nameLower.includes("hình học") || nameLower.includes("bim")) key = "agent_geometry";
-      else if (nameLower.includes("furniture") || nameLower.includes("nội thất")) key = "agent_furniture";
-      else if (nameLower.includes("style") || nameLower.includes("phong cách") || nameLower.includes("vật liệu")) key = "agent_style";
-      else if (nameLower.includes("render") || nameLower.includes("phối cảnh")) key = "agent_render";
-      else if (nameLower.includes("cost") || nameLower.includes("dự toán") || nameLower.includes("boq")) key = "agent_cost";
-      else if (nameLower.includes("shopping") || nameLower.includes("mua sắm") || nameLower.includes("vật tư")) key = "agent_shopping";
+      let key = (a.metadata as Record<string, unknown> | null)?.atelierAgentKey as string | undefined;
+      if (!key) {
+        const nameLower = a.name.toLowerCase();
+        if (nameLower.includes("chief") || nameLower.includes("kts") || nameLower.includes("kiến trúc")) key = "agent_chief_architect";
+        else if (nameLower.includes("floor") || nameLower.includes("mặt bằng")) key = "agent_floorplan";
+        else if (nameLower.includes("geometry") || nameLower.includes("hình học") || nameLower.includes("bim")) key = "agent_geometry";
+        else if (nameLower.includes("furniture") || nameLower.includes("nội thất")) key = "agent_furniture";
+        else if (nameLower.includes("ceiling") || nameLower.includes("trần") || nameLower.includes("chiếu sáng")) key = "agent_ceiling_lighting";
+        else if (nameLower.includes("material") || nameLower.includes("vật liệu")) key = "agent_material";
+        else if (nameLower.includes("research") || nameLower.includes("nghiên cứu") || nameLower.includes("khảo sát")) key = "agent_research";
+        else if (nameLower.includes("inventory") || nameLower.includes("bom") || nameLower.includes("danh mục")) key = "agent_inventory";
+        else if (nameLower.includes("render") || nameLower.includes("phối cảnh")) key = "agent_render";
+        else if (nameLower.includes("cost") || nameLower.includes("dự toán") || nameLower.includes("boq")) key = "agent_cost";
+        else if (nameLower.includes("shopping") || nameLower.includes("mua sắm") || nameLower.includes("vật tư")) key = "agent_shopping";
+        else if (nameLower.includes("qa") || nameLower.includes("kiểm định") || nameLower.includes("quy chuẩn")) key = "agent_qa";
+        else if (nameLower.includes("style") || nameLower.includes("phong cách")) key = "agent_style";
+        else key = "agent_general";
+      }
 
       return {
         id: a.id,
@@ -113,6 +121,21 @@ export class AtelierTelegramTaskManager {
     }
 
     // Keyword heuristics
+    if (q.includes("trần") || q.includes("đèn") || q.includes("chiếu sáng") || q.includes("downlight") || q.includes("ceiling") || q.includes("lighting")) {
+      return agentsList.find((a) => a.key === "agent_ceiling_lighting") || null;
+    }
+    if (q.includes("vật liệu") || q.includes("gạch") || q.includes("an cường") || q.includes("eurotile") || q.includes("đồng tâm") || q.includes("material")) {
+      return agentsList.find((a) => a.key === "agent_material") || agentsList.find((a) => a.key === "agent_style") || null;
+    }
+    if (q.includes("khảo sát") || q.includes("tìm sản phẩm") || q.includes("sản phẩm thực tế") || q.includes("research") || q.includes("tra cứu giá")) {
+      return agentsList.find((a) => a.key === "agent_research") || agentsList.find((a) => a.key === "agent_shopping") || null;
+    }
+    if (q.includes("bom") || q.includes("inventory") || q.includes("danh mục vật tư") || q.includes("bóc tách khối lượng")) {
+      return agentsList.find((a) => a.key === "agent_inventory") || agentsList.find((a) => a.key === "agent_cost") || null;
+    }
+    if (q.includes("qa") || q.includes("kiểm định") || q.includes("quy chuẩn") || q.includes("thông thủy") || q.includes("va chạm") || q.includes("xung đột")) {
+      return agentsList.find((a) => a.key === "agent_qa") || null;
+    }
     if (q.includes("geometry") || q.includes("dựng phòng") || q.includes("căn phòng") || q.includes("tường") || q.includes("cửa sổ") || q.includes("bim")) {
       return agentsList.find((a) => a.key === "agent_geometry") || null;
     }
@@ -122,10 +145,10 @@ export class AtelierTelegramTaskManager {
     if (q.includes("sofa") || q.includes("bàn") || q.includes("ghế") || q.includes("tủ") || q.includes("giường") || q.includes("nội thất") || q.includes("furniture")) {
       return agentsList.find((a) => a.key === "agent_furniture") || null;
     }
-    if (q.includes("vật liệu") || q.includes("phong cách") || q.includes("sơn") || q.includes("gạch") || q.includes("gỗ") || q.includes("style") || q.includes("japandi")) {
+    if (q.includes("phong cách") || q.includes("sơn") || q.includes("gỗ") || q.includes("style") || q.includes("japandi")) {
       return agentsList.find((a) => a.key === "agent_style") || null;
     }
-    if (q.includes("render") || q.includes("phối cảnh") || q.includes("chiếu sáng") || q.includes("ánh sáng") || q.includes("hình ảnh")) {
+    if (q.includes("render") || q.includes("phối cảnh") || q.includes("ánh sáng") || q.includes("hình ảnh")) {
       return agentsList.find((a) => a.key === "agent_render") || null;
     }
     if (q.includes("dự toán") || q.includes("giá") || q.includes("chi phí") || q.includes("báo giá") || q.includes("boq") || q.includes("cost")) {
@@ -135,7 +158,7 @@ export class AtelierTelegramTaskManager {
       return agentsList.find((a) => a.key === "agent_shopping") || null;
     }
     if (q.includes("chief") || q.includes("kiến trúc sư") || q.includes("kts") || q.includes("tổng thể") || q.includes("tư vấn")) {
-      return agentsList.find((a) => a.key === "agent_chief_architect") || null;
+      return agentsList.find((a) => a.key === "agent_chief_architect") || agentsList.find((a) => a.key === "agent_concierge") || null;
     }
 
     return null;

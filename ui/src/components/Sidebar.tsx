@@ -33,6 +33,7 @@ import {
   Activity,
   Send,
   CheckCircle2,
+  ClipboardList,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -223,6 +224,7 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
           <SidebarNavItem to="/render-compare" label="Phối cảnh" icon={Camera} />
           <SidebarNavItem to="/materials-catalog" label="Vật liệu & Nội thất" icon={Palette} />
           <SidebarNavItem to="/cost-estimation" label="Dự toán (BOQ)" icon={Calculator} />
+          <SidebarNavItem to="/inventory-bom" label="Danh mục vật tư (BOM)" icon={ClipboardList} />
           <SidebarNavItem to="/shopping-catalog" label="Danh mục mua sắm" icon={ShoppingBag} />
           <SidebarNavItem to="/system-health" label="Hạ tầng Local-Lite" icon={Activity} />
           <SidebarNavItem to="/settings/telegram" label="Cài đặt Telegram" icon={Send} />

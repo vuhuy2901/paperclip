@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/skills-catalog",
   "packageVersion": "0.3.1",
-  "generatedAt": "2026-11-08T17:16:32.217Z",
+  "generatedAt": "2026-11-08T19:08:55.242Z",
   "skills": [
     {
       "id": "paperclipai:bundled:docs:doc-maintenance",
@@ -39,6 +39,43 @@
       "contentHash": "sha256:1342a654c400bd5dc5756340bda7883b448fcfb9e56f9dace0473016f781f374"
     },
     {
+      "id": "paperclipai:bundled:interior-design:blender-mcp-rendering",
+      "key": "paperclipai/bundled/interior-design/blender-mcp-rendering",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "blender-mcp-rendering",
+      "name": "blender-mcp-rendering",
+      "description": "Kết nối Blender qua MCP Gateway để dựng hình các khối nội thất cong/tùy biến phức tạp, tạo vật liệu PBR chất lượng cao, thiết lập camera và xuất file GLB nạp ngược vào không gian 3D Pascal.",
+      "path": "catalog/bundled/interior-design/blender-mcp-rendering",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "engineer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "blender",
+        "mcp",
+        "3d-render",
+        "glb-export",
+        "photorealistic"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 1711,
+          "sha256": "d656e621ad6c297fc3634cfc00fd2622aa69ff456ee4cd1057a35ffc442c6f70"
+        }
+      ],
+      "contentHash": "sha256:fa3535967c0b43c83a3bda9ece979754ccc4ae9e903f069ac444279c8afcb7ec"
+    },
+    {
       "id": "paperclipai:bundled:interior-design:cad-dxf-ifc-export",
       "key": "paperclipai/bundled/interior-design/cad-dxf-ifc-export",
       "kind": "bundled",
@@ -72,6 +109,78 @@
         }
       ],
       "contentHash": "sha256:db9d2a33c527293bd39e4d7a0d11338fb1d2e901b095cbc396ed4ecda0fac1b0"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:ceiling-and-lighting-design",
+      "key": "paperclipai/bundled/interior-design/ceiling-and-lighting-design",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "ceiling-and-lighting-design",
+      "name": "ceiling-and-lighting-design",
+      "description": "Thiết kế hệ thống trần thạch cao (trần phẳng, trần giật cấp, khe hắt sáng) và bố trí thiết bị chiếu sáng kiến trúc (đèn âm trần downlight, đèn chùm, đèn rọi ray, LED strip cove) theo công năng từng phòng.",
+      "path": "catalog/bundled/interior-design/ceiling-and-lighting-design",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "engineer",
+        "designer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "ceiling",
+        "lighting",
+        "downlight",
+        "cove-light"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 1460,
+          "sha256": "f1588e67501c96289a3e6b44e52fdd5f9cfdeebac536c9d34937d43f6c5b24d0"
+        }
+      ],
+      "contentHash": "sha256:e1a228a8aa300d05647e56c059f866e4402772fac4f6ff50ee90f667f3d3fb19"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:design-inventory-bom",
+      "key": "paperclipai/bundled/interior-design/design-inventory-bom",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "design-inventory-bom",
+      "name": "design-inventory-bom",
+      "description": "Tự động trích xuất bảng danh mục bóc tách vật tư - thiết bị hoàn chỉnh (Bill of Materials / Design Inventory) từ mô hình Pascal SceneGraph và CanonicalProject, đồng bộ 2 chiều khi chỉnh sửa thiết kế.",
+      "path": "catalog/bundled/interior-design/design-inventory-bom",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "finance",
+        "engineer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "inventory",
+        "bom",
+        "bill-of-materials",
+        "scene-sync"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 1846,
+          "sha256": "b2b99da9390c5ad82bccb3cf6018d3594b0c5561502c5d10a60a36e392f37c93"
+        }
+      ],
+      "contentHash": "sha256:252173760c702d50b164e2aab657f5a06fc0d463e727a4fde593724f1b27081b"
     },
     {
       "id": "paperclipai:bundled:interior-design:design-review-approval",
@@ -178,6 +287,43 @@
         }
       ],
       "contentHash": "sha256:77f600cdb3f608ae92402a2d19c4b169532075dd975674cd8757c5a46a780a1d"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:house-plan-designer",
+      "key": "paperclipai/bundled/interior-design/house-plan-designer",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "house-plan-designer",
+      "name": "house-plan-designer",
+      "description": "Chuyển đổi ảnh mặt bằng kiến trúc (PNG/JPG/PDF/CAD) thành mô hình 2D cấu trúc FloorSpec JSON, tự động phân phòng và bố trí nội thất toàn nhà, sau đó chuyển thành mô hình 3D hoàn chỉnh trong Pascal SceneGraph.",
+      "path": "catalog/bundled/interior-design/house-plan-designer",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "engineer",
+        "architect",
+        "designer"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "house-plan",
+        "bim",
+        "multi-room",
+        "auto-layout",
+        "pascal-3d"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2844,
+          "sha256": "1fc569ef846f6b72a835069e1d73467b9b06082e36fef21bc456334af76bc5d6"
+        }
+      ],
+      "contentHash": "sha256:9b7877cebdf5cfb5d1c83172d382192cff58dc6526d7ae94dfbd2a657262eb2a"
     },
     {
       "id": "paperclipai:bundled:interior-design:interior-design-consultation",
@@ -318,6 +464,42 @@
         }
       ],
       "contentHash": "sha256:0469ae72c80ac0754af91737e892ebd67d70a8eb69f7eceb1e2571cd3a1bbcf0"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:product-material-research",
+      "key": "paperclipai/bundled/interior-design/product-material-research",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "product-material-research",
+      "name": "product-material-research",
+      "description": "Tìm kiếm, khảo sát và xác minh vật liệu xây dựng, gạch ốp lát, sơn tường, thiết bị chiếu sáng và đồ nội thất từ các nhà cung cấp thực tế tại thị trường Việt Nam (An Cường, Eurotile, Đồng Tâm, Dulux, Jotun, Rạng Đông, KUKA, Nhà Xinh).",
+      "path": "catalog/bundled/interior-design/product-material-research",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "researcher",
+        "designer",
+        "finance"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "market-research",
+        "materials",
+        "real-products",
+        "vietnam-vendors"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 1681,
+          "sha256": "ba47340738ba06fa8e9f5bdffc3a3089db6110433f77dd3576e91b082050f119"
+        }
+      ],
+      "contentHash": "sha256:362e567c4d2b974a66965429354f7ee91636a35f2122cedb5874663746ced063"
     },
     {
       "id": "paperclipai:bundled:interior-design:quantity-takeoff",

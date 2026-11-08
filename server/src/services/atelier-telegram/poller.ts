@@ -366,6 +366,10 @@ export class AtelierTelegramPoller {
         case "/report":
           await this.handleReportCommand(chatId, message.message_id);
           break;
+        case "/bom":
+        case "/inventory":
+          await this.handleInventoryBomCommand(chatId, message.message_id);
+          break;
         case "/cancel":
           await this.handleCancelCommand(chatId, args, message.message_id, fromUser?.id || chatId);
           break;
@@ -388,11 +392,12 @@ export class AtelierTelegramPoller {
       `🏛️ **ATELIER AI 2.0 — TRUNG TÂM ĐIỀU PHỐI ĐA AGENT**\n\n` +
       `Hệ thống thiết kế nội thất 3D & BIM trên nền tảng Paperclip.\n\n` +
       `📋 **Danh mục lệnh:**\n` +
-      `• \`/agents\` — Danh sách 8 Agent chuyên trách\n` +
+      `• \`/agents\` — Danh sách 12+ Chuyên gia Agent\n` +
       `• \`/newtask\` — Giao việc mới qua menu\n` +
       `• \`/tasks\` — Danh sách công việc đang thực hiện\n` +
       `• \`/task <mã>\` — Xem chi tiết công việc (VD: \`/task ATL-1\`)\n` +
       `• \`/approvals\` — Xem và phê duyệt các đề xuất thiết kế/báo giá\n` +
+      `• \`/bom\` hoặc \`/inventory\` — Xem bóc tách khối lượng & danh mục vật tư BOM\n` +
       `• \`/status\` — Trạng thái hệ thống Local-Lite (RAM, CPU, Agents)\n` +
       `• \`/progress\` — Tiến độ dự án hiện tại\n` +
       `• \`/report\` — Báo cáo tổng hợp dự án mẫu\n` +
@@ -401,23 +406,23 @@ export class AtelierTelegramPoller {
       `💬 **Giao việc tự nhiên:**\n` +
       `Bạn có thể nhắn tin trực tiếp để giao việc, ví dụ:\n` +
       `👉 *"Giao cho Geometry Agent dựng một căn phòng 4×5m, có một cửa ra vào và hai cửa sổ."*\n` +
-      `👉 *"KTS Trưởng tư vấn bố trí nội thất phòng khách theo phong cách Japandi"*`;
+      `👉 *"Đổi sàn gạch màu sáng, làm lại trần giật cấp và thêm cây xanh"*`;
 
     await this.client.sendMessage(chatId, text, {
       reply_to_message_id: replyToMessageId,
       reply_markup: {
         inline_keyboard: [
           [
-            { text: "🤖 8 Chuyên gia Agent", callback_data: "cmd_agents" },
+            { text: "🤖 Chuyên gia Agent", callback_data: "cmd_agents" },
             { text: "➕ Giao việc mới", callback_data: "cmd_newtask" },
           ],
           [
             { text: "📋 Công việc đang làm", callback_data: "cmd_tasks" },
-            { text: "⚖️ Phê duyệt đề xuất", callback_data: "cmd_approvals" },
+            { text: "📦 Danh mục BOM", callback_data: "cmd_bom" },
           ],
           [
+            { text: "⚖️ Phê duyệt đề xuất", callback_data: "cmd_approvals" },
             { text: "📊 Trạng thái hệ thống", callback_data: "cmd_status" },
-            { text: "📈 Tiến độ dự án", callback_data: "cmd_progress" },
           ],
         ],
       },
@@ -427,17 +432,22 @@ export class AtelierTelegramPoller {
   private async handleAgentsCommand(chatId: number, replyToMessageId?: number): Promise<void> {
     const agentsList = await this.taskManager.listAgents();
 
-    let text = `👥 **DANH SÁCH 8 AGENT CHUYÊN TRÁCH ATELIER AI:**\n\n`;
+    let text = `👥 **DANH SÁCH ${agentsList.length} CHUYÊN GIA AGENT ATELIER AI:**\n\n`;
     for (const a of agentsList) {
       let icon = "🤖";
-      if (a.key === "agent_chief_architect") icon = "🏛️";
+      if (a.key === "agent_chief_architect" || a.key === "agent_concierge") icon = "🏛️";
       else if (a.key === "agent_floorplan") icon = "📐";
       else if (a.key === "agent_geometry") icon = "🧱";
       else if (a.key === "agent_furniture") icon = "🛋️";
       else if (a.key === "agent_style") icon = "🎨";
-      else if (a.key === "agent_render") icon = "💡";
+      else if (a.key === "agent_material") icon = "🪵";
+      else if (a.key === "agent_ceiling_lighting") icon = "💡";
+      else if (a.key === "agent_research") icon = "🔍";
+      else if (a.key === "agent_render") icon = "🖼️";
+      else if (a.key === "agent_inventory") icon = "📋";
       else if (a.key === "agent_cost") icon = "📊";
       else if (a.key === "agent_shopping") icon = "🛒";
+      else if (a.key === "agent_qa") icon = "🛡️";
 
       text += `${icon} **${a.name}**\n   *${a.role}* — ${a.description || "Sẵn sàng nhận nhiệm vụ"}\n\n`;
     }
@@ -656,6 +666,59 @@ export class AtelierTelegramPoller {
     await this.client.sendMessage(chatId, text, { reply_to_message_id: replyToMessageId });
   }
 
+  private async handleInventoryBomCommand(chatId: number, replyToMessageId?: number): Promise<void> {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/api/v1/projects/proj_demo_4x5m/inventory");
+      if (!res.ok) {
+        await this.client.sendMessage(chatId, "⚠️ Hiện chưa thể tải bảng danh mục BOM từ hệ thống.", {
+          reply_to_message_id: replyToMessageId,
+        });
+        return;
+      }
+      const data = (await res.json()) as any;
+      const bom = data.inventory_bom;
+      if (!bom) {
+        await this.client.sendMessage(chatId, "⚠️ Chưa có dữ liệu bóc tách vật tư.", {
+          reply_to_message_id: replyToMessageId,
+        });
+        return;
+      }
+
+      let text =
+        `📋 **DANH MỤC VẬT TƯ & THIẾT BỊ (DESIGN INVENTORY / BOM)**\n\n` +
+        `🏠 **Dự án:** \`${bom.project_id}\` (Phiên bản ${bom.revision})\n` +
+        `📦 **Tổng hạng mục:** \`${bom.total_items_count}\` vật tư / thiết bị\n` +
+        `💰 **Tổng giá trị định lượng:** **${bom.priced_items_subtotal_vnd.toLocaleString("vi-VN")} VNĐ**\n\n` +
+        `📝 **Chi tiết các hạng mục chính:**\n`;
+
+      const previewItems = (bom.all_items || []).slice(0, 8);
+      for (const item of previewItems) {
+        const priceStr = item.unit_price_vnd ? `${item.unit_price_vnd.toLocaleString("vi-VN")} đ` : "Chưa có giá";
+        text += `• **${item.name}** (${item.room})\n   └ ${item.quantity} ${item.unit} | ${item.supplier || "Tiêu chuẩn"} | *${priceStr}*\n`;
+      }
+
+      if ((bom.all_items || []).length > 8) {
+        text += `\n... và **${(bom.all_items || []).length - 8} hạng mục khác**.\n`;
+      }
+
+      await this.client.sendMessage(chatId, text, {
+        reply_to_message_id: replyToMessageId,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "📥 Tải tệp CSV (Excel)", url: "http://127.0.0.1:3100/api/v1/projects/proj_demo_4x5m/inventory/export/csv" },
+              { text: "⚖️ Xem duyệt", callback_data: "cmd_approvals" },
+            ],
+          ],
+        },
+      });
+    } catch (err: any) {
+      await this.client.sendMessage(chatId, `❌ Lỗi khi tải danh mục BOM: ${err.message}`, {
+        reply_to_message_id: replyToMessageId,
+      });
+    }
+  }
+
   private async handleCancelCommand(
     chatId: number,
     identifier: string,
@@ -811,6 +874,11 @@ export class AtelierTelegramPoller {
     if (data === "cmd_tasks" && chatId) {
       await this.client.answerCallbackQuery(cb.id);
       await this.handleTasksCommand(chatId);
+      return;
+    }
+    if (data === "cmd_bom" && chatId) {
+      await this.client.answerCallbackQuery(cb.id);
+      await this.handleInventoryBomCommand(chatId);
       return;
     }
     if (data === "cmd_agents" && chatId) {

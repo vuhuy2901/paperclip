@@ -197,6 +197,56 @@ const ATELIER_SPECIALIST_AGENTS = [
       "Tìm kiếm sản phẩm từ catalog nhà cung cấp Việt Nam theo phân khúc giá Thấp/Trung/Cao, kiểm tra lọt lòng cửa đi (Doorway Fit-Check) và đề xuất thay thế.",
     skills: ["furniture-product-matching", "vietnam-cost-estimation"],
   },
+  {
+    key: "agent_ceiling_lighting",
+    name: "Ceiling & Lighting Specialist",
+    role: "engineer",
+    title: "Chuyên Gia Trần & Chiếu Sáng Kiến Trúc",
+    icon: "sun",
+    capabilities:
+      "Thiết kế hệ trần thạch cao Vĩnh Tường phẳng/giật cấp hắt sáng, bố trí đèn LED Downlight Rạng Đông, đèn thả, đèn ray nam châm theo công năng phòng.",
+    skills: ["ceiling-and-lighting-design", "pascal-scene-editing"],
+  },
+  {
+    key: "agent_material",
+    name: "Material Consultant",
+    role: "designer",
+    title: "Chuyên Gia Khảo Sát & Thẩm Định Vật Liệu",
+    icon: "layers",
+    capabilities:
+      "Tư vấn và đối soát mẫu vật liệu hoàn thiện sàn, tường, gỗ công nghiệp An Cường, gạch Eurotile Sa Thạch, đá mài Terrazzo Đồng Tâm.",
+    skills: ["materials-and-finishes", "product-material-research"],
+  },
+  {
+    key: "agent_research",
+    name: "Product & Market Researcher",
+    role: "researcher",
+    title: "Chuyên Gia Nghiên Cứu & Xác Minh Sản Phẩm Thực Tế",
+    icon: "search",
+    capabilities:
+      "Tìm kiếm sản phẩm thực tế từ các nhà cung cấp Việt Nam, trích xuất kích thước, xuất xứ, link tham khảo và trạng thái giá (không bịa giá).",
+    skills: ["product-material-research", "furniture-product-matching"],
+  },
+  {
+    key: "agent_inventory",
+    name: "Design Inventory & BOM Manager",
+    role: "finance",
+    title: "Chuyên Gia Quản Lý Bóc Tách & Danh Mục Vật Tư",
+    icon: "clipboard-list",
+    capabilities:
+      "Trích xuất và quản lý danh mục toàn bộ vật tư, thiết bị, đồ rời từ Pascal SceneGraph, đồng bộ trạng thái duyệt và xuất bảng BOM hoàn chỉnh.",
+    skills: ["design-inventory-bom", "quantity-takeoff"],
+  },
+  {
+    key: "agent_qa",
+    name: "QA & Validation Specialist",
+    role: "engineer",
+    title: "Chuyên Gia Kiểm Định Quy Chuẩn & Xung Đột",
+    icon: "shield-check",
+    capabilities:
+      "Kiểm tra tự động khoảng cách thông thủy >=750mm, va chạm đồ nội thất, góc mở cửa và tính toàn vẹn của mô hình 3D Pascal.",
+    skills: ["room-dimension-validation", "design-review-approval"],
+  },
 ] as const;
 
 export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBootstrapSummary> {

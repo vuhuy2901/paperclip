@@ -45,6 +45,7 @@ export function AtelierFloorPlanImportRoute() {
   const [scaleDepthMm, setScaleDepthMm] = useState(5000);
   const [scaleCeilingMm, setScaleCeilingMm] = useState(2800);
   const [uploading, setUploading] = useState(false);
+  const [generatingMultiRoom, setGeneratingMultiRoom] = useState(false);
 
   useEffect(() => {
     setBreadcrumbs([
@@ -60,6 +61,33 @@ export function AtelierFloorPlanImportRoute() {
       setScaleCeilingMm(project.ceiling_height_mm || 2800);
     }
   }, [project]);
+
+  const handleGenerateMultiRoom = async () => {
+    setGeneratingMultiRoom(true);
+    try {
+      const pid = activeProjectId || project?.id || "proj_demo_4x5m";
+      const res = await fetch(`${API_BASE}/projects/${pid}/house-plan/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scale_confirmed: true,
+          reference_length_mm: scaleDepthMm || 5000,
+        }),
+      });
+      if (res.ok) {
+        await refreshProjectBundle(pid);
+        showToast(
+          "🎉 Đã tự động tạo toàn bộ Căn hộ Đa phòng (52.5 m²) gồm Phòng Khách, Bếp, Ngủ Master, Vệ sinh & Hệ thống trần đèn!",
+        );
+      } else {
+        throw new Error("Lỗi phản hồi máy chủ: " + res.status);
+      }
+    } catch (err: any) {
+      showToast("Lỗi khi dựng căn hộ đa phòng: " + err.message);
+    } finally {
+      setGeneratingMultiRoom(false);
+    }
+  };
 
   const handleConfirmScale = async () => {
     setUploading(true);
@@ -117,7 +145,7 @@ export function AtelierFloorPlanImportRoute() {
   if (!project) return <div className="p-6 text-sm text-muted-foreground">Đang tải dữ liệu mặt bằng...</div>;
 
   return (
-    <div className="atelier-surface-root h-full overflow-y-auto" data-theme={theme}>
+    <div className="atelier-surface-root h-full overflow-y-auto space-y-6" data-theme={theme}>
       <FloorPlanImportPage
         project={project}
         scaleWidthMm={scaleWidthMm}
@@ -131,6 +159,60 @@ export function AtelierFloorPlanImportRoute() {
         uploading={uploading}
         onOpenWorkspace={() => navigate("/design-studio")}
       />
+
+      {/* Upgrade 1 & 3: Multi-Room Whole House Generator Card */}
+      <div className="mx-auto max-w-6xl px-6 pb-8">
+        <div className="rounded-lg border border-teal-700/30 bg-teal-500/5 p-5 shadow-xs space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-teal-700 text-white px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase">
+                  Nâng Cấp 1 & 3
+                </span>
+                <h3 className="text-base font-semibold text-foreground">
+                  House Plan Designer — Tự Động Tạo Toàn Bộ Căn Hộ Đa Phòng 3D BIM
+                </h3>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Dựa trên tham chiếu House Plan Designer. Tự động sinh cấu trúc mặt bằng <strong>FloorSpec JSON</strong> đa phòng (Phòng Khách 20m², Khu Bếp Ăn 12m², Phòng Ngủ Master 16m², Vệ sinh 4.5m²), đồng bộ Pascal 3D BIM, trần thạch cao Vĩnh Tường, hệ thống đèn LED Rạng Đông và nội thất hoàn thiện.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGenerateMultiRoom}
+              disabled={generatingMultiRoom}
+              className="inline-flex items-center gap-2 rounded-md bg-teal-700 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-teal-800 disabled:opacity-50 transition-all cursor-pointer"
+            >
+              <RefreshCw className={`size-3.5 ${generatingMultiRoom ? "animate-spin" : ""}`} />
+              <span>
+                {generatingMultiRoom
+                  ? "Đang tự động dựng căn hộ 3D..."
+                  : "⚡ Dựng Toàn Bộ Căn Hộ Đa Phòng"}
+              </span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 pt-2 border-t border-border/50 text-xs">
+            <div className="rounded border border-border/60 bg-background/60 p-2.5">
+              <div className="text-[11px] text-muted-foreground">Tổng diện tích căn hộ</div>
+              <div className="font-mono font-semibold text-foreground">52.5 m² (7000×7500 mm)</div>
+            </div>
+            <div className="rounded border border-border/60 bg-background/60 p-2.5">
+              <div className="text-[11px] text-muted-foreground">Số phòng chức năng</div>
+              <div className="font-mono font-semibold text-foreground">4 Không gian biệt lập</div>
+            </div>
+            <div className="rounded border border-border/60 bg-background/60 p-2.5">
+              <div className="text-[11px] text-muted-foreground">Hệ trần & Chiếu sáng</div>
+              <div className="font-mono font-semibold text-teal-700 dark:text-teal-400">Giật cấp + LED 9W Rạng Đông</div>
+            </div>
+            <div className="rounded border border-border/60 bg-background/60 p-2.5">
+              <div className="text-[11px] text-muted-foreground">Vật tư nội thất</div>
+              <div className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">An Cường, KUKA, Nhà Xinh</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

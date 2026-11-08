@@ -80,6 +80,11 @@ const AtelierSystemHealthRoute = lazy(() =>
     default: m.AtelierSystemHealthRoute,
   })),
 );
+const AtelierInventoryBOMPage = lazy(() =>
+  import("./features/atelier/AtelierInventoryBOMPage").then((m) => ({
+    default: m.AtelierInventoryBOMPage,
+  })),
+);
 const AtelierTelegramSettingsPage = lazy(() =>
   import("./features/atelier/AtelierTelegramSettingsPage").then((m) => ({
     default: m.AtelierTelegramSettingsPage,
@@ -488,6 +493,7 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="materials-catalog" element={<AtelierMaterialsCatalogRoute />} />
       <Route path="render-compare" element={<AtelierRenderCompareRoute />} />
       <Route path="cost-estimation" element={<AtelierCostEstimationRoute />} />
+      <Route path="inventory-bom" element={<AtelierInventoryBOMPage />} />
       <Route path="shopping-catalog" element={<AtelierShoppingCatalogRoute />} />
       <Route path="system-health" element={<AtelierSystemHealthRoute />} />
       <Route path="settings/telegram" element={<AtelierTelegramSettingsPage />} />
@@ -920,6 +926,7 @@ export function App() {
           <Route path="materials-catalog" element={<UnprefixedBoardRedirect />} />
           <Route path="render-compare" element={<UnprefixedBoardRedirect />} />
           <Route path="cost-estimation" element={<UnprefixedBoardRedirect />} />
+          <Route path="inventory-bom" element={<UnprefixedBoardRedirect />} />
           <Route path="shopping-catalog" element={<UnprefixedBoardRedirect />} />
           <Route path="system-health" element={<UnprefixedBoardRedirect />} />
           <Route path=":companyPrefix" element={streamlinedUiEnabled ? <Layout /> : <ProductionLayout />}>
