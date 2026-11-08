@@ -80,6 +80,11 @@ const AtelierSystemHealthRoute = lazy(() =>
     default: m.AtelierSystemHealthRoute,
   })),
 );
+const AtelierTelegramSettingsPage = lazy(() =>
+  import("./features/atelier/AtelierTelegramSettingsPage").then((m) => ({
+    default: m.AtelierTelegramSettingsPage,
+  })),
+);
 
 const AuthPage = lazy(() => import("./pages/Auth").then((module) => ({ default: module.AuthPage })));
 const BoardClaimPage = lazy(() => import("./pages/BoardClaim").then((module) => ({ default: module.BoardClaimPage })));
@@ -485,6 +490,8 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="cost-estimation" element={<AtelierCostEstimationRoute />} />
       <Route path="shopping-catalog" element={<AtelierShoppingCatalogRoute />} />
       <Route path="system-health" element={<AtelierSystemHealthRoute />} />
+      <Route path="settings/telegram" element={<AtelierTelegramSettingsPage />} />
+      <Route path="telegram" element={<AtelierTelegramSettingsPage />} />
       <Route path="instance/settings/adapters" element={<AdapterManager />} />
       <Route path=":pluginRoutePath/*" element={<PluginPage />} />
       <Route path="*" element={<NotFoundPage scope="board" />} />

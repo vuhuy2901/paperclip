@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Inbox, Boxes, ChevronRight, CircleCheck, FolderOpen, History, LayoutDashboard, MessageCircle, MoreHorizontal, Network, Pin, PinOff, Plus, Repeat, Search, Settings, SquarePen, Unplug, type LucideIcon } from "lucide-react";
+import { Inbox, Boxes, ChevronRight, CircleCheck, FolderOpen, History, LayoutDashboard, MessageCircle, MoreHorizontal, Network, Pin, PinOff, Plus, Repeat, Search, Settings, SquarePen, Unplug, Send, type LucideIcon } from "lucide-react";
 import type { Agent, Project } from "@paperclipai/shared";
 import { useCoordinatorAttentionCount } from "@/hooks/useCoordinatorAttentionCount";
 import { issuesApi } from "@/api/issues";
@@ -36,6 +36,7 @@ const moreDestinations = [
   { label: "Dự toán (BOQ)", to: "/cost-estimation", icon: Boxes },
   { label: "Danh mục mua sắm", to: "/shopping-catalog", icon: Boxes },
   { label: "Hạ tầng Local-Lite", to: "/system-health", icon: History },
+  { label: "Cài đặt Telegram", to: "/settings/telegram", icon: Send },
   { label: "Tìm kiếm", to: "/search", icon: Search },
   { label: "Tổng quan", to: "/dashboard", icon: LayoutDashboard },
   { label: "Dự án", to: "/projects", icon: FolderOpen },

@@ -31,6 +31,7 @@ import {
   Calculator,
   ShoppingBag,
   Activity,
+  Send,
   CheckCircle2,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -224,6 +225,7 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
           <SidebarNavItem to="/cost-estimation" label="Dự toán (BOQ)" icon={Calculator} />
           <SidebarNavItem to="/shopping-catalog" label="Danh mục mua sắm" icon={ShoppingBag} />
           <SidebarNavItem to="/system-health" label="Hạ tầng Local-Lite" icon={Activity} />
+          <SidebarNavItem to="/settings/telegram" label="Cài đặt Telegram" icon={Send} />
         </SidebarSection>
 
         <SidebarSection label="Điều phối & Công việc" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>

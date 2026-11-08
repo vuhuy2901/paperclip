@@ -980,7 +980,17 @@ export function atelierBridgeRoutes(db: Db) {
         .select()
         .from(companies)
         .where(eq(companies.id, boot.companyId));
-      const nextNum = (comp?.issueCounter ?? 6) + 1;
+
+      const existingIssues = await db
+        .select({ issueNumber: issues.issueNumber })
+        .from(issues)
+        .where(eq(issues.companyId, boot.companyId))
+        .orderBy(desc(issues.issueNumber))
+        .limit(1);
+
+      const maxExisting = existingIssues[0]?.issueNumber ?? 8;
+      const currentCounter = Math.max(comp?.issueCounter ?? 8, maxExisting);
+      const nextNum = currentCounter + 1;
       const identifier = `${boot.companyPrefix}-${nextNum}`;
 
       await db
