@@ -92,7 +92,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { IssuePropertiesPlansTab } from "./IssuePropertiesPlansTab";
 import { IssuePropertiesArtifactsTab } from "./IssuePropertiesArtifactsTab";
-import { User, ArrowUpRight, Plus, X, GitBranch, FolderOpen, HardDrive, Check, Clock, RotateCcw, Loader2, CheckCircle2, ArchiveRestore, ChevronLeft } from "lucide-react";
+import { User, ArrowUpRight, Plus, X, GitBranch, FolderOpen, HardDrive, Check, Clock, RotateCcw, Loader2, CheckCircle2, ArchiveRestore, ChevronLeft, Box } from "lucide-react";
 import { InlineEntitySelector, type InlineEntityOption } from "../InlineEntitySelector";
 import {
   AssigneeRunningBanner,
@@ -2361,6 +2361,22 @@ export function IssueProperties({
 
   const propertiesBody = (
     <div className={cn(streamlinedPropertiesEnabled && "task-detail-properties pl-4")}>
+            {/* ATELIER AI 3D Design Studio Link */}
+      <div className="mb-3 rounded-lg border border-teal-500/30 bg-teal-500/10 p-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-teal-800 dark:text-teal-200">
+            <Box className="h-4 w-4 text-teal-600" />
+            <span>Mô hình 3D & Bản vẽ 2D liên quan</span>
+          </div>
+          <Link
+            to={`/design-studio?issueId=${issue.id}&issueIdentifier=${issue.identifier}&agent=${encodeURIComponent(agentName(issue.assigneeAgentId ?? null) || "Chief Architect")}`}
+            className="inline-flex items-center gap-1 rounded bg-teal-700 px-2.5 py-1 text-[11px] font-medium text-white shadow-sm hover:bg-teal-800 transition-colors"
+          >
+            <span>Mở 3D Studio</span>
+            <ArrowUpRight className="h-3 w-3" />
+          </Link>
+        </div>
+      </div>
       <PropertySection
         title={streamlinedPropertiesEnabled ? "Work" : "Triage"}
         first

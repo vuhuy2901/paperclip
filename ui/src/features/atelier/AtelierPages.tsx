@@ -3,6 +3,7 @@ import { useNavigate } from "@/lib/router";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useAtelierStudio } from "./AtelierStudioContext";
+import { AIControlCenterView } from "./AIControlCenterView";
 import {
   FloorPlanImportPage,
   MaterialsAndCatalogPage,
@@ -636,6 +637,49 @@ export function AtelierSystemHealthRoute() {
       ) : (
         <div className="p-6 text-sm text-muted-foreground">Đang đo thông số hệ thống...</div>
       )}
+    </div>
+  );
+}
+
+export function AtelierControlCenterRoute() {
+  const { setBreadcrumbs } = useBreadcrumbs();
+  const {
+    workflows,
+    runs,
+    agents,
+    connections,
+    mcpTools,
+    handleRunWorkflow,
+    handleUpdateWorkflow,
+    handleUpdateAgent,
+    handleTestConnection,
+    handleSaveConnection,
+  } = useAtelierStudio();
+
+  useEffect(() => {
+    setBreadcrumbs([
+      { label: "Điều phối AI" },
+      { label: "Agent Control / Workflow (14 Nodes)" },
+    ]);
+  }, [setBreadcrumbs]);
+
+  return (
+    <div className="h-full w-full overflow-hidden flex flex-col bg-background">
+      <AIControlCenterView
+        workflows={workflows}
+        runs={runs}
+        agents={agents}
+        connections={connections}
+        mcpTools={mcpTools}
+        onRunWorkflow={handleRunWorkflow}
+        onUpdateWorkflow={handleUpdateWorkflow}
+        onUpdateAgent={handleUpdateAgent}
+        onTestConnection={handleTestConnection}
+        onSaveConnection={handleSaveConnection}
+        onAddConnection={handleSaveConnection}
+        onDeleteConnection={() => {}}
+        onResetWorkflow={handleRunWorkflow}
+      />
     </div>
   );
 }

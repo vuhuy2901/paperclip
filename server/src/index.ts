@@ -2248,10 +2248,17 @@ function isMainModule(metaUrl: string): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
   try {
-    return pathToFileURL(resolve(entry)).href === metaUrl;
+    if (pathToFileURL(resolve(entry)).href === metaUrl) return true;
   } catch {
-    return false;
+    // ignore
   }
+  return process.argv.slice(1).some((arg) => {
+    try {
+      return pathToFileURL(resolve(arg)).href === metaUrl;
+    } catch {
+      return false;
+    }
+  });
 }
 
 if (isMainModule(import.meta.url)) {

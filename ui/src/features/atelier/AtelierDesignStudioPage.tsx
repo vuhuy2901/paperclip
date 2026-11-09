@@ -50,8 +50,6 @@ export function AtelierDesignStudioPage() {
     setViewMode,
     cameraPreset,
     setCameraPreset,
-    lowSpecMode,
-    setLowSpecMode,
     busyMessage,
     handleMaterialChange,
     handleSendChat,
@@ -124,11 +122,37 @@ export function AtelierDesignStudioPage() {
     setPinModalOpen(false);
   };
 
+  const searchParams = new URLSearchParams(location.search);
+  const linkedIssueId = searchParams.get("issueId");
+  const linkedIssueIdentifier = searchParams.get("issueIdentifier");
+  const linkedAgent = searchParams.get("agent");
+
   return (
     <div
       className="atelier-surface-root flex h-full w-full flex-col overflow-hidden"
       data-theme={theme}
     >
+      {/* Linked Task Context Banner */}
+      {linkedIssueIdentifier && (
+        <div className="flex shrink-0 items-center justify-between border-b border-teal-500/30 bg-teal-500/10 px-3 py-1.5 text-xs text-teal-800 dark:text-teal-200">
+          <div className="flex items-center gap-2 font-medium">
+            <Sparkles className="size-3.5 text-teal-600 dark:text-teal-400" />
+            <span>
+              Đang mở không gian 3D liên kết với Công việc:{" "}
+              <strong className="underline underline-offset-2">{linkedIssueIdentifier}</strong>
+            </span>
+            {linkedAgent && <span className="opacity-80">({linkedAgent})</span>}
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/issues/${linkedIssueIdentifier}`)}
+            className="rounded bg-teal-600/20 px-2 py-0.5 text-[11px] font-semibold text-teal-900 hover:bg-teal-600/30 dark:text-teal-100"
+          >
+            Quay lại Công việc &rarr;
+          </button>
+        </div>
+      )}
+
       {/* Compact Studio Header inside Paperclip Workspace */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-3 text-xs">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -285,8 +309,6 @@ export function AtelierDesignStudioPage() {
                 setViewMode={setViewMode}
                 cameraPreset={cameraPreset}
                 setCameraPreset={setCameraPreset}
-                lowSpecMode={lowSpecMode}
-                setLowSpecMode={setLowSpecMode}
                 selectedEntityId={selectedEntityId}
                 setSelectedEntityId={setSelectedEntityId}
                 theme={theme}

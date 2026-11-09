@@ -19,7 +19,6 @@ interface StudioViewportProps {
   selectedEntityId: string | null
   onSelectEntity: (id: string | null) => void
   onMoveFurniture?: (furnId: string, newX: number, newY: number) => void
-  lowSpecMode?: boolean
   theme?: 'light' | 'dark'
   cameraResetTrigger?: number
   visibleLayers?: {
@@ -75,7 +74,6 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
     selectedEntityId,
     onSelectEntity,
     onMoveFurniture,
-    lowSpecMode = false,
     theme = 'light',
     cameraResetTrigger = 0,
     visibleLayers = {
@@ -130,7 +128,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
     // THREE.JS 3D PASCAL SCENE VIEWER (WITH RAYCAST SELECTION & HOVER OUTLINE)
     // ==========================================================================
     useEffect(() => {
-      if (viewMode === '2d' || lowSpecMode || !mountRef.current) return
+      if (viewMode === '2d' || !mountRef.current) return
       const container = mountRef.current
       const width = container.clientWidth || 720
       const height = container.clientHeight || 520
@@ -156,10 +154,10 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         camera.lookAt(cx, 0.8, cz)
       }
 
-      const renderer = new THREE.WebGLRenderer({ antialias: !lowSpecMode, preserveDrawingBuffer: true })
+      const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
       renderer.setSize(width, height)
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowSpecMode ? 1.0 : 1.75))
-      renderer.shadowMap.enabled = !lowSpecMode
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0))
+      renderer.shadowMap.enabled = true
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
       container.innerHTML = ''
       container.appendChild(renderer.domElement)
@@ -171,7 +169,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
 
       const dirLight = new THREE.DirectionalLight(0xfffdf8, 0.92)
       dirLight.position.set(6.5, 11, 7.5)
-      dirLight.castShadow = !lowSpecMode
+      dirLight.castShadow = true
       dirLight.shadow.mapSize.width = 1024
       dirLight.shadow.mapSize.height = 1024
       dirLight.shadow.bias = -0.0005
@@ -449,7 +447,6 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
       cameraPreset,
       selectedEntityId,
       hoveredEntityId,
-      lowSpecMode,
       theme,
       cameraResetTrigger,
       visibleLayers.grid,
@@ -475,7 +472,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         style={{
           flex: 1,
           display: 'grid',
-          gridTemplateColumns: viewMode === 'split' && !lowSpecMode ? '1fr 1fr' : '1fr',
+          gridTemplateColumns: viewMode === 'split' ? '1fr 1fr' : '1fr',
           width: '100%',
           height: '100%',
           overflow: 'hidden',
@@ -483,14 +480,14 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         }}
       >
         {/* 2D CAD Architectural Plan Canvas */}
-        {(viewMode === '2d' || viewMode === 'split' || lowSpecMode) && (
+        {(viewMode === '2d' || viewMode === 'split') && (
           <div
             style={{
               position: 'relative',
               width: '100%',
               height: '100%',
               background: theme === 'dark' ? '#111113' : '#FFFFFF',
-              borderRight: viewMode === 'split' && !lowSpecMode ? '1px solid var(--border-subtle)' : 'none',
+              borderRight: viewMode === 'split' ? '1px solid var(--border-subtle)' : 'none',
               display: 'flex',
               flexDirection: 'column',
             }}
@@ -714,7 +711,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         )}
 
         {/* 3D WebGL Pascal Viewer */}
-        {viewMode !== '2d' && !lowSpecMode && (
+        {viewMode !== '2d' && (
           <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 320 }} />
           </div>

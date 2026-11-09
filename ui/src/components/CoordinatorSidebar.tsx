@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Inbox, Boxes, ChevronRight, CircleCheck, FolderOpen, History, LayoutDashboard, MessageCircle, MoreHorizontal, Network, Pin, PinOff, Plus, Repeat, Search, Settings, SquarePen, Unplug, Send, type LucideIcon } from "lucide-react";
+import { Inbox, Boxes, ChevronRight, CircleCheck, FolderOpen, History, LayoutDashboard, MessageCircle, MoreHorizontal, Network, Pin, PinOff, Plus, Repeat, Search, Settings, SquarePen, Unplug, Send, Cpu, type LucideIcon } from "lucide-react";
 import type { Agent, Project } from "@paperclipai/shared";
 import { useCoordinatorAttentionCount } from "@/hooks/useCoordinatorAttentionCount";
 import { issuesApi } from "@/api/issues";
@@ -29,18 +29,19 @@ import { agentChatPinKey } from "./AgentChatPin";
 import { PinnedNavigationList, type PinnedNavigationItem } from "./PinnedNavigationList";
 
 const moreDestinations = [
-  { label: "Không gian 3D Studio", to: "/design-studio", icon: Boxes },
+  { label: "Không gian thiết kế 2D/3D", to: "/design-studio", icon: Boxes },
+  { label: "Vật liệu và hoàn thiện", to: "/materials-catalog", icon: Boxes },
+  { label: "Danh mục nội thất", to: "/inventory-bom", icon: Boxes },
+  { label: "Dự toán", to: "/cost-estimation", icon: Boxes },
+  { label: "Phối cảnh Render", to: "/render-compare", icon: Boxes },
+  { label: "Agent Control / Workflow", to: "/control-center", icon: Cpu },
   { label: "Nhập mặt bằng 2D", to: "/floorplan-import", icon: FolderOpen },
-  { label: "Vật liệu & Nội thất", to: "/materials-catalog", icon: Boxes },
-  { label: "Phối cảnh", to: "/render-compare", icon: Boxes },
-  { label: "Dự toán (BOQ)", to: "/cost-estimation", icon: Boxes },
-  { label: "Danh mục mua sắm", to: "/shopping-catalog", icon: Boxes },
+  { label: "Cài đặt / Telegram", to: "/settings/telegram", icon: Send },
   { label: "Hạ tầng Local-Lite", to: "/system-health", icon: History },
-  { label: "Cài đặt Telegram", to: "/settings/telegram", icon: Send },
   { label: "Tìm kiếm", to: "/search", icon: Search },
   { label: "Tổng quan", to: "/dashboard", icon: LayoutDashboard },
   { label: "Dự án", to: "/projects", icon: FolderOpen },
-  { label: "Chờ duyệt", to: "/approvals/pending", icon: CircleCheck },
+  { label: "Phê duyệt", to: "/approvals/pending", icon: CircleCheck },
   { label: "Lịch tự động", to: "/routines", icon: Repeat },
   { label: "Sản phẩm / Artifacts", to: "/artifacts", icon: Boxes },
   { label: "AI Agents", to: "/agents/all", icon: Network },
@@ -167,17 +168,16 @@ export function CoordinatorSidebar({ children }: { children?: ReactNode }) {
         {rail ? <Tooltip><TooltipTrigger asChild>{newTaskButton}</TooltipTrigger><TooltipContent side="right">New task</TooltipContent></Tooltip> : newTaskButton}
         <div className="design-sidebar-primary my-2">
           <SidebarNavItem className="design-sidebar-item" to="/dashboard" label="Tổng quan" icon={LayoutDashboard} />
-          <SidebarNavItem className="design-sidebar-item" to="/chats" label="Hội thoại / Chat" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" />
-          <SidebarNavItem className="design-sidebar-item" to="/design-studio" label="Không gian 2D/3D" icon={Boxes} textBadge="3D" />
-          <div className="group/coordinator-new relative">
-            <SidebarNavItem to="/issues" label="Công việc / Tasks" icon={CircleCheck} className={cn("design-sidebar-item", !rail && "pr-9")} />
-            {!rail && <button type="button" aria-label="New task" title="New task" onClick={() => openNewIssue()}
-              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity group-hover/coordinator-new:opacity-100 group-focus-within/coordinator-new:opacity-100 pointer-coarse:opacity-100 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring"><Plus className="size-4" /></button>}
-          </div>
-          <SidebarNavItem className="design-sidebar-item" to="/decisions" label="Hộp thư / Quyết định" icon={Inbox} badge={attentionCount} badgeLabel="decisions" />
-          <SidebarNavItem className="design-sidebar-item" to="/skills" label="Skills / Skill Studio" icon={Boxes} />
+          <SidebarNavItem className="design-sidebar-item" to="/chats" label="Conversations" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" />
+          <SidebarNavItem className="design-sidebar-item" to="/issues" label="Công việc" icon={CircleCheck} />
           <SidebarNavItem className="design-sidebar-item" to="/agents/all" label="AI Agents" icon={Network} />
-          <SidebarNavItem className="design-sidebar-item" to="/cost-estimation" label="Dự toán (BOQ)" icon={FolderOpen} />
+          <SidebarNavItem className="design-sidebar-item" to="/control-center" label="Agent Control / Workflow" icon={Cpu} textBadge="14 Nodes" />
+          <SidebarNavItem className="design-sidebar-item" to="/skills" label="Skills / Skill Studio" icon={Boxes} />
+          <SidebarNavItem className="design-sidebar-item" to="/apps" label="Kết nối AI / MCP" icon={Unplug} />
+          <SidebarNavItem className="design-sidebar-item" to="/design-studio" label="Không gian thiết kế 2D/3D" icon={Boxes} textBadge="3D" />
+          <SidebarNavItem className="design-sidebar-item" to="/materials-catalog" label="Vật liệu và hoàn thiện" icon={FolderOpen} />
+          <SidebarNavItem className="design-sidebar-item" to="/inventory-bom" label="Danh mục nội thất" icon={Boxes} />
+          <SidebarNavItem className="design-sidebar-item" to="/cost-estimation" label="Dự toán" icon={FolderOpen} />
         </div>
         <Flyout open={moreOpen} onOpenChange={setMoreOpen}>
           <FlyoutTrigger asChild><button type="button" aria-label="More workspace pages" className="design-sidebar-item flex w-auto items-center gap-2.5 rounded-lg py-1.5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring"><MoreHorizontal className="size-4 shrink-0" /><span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : undefined}>More</span></button></FlyoutTrigger>

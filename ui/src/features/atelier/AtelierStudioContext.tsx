@@ -41,8 +41,16 @@ interface AtelierStudioContextValue {
   setViewMode: (mode: "split" | "2d" | "3d") => void;
   cameraPreset: "orbit" | "top" | "walk" | "cutaway";
   setCameraPreset: (preset: "orbit" | "top" | "walk" | "cutaway") => void;
-  lowSpecMode: boolean;
-  setLowSpecMode: (val: boolean) => void;
+  workflows: any[];
+  runs: any[];
+  agents: any[];
+  connections: any[];
+  mcpTools: any[];
+  handleRunWorkflow: (wfId: string) => Promise<void>;
+  handleUpdateWorkflow: (wf: any) => Promise<void>;
+  handleUpdateAgent: (agent: any) => Promise<void>;
+  handleTestConnection: (connId: string) => Promise<void>;
+  handleSaveConnection: (conn: any) => Promise<void>;
   busyMessage: string | null;
   toast: string | null;
   showToast: (msg: string) => void;
@@ -103,7 +111,11 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   const [cameraPreset, setCameraPreset] = useState<"orbit" | "top" | "walk" | "cutaway">(
     "cutaway",
   );
-  const [lowSpecMode, setLowSpecMode] = useState<boolean>(false);
+  const [workflows, setWorkflows] = useState<any[]>([]);
+  const [runs, setRuns] = useState<any[]>([]);
+  const [agents, setAgents] = useState<any[]>([]);
+  const [connections, setConnections] = useState<any[]>([]);
+  const [mcpTools, setMcpTools] = useState<any[]>([]);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -115,7 +127,7 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   const refreshProjectBundle = useCallback(
     async (pid: string = activeProjectId) => {
       try {
-        const [projRes, estRes, chatRes, revRes, listRes, pinsRes] =
+        const [projRes, estRes, chatRes, revRes, listRes, pinsRes, wfRes, runsRes, agRes, connRes, mcpRes] =
           await Promise.all([
             fetch(`${API_BASE}/projects/${pid}`),
             fetch(`${API_BASE}/projects/${pid}/estimates`),
@@ -123,6 +135,11 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
             fetch(`${API_BASE}/projects/${pid}/revisions`),
             fetch(`${API_BASE}/projects`),
             fetch(`/api/atelier/pins/${pid}`),
+            fetch(`${API_BASE}/workflows`),
+            fetch(`${API_BASE}/runs`),
+            fetch(`${API_BASE}/agents`),
+            fetch(`${API_BASE}/connections`),
+            fetch(`${API_BASE}/mcp/tools`),
           ]);
         if (projRes.ok) setProject(await projRes.json());
         if (estRes.ok) setEstimate(await estRes.json());
@@ -139,6 +156,11 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
           const pinsJson = await pinsRes.json();
           setPins(pinsJson.pins || []);
         }
+        if (wfRes.ok) setWorkflows(await wfRes.json());
+        if (runsRes.ok) setRuns(await runsRes.json());
+        if (agRes.ok) setAgents(await agRes.json());
+        if (connRes.ok) setConnections(await connRes.json());
+        if (mcpRes.ok) setMcpTools(await mcpRes.json());
       } catch {
         // retry silently when sidecar wakes
       }
@@ -454,6 +476,117 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
     [activeProjectId, refreshProjectBundle, showToast],
   );
 
+  const handleRunWorkflow = useCallback(
+    async (wfId: string) => {
+      setBusyMessage("Đang thực thi luồng 14 Node Multi-Agent...");
+      try {
+        const res = await fetch(
+          `${API_BASE}/workflows/${wfId}/runs?project_id=${activeProjectId}`,
+          { method: "POST" },
+        );
+        if (res.ok) {
+          const runsRes = await fetch(`${API_BASE}/runs`);
+          if (runsRes.ok) setRuns(await runsRes.json());
+          await refreshProjectBundle(activeProjectId);
+          showToast("Đã thực thi luồng 14 Node Multi-Agent thành công!");
+        }
+      } finally {
+        setBusyMessage(null);
+      }
+    },
+    [activeProjectId, refreshProjectBundle, showToast],
+  );
+
+  const handleUpdateWorkflow = useCallback(
+    async (wf: any) => {
+      setBusyMessage("Đang cập nhật cấu hình quy trình...");
+      try {
+        const res = await fetch(`${API_BASE}/workflows/${wf.workflow_id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(wf),
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setWorkflows((prev) =>
+            prev.map((w) => (w.workflow_id === updated.workflow_id ? updated : w)),
+          );
+          showToast("Đã lưu cấu hình luồng Multi-Agent!");
+        }
+      } finally {
+        setBusyMessage(null);
+      }
+    },
+    [showToast],
+  );
+
+  const handleUpdateAgent = useCallback(
+    async (agent: any) => {
+      setBusyMessage("Đang cập nhật thuộc tính Agent...");
+      try {
+        const res = await fetch(`${API_BASE}/agents/${agent.agent_id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(agent),
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setAgents((prev) =>
+            prev.map((a) => (a.agent_id === updated.agent_id ? updated : a)),
+          );
+          showToast(`Đã lưu cấu hình Tác tử: ${updated.name}`);
+        }
+      } finally {
+        setBusyMessage(null);
+      }
+    },
+    [showToast],
+  );
+
+  const handleTestConnection = useCallback(
+    async (connId: string) => {
+      setBusyMessage("Đang kiểm tra kết nối...");
+      try {
+        const res = await fetch(`${API_BASE}/connections/${connId}/test`, {
+          method: "POST",
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setConnections((prev) =>
+            prev.map((c) => (c.connection_id === connId ? updated : c)),
+          );
+          showToast(`Kiểm tra kết nối ${updated.name}: ${updated.status} (${updated.latency_ms}ms)`);
+        }
+      } finally {
+        setBusyMessage(null);
+      }
+    },
+    [showToast],
+  );
+
+  const handleSaveConnection = useCallback(
+    async (conn: any) => {
+      setBusyMessage("Đang lưu kết nối...");
+      try {
+        const res = await fetch(`${API_BASE}/connections/${conn.connection_id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(conn),
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setConnections((prev) =>
+            prev.map((c) => (c.connection_id === updated.connection_id ? updated : c)),
+          );
+          showToast(`Đã lưu thông số kết nối ${updated.name}`);
+        }
+      } finally {
+        setBusyMessage(null);
+      }
+    },
+    [showToast],
+  );
+
   const value = useMemo(
     () => ({
       projects,
@@ -472,8 +605,16 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       setViewMode,
       cameraPreset,
       setCameraPreset,
-      lowSpecMode,
-      setLowSpecMode,
+      workflows,
+      runs,
+      agents,
+      connections,
+      mcpTools,
+      handleRunWorkflow,
+      handleUpdateWorkflow,
+      handleUpdateAgent,
+      handleTestConnection,
+      handleSaveConnection,
       busyMessage,
       toast,
       showToast,
@@ -502,7 +643,16 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       selectedEntityId,
       viewMode,
       cameraPreset,
-      lowSpecMode,
+      workflows,
+      runs,
+      agents,
+      connections,
+      mcpTools,
+      handleRunWorkflow,
+      handleUpdateWorkflow,
+      handleUpdateAgent,
+      handleTestConnection,
+      handleSaveConnection,
       busyMessage,
       toast,
       showToast,

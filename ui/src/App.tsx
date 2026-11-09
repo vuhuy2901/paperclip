@@ -80,6 +80,11 @@ const AtelierSystemHealthRoute = lazy(() =>
     default: m.AtelierSystemHealthRoute,
   })),
 );
+const AtelierControlCenterRoute = lazy(() =>
+  import("./features/atelier/AtelierPages").then((m) => ({
+    default: m.AtelierControlCenterRoute,
+  })),
+);
 const AtelierInventoryBOMPage = lazy(() =>
   import("./features/atelier/AtelierInventoryBOMPage").then((m) => ({
     default: m.AtelierInventoryBOMPage,
@@ -495,6 +500,8 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="cost-estimation" element={<AtelierCostEstimationRoute />} />
       <Route path="inventory-bom" element={<AtelierInventoryBOMPage />} />
       <Route path="shopping-catalog" element={<AtelierShoppingCatalogRoute />} />
+      <Route path="control-center" element={<AtelierControlCenterRoute />} />
+      <Route path="workflows" element={<AtelierControlCenterRoute />} />
       <Route path="system-health" element={<AtelierSystemHealthRoute />} />
       <Route path="settings/telegram" element={<AtelierTelegramSettingsPage />} />
       <Route path="telegram" element={<AtelierTelegramSettingsPage />} />

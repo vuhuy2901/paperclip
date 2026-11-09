@@ -790,14 +790,10 @@ export const CostEstimationPage: React.FC<{
 // ============================================================================
 export const AIConnectionsSettingsPage: React.FC<{
   connections: any[]
-  lowSpecMode: boolean
-  onToggleLowSpec: () => void
   onTestConnection: (connId: string) => void
   onSaveConnectionKey: (connId: string, key: string) => void
 }> = ({
   connections,
-  lowSpecMode,
-  onToggleLowSpec,
   onTestConnection,
   onSaveConnectionKey,
 }) => {
@@ -812,10 +808,6 @@ export const AIConnectionsSettingsPage: React.FC<{
             Quản lý kết nối đến Pascal 3D MCP Server, Gemini/OpenAI API, CLI Subprocess và Ollama. Toàn bộ khóa bí mật đều được che bảo mật (<code className="mono">REDACTED</code>).
           </p>
         </div>
-
-        <button className={`btn ${lowSpecMode ? 'btn-primary' : ''}`} onClick={onToggleLowSpec}>
-          {lowSpecMode ? '✓ Đang bật: Chế độ Máy Yếu (2D-First)' : 'Bật Chế độ Máy Yếu (Low-Spec GPU)'}
-        </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 14 }}>

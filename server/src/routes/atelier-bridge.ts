@@ -20,6 +20,7 @@ import {
 } from "@paperclipai/db";
 import { catalogSkills } from "@paperclipai/skills-catalog";
 import fs from "node:fs/promises";
+import { Readable } from "node:stream";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAPERCLIP_ROOT = path.resolve(__dirname, "../../..");
@@ -126,6 +127,9 @@ const ATELIER_SPECIALIST_AGENTS = [
       "design-review-approval",
       "room-dimension-validation",
     ],
+    allowedTools: ["Tasks", "Conversations", "Approvals", "Đọc SceneGraph"],
+    forbiddenTools: ["Ghi trực tiếp Pascal SceneGraph", "Tự tìm giá / tính giá"],
+    tokenLimit: 8000,
   },
   {
     key: "agent_floorplan",
@@ -136,6 +140,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Đọc bản vẽ PDF/PNG/JPG/DXF, nhận diện tường/cửa đi/cửa sổ, kiểm tra đơn vị mm và mức độ tin cậy tỷ lệ (Scale Gate).",
     skills: ["floorplan-understanding", "room-dimension-validation"],
+    allowedTools: ["Parser DXF/PDF/ảnh", "Computer Vision (CV)", "Semantic VLM"],
+    forbiddenTools: ["Ghi trực tiếp Pascal SceneGraph"],
+    tokenLimit: 6000,
   },
   {
     key: "agent_geometry",
@@ -146,6 +153,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Tạo và kiểm tra tường, cửa, sàn, trần trong Pascal SceneGraph qua MCP Gateway; xuất hồ sơ kỹ thuật DXF R2007, GLB 3D, IFC4 theo đúng đơn vị mm.",
     skills: ["pascal-scene-editing", "room-dimension-validation", "cad-dxf-ifc-export"],
+    allowedTools: ["Pascal SceneGraph Write (tường, sàn, trần, cửa)", "CAD Exporters (DXF, GLB, IFC4)"],
+    forbiddenTools: ["Đặt nội thất rời", "Đổi vật liệu hoàn thiện"],
+    tokenLimit: 6000,
   },
   {
     key: "agent_furniture",
@@ -156,6 +166,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Bố trí mặt bằng nội thất Phương án A/B, kiểm tra khoảng cách lối đi thông thủy (>=600mm), vùng mở cửa và phát hiện va chạm bounding-box.",
     skills: ["interior-layout-planning", "pascal-scene-editing", "furniture-product-matching"],
+    allowedTools: ["Pascal đặt nội thất", "Kiểm tra va chạm & lối đi (Clearance)"],
+    forbiddenTools: ["Đổi sơn tường, gạch nền, cấu trúc kiến trúc"],
+    tokenLimit: 6000,
   },
   {
     key: "agent_style",
@@ -166,6 +179,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Tư vấn bảng màu sơn tường (Dulux/Jotun), tường điểm nhấn (Accent Wall), gạch ốp lát & sàn gỗ (An Cường, Eurotile, Đồng Tâm) phù hợp ngân sách.",
     skills: ["materials-and-finishes", "interior-design-consultation"],
+    allowedTools: ["Đọc cảnh", "Skills tham chiếu", "Bảng màu 60/30/10"],
+    forbiddenTools: ["Ghi Pascal trực tiếp", "Tự báo giá sản phẩm"],
+    tokenLimit: 4000,
   },
   {
     key: "agent_render",
@@ -176,6 +192,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Thiết lập góc máy camera kiến trúc (Cutaway, Góc phối cảnh, Nhìn từ trên, Góc nhìn người 1.55m), tạo ảnh phối cảnh tham khảo và đối chiếu tính nhất quán với Scene 3D.",
     skills: ["rendering-review", "pascal-scene-editing"],
+    allowedTools: ["Pascal Viewport Screenshot / Depth Map", "API tạo ảnh", "Blender MCP Engine"],
+    forbiddenTools: ["Sửa đổi hình học cảnh 3D", "Thay đổi vị trí nội thất"],
+    tokenLimit: 8000,
   },
   {
     key: "agent_cost",
@@ -186,6 +205,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Bóc tách khối lượng từ hình học mm và tính dự toán BOQ bằng công thức xác định (làm tròn thùng sơn/hộp gạch, hao hụt, nhân công, vận chuyển, VAT 8%); không dùng LLM tự đoán giá.",
     skills: ["quantity-takeoff", "vietnam-cost-estimation"],
+    allowedTools: ["Đọc SceneGraph", "Đọc bảng Inventory", "Ghi bảng Cost", "Deterministic Math Engine"],
+    forbiddenTools: ["Ghi Pascal SceneGraph", "Dùng LLM tự đoán giá"],
+    tokenLimit: 4000,
   },
   {
     key: "agent_shopping",
@@ -196,6 +218,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Tìm kiếm sản phẩm từ catalog nhà cung cấp Việt Nam theo phân khúc giá Thấp/Trung/Cao, kiểm tra lọt lòng cửa đi (Doorway Fit-Check) và đề xuất thay thế.",
     skills: ["furniture-product-matching", "vietnam-cost-estimation"],
+    allowedTools: ["Web search", "Fetch trang", "Catalog Matcher", "Doorway Fit-Check"],
+    forbiddenTools: ["Ghi Pascal SceneGraph", "Tự tạo đơn hàng", "Tạo liên kết giả"],
+    tokenLimit: 4000,
   },
   {
     key: "agent_ceiling_lighting",
@@ -206,6 +231,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Thiết kế hệ trần thạch cao Vĩnh Tường phẳng/giật cấp hắt sáng, bố trí đèn LED Downlight Rạng Đông, đèn thả, đèn ray nam châm theo công năng phòng.",
     skills: ["ceiling-and-lighting-design", "pascal-scene-editing"],
+    allowedTools: ["Pascal đặt đèn/trần", "Công cụ tính độ rọi Lux"],
+    forbiddenTools: ["Chọn sản phẩm nội thất rời", "Sửa đổi tường chịu lực"],
+    tokenLimit: 4000,
   },
   {
     key: "agent_material",
@@ -216,6 +244,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Tư vấn và đối soát mẫu vật liệu hoàn thiện sàn, tường, gỗ công nghiệp An Cường, gạch Eurotile Sa Thạch, đá mài Terrazzo Đồng Tâm.",
     skills: ["materials-and-finishes", "product-material-research"],
+    allowedTools: ["Đọc SceneGraph", "Skills tham chiếu vật liệu", "Tra cứu Catalog Spec"],
+    forbiddenTools: ["Ghi Pascal trực tiếp", "Tự định giá sản phẩm"],
+    tokenLimit: 4000,
   },
   {
     key: "agent_research",
@@ -226,6 +257,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Tìm kiếm sản phẩm thực tế từ các nhà cung cấp Việt Nam, trích xuất kích thước, xuất xứ, link tham khảo và trạng thái giá (không bịa giá).",
     skills: ["product-material-research", "furniture-product-matching"],
+    allowedTools: ["Web search", "Fetch / Scrape trang web", "Catalog Verification"],
+    forbiddenTools: ["Ghi Pascal SceneGraph", "Tự tạo đơn đặt hàng"],
+    tokenLimit: 6000,
   },
   {
     key: "agent_inventory",
@@ -236,6 +270,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Trích xuất và quản lý danh mục toàn bộ vật tư, thiết bị, đồ rời từ Pascal SceneGraph, đồng bộ trạng thái duyệt và xuất bảng BOM hoàn chỉnh.",
     skills: ["design-inventory-bom", "quantity-takeoff"],
+    allowedTools: ["Đọc SceneGraph", "Ghi bảng Inventory / BOM", "Export CSV/Excel"],
+    forbiddenTools: ["Ghi trực tiếp Pascal SceneGraph", "Sửa hình học cảnh"],
+    tokenLimit: 4000,
   },
   {
     key: "agent_qa",
@@ -246,6 +283,9 @@ const ATELIER_SPECIALIST_AGENTS = [
     capabilities:
       "Kiểm tra tự động khoảng cách thông thủy >=750mm, va chạm đồ nội thất, góc mở cửa và tính toàn vẹn của mô hình 3D Pascal.",
     skills: ["room-dimension-validation", "design-review-approval"],
+    allowedTools: ["Chỉ đọc (READ-ONLY) toàn bộ hệ thống: SceneGraph, Brief, Cost, BOM, Render"],
+    forbiddenTools: ["Bất kỳ lệnh ghi (WRITE) nào vào cảnh, database hay dự toán"],
+    tokenLimit: 6000,
   },
 ] as const;
 
@@ -306,6 +346,28 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
         if (found) {
           agentIdsByKey[spec.key] = found.id;
           if (spec.key === "agent_concierge") chiefArchitectId = found.id;
+          await db
+            .update(agents)
+            .set({
+              capabilities: spec.capabilities,
+              permissions: {
+                requireProposalApprovalForSceneWrite: true,
+                allowedSkillSlugs: [...spec.skills],
+                allowedTools: [...spec.allowedTools],
+                forbiddenTools: [...spec.forbiddenTools],
+              },
+              metadata: {
+                ...((found.metadata as Record<string, unknown>) || {}),
+                atelierAgentKey: spec.key,
+                assignedSkills: [...spec.skills],
+                domain: "interior-design",
+                allowedTools: [...spec.allowedTools],
+                forbiddenTools: [...spec.forbiddenTools],
+                tokenLimit: spec.tokenLimit,
+              },
+              updatedAt: new Date(),
+            })
+            .where(eq(agents.id, found.id));
           continue;
         }
 
@@ -335,11 +397,16 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
             permissions: {
               requireProposalApprovalForSceneWrite: true,
               allowedSkillSlugs: [...spec.skills],
+              allowedTools: [...spec.allowedTools],
+              forbiddenTools: [...spec.forbiddenTools],
             },
             metadata: {
               atelierAgentKey: spec.key,
               assignedSkills: [...spec.skills],
               domain: "interior-design",
+              allowedTools: [...spec.allowedTools],
+              forbiddenTools: [...spec.forbiddenTools],
+              tokenLimit: spec.tokenLimit,
             },
           })
           .returning();
@@ -1155,11 +1222,11 @@ export function atelierBridgeRoutes(db: Db) {
   });
 
   // ============================================================================
-  // 5. TRANSPARENT PROXY & BIDIRECTIONAL SYNC FOR `/api/v1/*`
+  // 5. TRANSPARENT PROXY & BIDIRECTIONAL SYNC FOR `/api/v1/*` & `/api/atelier/*`
   // Connects ATELIER AI 2D/3D Studio, Floor Plan, Cost Engine, Catalog & CAD Exports
   // directly to Paperclip's PostgreSQL Control Plane (Conversations, Tasks, Approvals, Activity)
   // ============================================================================
-  router.use("/v1", async (req: Request, res: Response) => {
+  const proxyHandler = async (req: Request, res: Response) => {
     const ready = await ensurePythonCadSidecarOnDemand();
     if (!ready) {
       res.status(503).json({
@@ -1168,7 +1235,12 @@ export function atelierBridgeRoutes(db: Db) {
       return;
     }
 
-    const targetUrl = `${PYTHON_API_URL}/api/v1${req.url}`;
+    const subPath = req.url.startsWith("/v1")
+      ? req.url.slice(3)
+      : req.url.startsWith("/api/v1")
+        ? req.url.slice(7)
+        : req.url;
+    const targetUrl = `${PYTHON_API_URL}/api/v1${subPath.startsWith("/") ? subPath : `/${subPath}`}`;
     try {
       const headers: Record<string, string> = {};
       for (const [key, val] of Object.entries(req.headers)) {
@@ -1220,15 +1292,28 @@ export function atelierBridgeRoutes(db: Db) {
         }
       });
 
-      const arrayBuf = await upstream.arrayBuffer();
-      res.send(Buffer.from(arrayBuf));
+      const acceptHeader = String(req.headers.accept || "");
+      const isSse = acceptHeader.includes("text/event-stream") || upstream.headers.get("content-type")?.includes("text/event-stream");
+
+      if (isSse && upstream.body) {
+        // @ts-ignore
+        const nodeReadable = Readable.fromWeb(upstream.body);
+        nodeReadable.pipe(res);
+      } else {
+        const arrayBuf = await upstream.arrayBuffer();
+        res.send(Buffer.from(arrayBuf));
+      }
     } catch (error) {
       res.status(502).json({
         error: "Failed to reach ATELIER CAD/BOQ sidecar",
         detail: error instanceof Error ? error.message : String(error),
       });
     }
-  });
+  };
+
+  router.use("/v1", proxyHandler);
+  router.use("/atelier/v1", proxyHandler);
+  router.use("/atelier/cad", proxyHandler);
 
   return router;
 }

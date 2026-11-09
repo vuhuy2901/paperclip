@@ -34,6 +34,7 @@ import {
   Send,
   CheckCircle2,
   ClipboardList,
+  Cpu,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -186,33 +187,12 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
           })()}
           <SidebarNavItem to="/search" label="Tìm kiếm" icon={Search} />
           <SidebarNavItem to="/dashboard" label="Tổng quan" icon={LayoutDashboard} liveCount={liveRunCount} />
-          {!combinedInboxTasks ? (
-            <SidebarNavItem
-              to="/inbox"
-              label="Hộp thư"
-              icon={Inbox}
-              badge={inboxBadge.inbox}
-              badgeLabel="unread"
-              badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
-              alert={inboxBadge.failedRuns > 0}
-            />
-          ) : null}
-          {agentChatEnabled && !chatRail ? <SidebarNavItem to="/chats" label="Hội thoại / Chat" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" /> : null}
-          {showDecisions ? (
-            <SidebarNavItem
-              to="/decisions"
-              label="Quyết định"
-              icon={ListChecks}
-              badge={attentionCount}
-              badgeLabel="decisions"
-            />
-          ) : null}
-          {showStatusCards ? (
-            <SidebarNavItem to="/status" label="Trạng thái" icon={LayoutGrid} textBadge="beta" />
-          ) : null}
-          {conferenceRoomChatEnabled ? (
-            <SidebarNavItem to="/board-chat" label="Phòng họp" icon={MessagesSquare} />
-          ) : null}
+          {agentChatEnabled && !chatRail ? <SidebarNavItem to="/chats" label="Conversations" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" /> : null}
+          <SidebarNavItem to="/issues" label="Công việc" icon={CircleCheck} />
+          <SidebarNavItem to="/agents" label="AI Agents" icon={Users} />
+          <SidebarNavItem to="/control-center" label="Agent Control / Workflow" icon={Cpu} textBadge="14 Nodes" />
+          <SidebarNavItem to="/skills" label="Skills / Skill Studio" icon={Boxes} />
+          <SidebarNavItem to="/apps" label="Kết nối AI / MCP" icon={Unplug} />
         </div>
 
         <SidebarSection
@@ -220,17 +200,18 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
           collapsible={{ open: atelierOpen, onOpenChange: setAtelierOpen }}
         >
           <SidebarNavItem to="/design-studio" label="Không gian thiết kế 2D/3D" icon={Box} textBadge="3D" />
+          <SidebarNavItem to="/materials-catalog" label="Vật liệu và hoàn thiện" icon={Palette} />
+          <SidebarNavItem to="/inventory-bom" label="Danh mục nội thất" icon={ClipboardList} />
+          <SidebarNavItem to="/cost-estimation" label="Dự toán" icon={Calculator} />
+          <SidebarNavItem to="/render-compare" label="Phối cảnh Render" icon={Camera} />
           <SidebarNavItem to="/floorplan-import" label="Nhập mặt bằng 2D" icon={FileUp} />
-          <SidebarNavItem to="/render-compare" label="Phối cảnh" icon={Camera} />
-          <SidebarNavItem to="/materials-catalog" label="Vật liệu & Nội thất" icon={Palette} />
-          <SidebarNavItem to="/cost-estimation" label="Dự toán (BOQ)" icon={Calculator} />
-          <SidebarNavItem to="/inventory-bom" label="Danh mục vật tư (BOM)" icon={ClipboardList} />
           <SidebarNavItem to="/shopping-catalog" label="Danh mục mua sắm" icon={ShoppingBag} />
-          <SidebarNavItem to="/system-health" label="Hạ tầng Local-Lite" icon={Activity} />
-          <SidebarNavItem to="/settings/telegram" label="Cài đặt Telegram" icon={Send} />
         </SidebarSection>
 
-        <SidebarSection label="Điều phối & Công việc" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
+        <SidebarSection label="Điều phối & Hệ thống" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
+          <SidebarNavItem to="/approvals/pending" label="Phê duyệt" icon={CheckCircle2} />
+          <SidebarNavItem to="/settings/telegram" label="Cài đặt / Telegram" icon={Send} />
+          <SidebarNavItem to="/system-health" label="Hạ tầng Local-Lite" icon={Activity} />
           {chatRail ? (
             <SidebarNavItem to="/chats" label="Hội thoại / Chat" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" />
           ) : null}
