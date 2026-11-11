@@ -576,6 +576,102 @@ export async function ensureCodexSkillsInjected(
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
+  const configuredModelRaw = asString(ctx.config.model, "").trim();
+  if (configuredModelRaw === "antigravity-ide-bridge") {
+    const { runId, agent, config, context, onLog, onMeta } = ctx;
+    const wakeTaskId =
+      (typeof context.taskId === "string" && context.taskId.trim()) ||
+      (typeof context.issueId === "string" && context.issueId.trim()) ||
+      "";
+    const wakeCommentId =
+      (typeof context.wakeCommentId === "string" && context.wakeCommentId.trim()) ||
+      (typeof context.commentId === "string" && context.commentId.trim()) ||
+      "";
+    const { taskContextNote, wakePrompt } = selectPaperclipPromptSections(context, {
+      resumedSession: false,
+      includeCommunicationGuidance: false,
+    });
+    const bridgeApiUrl = process.env.ATELIER_PYTHON_CAD_API_URL || "http://127.0.0.1:8000";
+    await onLog(
+      "stdout",
+      `[paperclip] Routing turn to Antigravity IDE Reverse Bridge (Zero API Cost) at ${bridgeApiUrl}/api/v1/bridge/paperclip-enqueue\n`,
+    );
+    if (onMeta) {
+      await onMeta({
+        adapterType: "codex_local",
+        command: "antigravity-ide-bridge",
+        cwd: process.cwd(),
+        commandNotes: ["Zero API Cost Reverse Bridge to local Antigravity IDE Agent"],
+        commandArgs: ["--issue-id", wakeTaskId, "--comment-id", wakeCommentId],
+        env: {},
+        prompt: wakePrompt || taskContextNote,
+        promptMetrics: {
+          promptChars: (wakePrompt || taskContextNote).length,
+          instructionsChars: 0,
+          bootstrapPromptChars: 0,
+          wakePromptChars: wakePrompt.length,
+          sessionHandoffChars: 0,
+          taskContextChars: taskContextNote.length,
+          heartbeatPromptChars: 0,
+        },
+        context,
+      });
+    }
+    let bridgeSummary =
+      "⚡ **[Cầu nối Antigravity IDE — $0.00 API Cost]**: Đã chuyển yêu cầu của bạn thẳng về **Antigravity IDE Agent** đang mở. Agent trong IDE có thể kiểm tra qua `python scripts/ide_bridge.py list` và phản hồi trực tiếp kèm mô hình 3D / BOQ vào khung chat này!";
+    let taskIdCreated = "";
+    try {
+      const enqueueRes = await fetch(`${bridgeApiUrl}/api/v1/bridge/paperclip-enqueue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          run_id: runId,
+          company_id: agent.companyId,
+          agent_id: agent.id,
+          agent_name: agent.name,
+          atelier_agent_key: asString(config.atelierAgentKey, "agent_concierge"),
+          issue_id: wakeTaskId,
+          comment_id: wakeCommentId,
+          wake_prompt: wakePrompt || taskContextNote,
+        }),
+      });
+      if (enqueueRes.ok) {
+        const data = (await enqueueRes.json()) as {
+          task_id?: string;
+          immediate_reply?: string;
+        };
+        taskIdCreated = data.task_id ?? "";
+        if (data.immediate_reply) {
+          bridgeSummary = data.immediate_reply;
+        }
+      }
+    } catch (err) {
+      await onLog("stderr", `[paperclip] IDE Bridge enqueue warning: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+    return {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      usageComplete: true,
+      usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+      usageBasis: "per_run",
+      sessionId: `ide-bridge-${agent.id}`,
+      sessionParams: { sessionId: `ide-bridge-${agent.id}`, cwd: process.cwd() },
+      sessionDisplayId: `ide-bridge-${agent.id}`,
+      provider: "openai",
+      biller: "chatgpt",
+      model: "antigravity-ide-bridge",
+      billingType: "subscription",
+      costUsd: 0,
+      resultJson: {
+        stdout: JSON.stringify({ type: "agent_message", task_id: taskIdCreated, text: bridgeSummary }),
+        stderr: "",
+        ideBridgeTaskId: taskIdCreated,
+      },
+      summary: bridgeSummary,
+    };
+  }
+
   const providerStop = createProviderStoppedBoundary(ctx.onProviderStopped);
   const engineSelection = await resolveCodexExecutionEngineForRun(ctx);
   if (engineSelection.unavailableReason) {

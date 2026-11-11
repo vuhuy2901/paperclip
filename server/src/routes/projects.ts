@@ -56,6 +56,7 @@ import { appendWithCap } from "../adapters/utils.js";
 import { assertEnvironmentSelectionForCompany } from "./environment-selection.js";
 import { environmentService } from "../services/environments.js";
 import { secretService } from "../services/secrets.js";
+import { ATELIER_COMPANY_ID, ensureAtelierProjectWorkflow } from "../services/atelier-workflow-orchestration.js";
 
 const WORKSPACE_CONTROL_OUTPUT_MAX_CHARS = 256 * 1024;
 const SHARED_WORKSPACE_STOP_AND_RESTART_ACTIONS = new Set(["stop", "restart"]);
@@ -488,6 +489,16 @@ export function projectRoutes(db: Db) {
       return { project: hydrated ?? project, publication: activity.publication, duplicate: false };
     });
     if (!result) { res.status(204).end(); return; }
+    if (result.project.companyId === ATELIER_COMPANY_ID) {
+      try {
+        await ensureAtelierProjectWorkflow(db, { companyId: result.project.companyId, projectId: result.project.id });
+      } catch (error) {
+        // Project creation remains idempotent and recoverable; the explicit
+        // Atelier reconcile/backfill endpoint will repair a transient agent or
+        // migration dependency without dispatching work.
+        console.warn("[atelier-workflow] project provisioning deferred:", error);
+      }
+    }
     if (result.publication) publishActivity(result.publication);
     if (result.project.env) await secretsSvc.syncEnvBindingsForTarget?.(companyId, { targetType: "project", targetId: result.project.id }, result.project.env);
     if (result.duplicate) { res.status(200).json(result.project); return; }

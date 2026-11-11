@@ -85,6 +85,11 @@ const AtelierControlCenterRoute = lazy(() =>
     default: m.AtelierControlCenterRoute,
   })),
 );
+const AtelierProjectWorkflowRoute = lazy(() =>
+  import("./features/atelier/AtelierPages").then((m) => ({
+    default: m.AtelierProjectWorkflowRoute,
+  })),
+);
 const AtelierInventoryBOMPage = lazy(() =>
   import("./features/atelier/AtelierInventoryBOMPage").then((m) => ({
     default: m.AtelierInventoryBOMPage,
@@ -502,6 +507,7 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="shopping-catalog" element={<AtelierShoppingCatalogRoute />} />
       <Route path="control-center" element={<AtelierControlCenterRoute />} />
       <Route path="workflows" element={<AtelierControlCenterRoute />} />
+      <Route path="projects/:projectId/workflow" element={<AtelierProjectWorkflowRoute />} />
       <Route path="system-health" element={<AtelierSystemHealthRoute />} />
       <Route path="settings/telegram" element={<AtelierTelegramSettingsPage />} />
       <Route path="telegram" element={<AtelierTelegramSettingsPage />} />
@@ -921,6 +927,9 @@ export function App() {
           <Route path="projects/:projectId/workspaces" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/workspaces/:workspaceId" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/configuration" element={<UnprefixedBoardRedirect />} />
+          <Route path="control-center" element={<UnprefixedBoardRedirect />} />
+          <Route path="workflows" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/workflow" element={<UnprefixedBoardRedirect />} />
           <Route path="workspaces" element={<UnprefixedBoardRedirect />} />
           <Route path="execution-workspaces/:workspaceId" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/services" element={<UnprefixedExecutionWorkspaceRedirect />} />

@@ -42,6 +42,7 @@ export function resolveCodexLocalCliPolicy(config: unknown, options: { networkAc
 }
 
 export const CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS = [
+  "antigravity-ide-bridge",
   "gpt-6-astra",
   "gpt-6.1-sol",
   "gpt-6-sol",
@@ -220,6 +221,7 @@ export function isCodexLocalFastModeSupported(model: string | null | undefined):
 // then by decreasing capability inside each version, older models at the end. The server
 // returns this list as written and the model dropdown keeps its order.
 export const models = [
+  { id: "antigravity-ide-bridge", label: "Antigravity IDE Bridge (Zero-Cost)" },
   { id: "gpt-6.1-sol", label: "gpt-6.1-sol" },
   { id: "gpt-6-astra", label: "gpt-6-astra" },
   { id: "gpt-6-sol", label: "gpt-6-sol" },

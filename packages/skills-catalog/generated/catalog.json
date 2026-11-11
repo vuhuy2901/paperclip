@@ -1761,6 +1761,254 @@
         }
       ],
       "contentHash": "sha256:4732ec12a5a4e85d2c513c68210775e25406077d42a2c8144129cfd41dc1d7fe"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:aesthetic-moodboard-and-styling",
+      "key": "paperclipai/bundled/interior-design/aesthetic-moodboard-and-styling",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "aesthetic-moodboard-and-styling",
+      "name": "aesthetic-moodboard-and-styling",
+      "description": "Định hình concept thẩm mỹ, xây dựng bảng màu kiến trúc chuẩn tỷ lệ vàng 60-30-10, moodboard phong cách sống và nghệ thuật bài trí decor.",
+      "path": "catalog/bundled/interior-design/aesthetic-moodboard-and-styling",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "architect"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "aesthetics",
+        "moodboard",
+        "styling",
+        "color-harmony"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3287,
+          "sha256": "08aa6532be359a1ea96938271e927640cd2e37ec5e97a7afa961b39dbf0acbd5"
+        }
+      ],
+      "contentHash": "sha256:08aa6532be359a1ea96938271e927640cd2e37ec5e97a7afa961b39dbf0acbd5"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:luxury-materials-and-tactile-textures",
+      "key": "paperclipai/bundled/interior-design/luxury-materials-and-tactile-textures",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "luxury-materials-and-tactile-textures",
+      "name": "luxury-materials-and-tactile-textures",
+      "description": "Tuyển chọn bề mặt xúc giác và vật liệu cao cấp (đá marble, gỗ óc chó tự nhiên, kính gân fluted, kim loại PVD, vải bouclé/linen) kết hợp map PBR chân thực.",
+      "path": "catalog/bundled/interior-design/luxury-materials-and-tactile-textures",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "material-specialist"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "materials",
+        "luxury",
+        "pbr-textures",
+        "tactile"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3575,
+          "sha256": "080cbad3c8567454e832e68664a58f9ca188fb224c2f450f970edf3228ef8f75"
+        }
+      ],
+      "contentHash": "sha256:080cbad3c8567454e832e68664a58f9ca188fb224c2f450f970edf3228ef8f75"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:architectural-lighting-mastery",
+      "key": "paperclipai/bundled/interior-design/architectural-lighting-mastery",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "architectural-lighting-mastery",
+      "name": "architectural-lighting-mastery",
+      "description": "Thiết kế chiếu sáng kiến trúc chuyên sâu 3 lớp (Ambient, Task, Accent), kịch bản chiếu sáng thông minh, đèn ray nam châm, hắt khe trần cove led, CRI > 95.",
+      "path": "catalog/bundled/interior-design/architectural-lighting-mastery",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "lighting-specialist"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "lighting",
+        "architectural-lighting",
+        "ambient-light",
+        "cri-95"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3977,
+          "sha256": "b02ee5cecc82b8cccd49fb4f50c1b4e4e9dead2b165a90e169d4dfdeb111cd69"
+        }
+      ],
+      "contentHash": "sha256:b02ee5cecc82b8cccd49fb4f50c1b4e4e9dead2b165a90e169d4dfdeb111cd69"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:ergonomics-and-circulation-optimization",
+      "key": "paperclipai/bundled/interior-design/ergonomics-and-circulation-optimization",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "ergonomics-and-circulation-optimization",
+      "name": "ergonomics-and-circulation-optimization",
+      "description": "Tối ưu hóa nhân trắc học và luồng giao thông thông thủy theo tiêu chuẩn Neufert và TCVN, khoảng cách công thái học và an toàn sử dụng.",
+      "path": "catalog/bundled/interior-design/ergonomics-and-circulation-optimization",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "architect",
+        "qa-auditor"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "ergonomics",
+        "circulation",
+        "clearance",
+        "neufert"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3638,
+          "sha256": "7dc5c2e7596efd70d16bcac5bebe02c7914c43bc22e6f40784846e5c16418155"
+        }
+      ],
+      "contentHash": "sha256:7dc5c2e7596efd70d16bcac5bebe02c7914c43bc22e6f40784846e5c16418155"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:biophilic-indoor-landscape",
+      "key": "paperclipai/bundled/interior-design/biophilic-indoor-landscape",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "biophilic-indoor-landscape",
+      "name": "biophilic-indoor-landscape",
+      "description": "Tích hợp kiến trúc xanh nội thất, cây xanh phong thủy thanh lọc không khí trong nhà, vi khí hậu và tối ưu hóa đối lưu ánh sáng tự nhiên.",
+      "path": "catalog/bundled/interior-design/biophilic-indoor-landscape",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "landscape-consultant"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "biophilic",
+        "indoor-plants",
+        "air-purification",
+        "nature"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3391,
+          "sha256": "c64471904ae809e96ea69329778e8c33f124cd2135a9ba27d7a1b788b303eb00"
+        }
+      ],
+      "contentHash": "sha256:c64471904ae809e96ea69329778e8c33f124cd2135a9ba27d7a1b788b303eb00"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:bespoke-millwork-and-joinery",
+      "key": "paperclipai/bundled/interior-design/bespoke-millwork-and-joinery",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "bespoke-millwork-and-joinery",
+      "name": "bespoke-millwork-and-joinery",
+      "description": "Thiết kế đồ mộc may đo liền tường tinh xảo, hệ tủ kịch trần, vách ốp composite lam sóng, giải pháp giấu ray và phụ kiện thông minh Hafele/Blum.",
+      "path": "catalog/bundled/interior-design/bespoke-millwork-and-joinery",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "bim-specialist",
+        "wood-engineer"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "millwork",
+        "joinery",
+        "custom-cabinets",
+        "an-cuong"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3691,
+          "sha256": "1a330bec40f65c1423863b33fd0e92de2712a9f2b24208fb23b7f91aea75f0c6"
+        }
+      ],
+      "contentHash": "sha256:1a330bec40f65c1423863b33fd0e92de2712a9f2b24208fb23b7f91aea75f0c6"
+    },
+    {
+      "id": "paperclipai:bundled:interior-design:cinematic-rendering-and-composition",
+      "key": "paperclipai/bundled/interior-design/cinematic-rendering-and-composition",
+      "kind": "bundled",
+      "category": "interior-design",
+      "slug": "cinematic-rendering-and-composition",
+      "name": "cinematic-rendering-and-composition",
+      "description": "Thiết lập phối cảnh góc nhìn điện ảnh và kết xuất quang học chân thực Blender Cycles (bố cục 1/3, tiêu cự 35-50mm, DoF f/4-f/5.6, HDRI Studio Loft).",
+      "path": "catalog/bundled/interior-design/cinematic-rendering-and-composition",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": true,
+      "recommendedForRoles": [
+        "designer",
+        "3d-artist",
+        "render-engineer"
+      ],
+      "requires": [],
+      "tags": [
+        "interior-design",
+        "rendering",
+        "blender-cycles",
+        "cinematography",
+        "composition"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3866,
+          "sha256": "a877214d6e9831ef2a3b0491bc073be7ffc8590c3f157f06f2703936dc3c26be"
+        }
+      ],
+      "contentHash": "sha256:a877214d6e9831ef2a3b0491bc073be7ffc8590c3f157f06f2703936dc3c26be"
     }
   ]
 }

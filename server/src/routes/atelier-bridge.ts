@@ -1,12 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Router, type Request, type Response } from "express";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   type Db,
+  atelierWorkflowRuns,
   activityLog,
+  agentWakeupRequests,
   agents,
   approvals,
   companies,
@@ -14,10 +17,41 @@ import {
   goals,
   heartbeatRuns,
   issueComments,
+  issueRecoveryActions,
   issues,
   issueWorkProducts,
   projects,
 } from "@paperclipai/db";
+import { insertIssueComment } from "../services/issue-comment-writes.js";
+import { accessService, issueService, projectService } from "../services/index.js";
+import { persistActivity, publishActivity } from "../services/activity-log.js";
+import { conflict, forbidden, unprocessable } from "../errors.js";
+import { assertBoard, assertBoardOrAgent, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
+import { issueRecoveryActionService } from "../services/issue-recovery-actions.js";
+import { agentInstructionsService } from "../services/agent-instructions.js";
+import {
+  ATELIER_WORKFLOW_STAGES,
+  assertAtelierHandoffAllowed,
+  atelierHandoffTargets,
+  reconcileAtelierAgentWorkflow,
+  type AtelierAgentKey,
+  type AtelierWorkflowSummary,
+} from "../services/atelier-agent-workflow.js";
+import {
+  ATELIER_CLARIFICATION_CAPABILITY,
+  ATELIER_CLARIFICATION_POLICY_VERSION,
+  assessAtelierBrief,
+  buildAtelierAgentInstructions,
+} from "../services/atelier-clarification-policy.js";
+import {
+  ATELIER_COMPANY_ID,
+  atelierCanonicalWorkflowDefinition,
+  acceptAtelierStageHandoff,
+  backfillAtelierCompanyProjects,
+  ensureAtelierCompanyWorkflowDefinition,
+  ensureAtelierProjectWorkflow,
+  getAtelierProjectWorkflowView,
+} from "../services/atelier-workflow-orchestration.js";
 import { catalogSkills } from "@paperclipai/skills-catalog";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -53,6 +87,42 @@ export interface SpatialPinFeedback {
 
 const projectPinsStore = new Map<string, SpatialPinFeedback[]>();
 
+function substantiveProjectBrief(rawBrief: unknown, confirmStart: unknown) {
+  const brief = typeof rawBrief === "string" ? rawBrief.trim().replace(/\s+/g, " ") : "";
+  if (!brief) throw unprocessable("Hãy mô tả dự án nội thất trước khi tạo Project");
+  const normalized = brief.toLocaleLowerCase("vi");
+  const greetingOnly = /^(xin chào|chào|hello|hi|hey|alo|cảm ơn|thanks)[.!? ]*$/iu.test(normalized);
+  const projectSignals = /(thiết kế|căn hộ|nhà phố|biệt thự|phòng khách|phòng ngủ|bếp|văn phòng|nội thất|mặt bằng|m²|m2|ngân sách|phong cách)/iu.test(brief);
+  if (greetingOnly || (confirmStart !== true && (brief.length < 24 || !projectSignals))) {
+    throw unprocessable("Brief chưa đủ để tạo dự án. Hãy mô tả loại không gian, nhu cầu hoặc xác nhận bắt đầu dự án.");
+  }
+  return brief;
+}
+
+function projectNameFromBrief(brief: string) {
+  const kind = brief.match(/(căn hộ|nhà phố|biệt thự|văn phòng|studio|phòng khách|phòng ngủ|phòng bếp|phòng tắm)/iu)?.[1];
+  const style = brief.match(/phong cách\s+([\p{L}\d][\p{L}\d -]{1,30}?)(?=[,.;]|\s+(?:với|cho|ngân sách|diện tích)|$)/iu)?.[1]?.trim();
+  const area = brief.match(/\b(\d+(?:[.,]\d+)?)\s*(m²|m2)\b/iu);
+  const pieces = [kind, style, area ? `${area[1]} m²` : null].filter((value): value is string => Boolean(value));
+  if (pieces.length >= 2) return pieces.map((value, index) => index === 0 ? value.charAt(0).toLocaleUpperCase("vi") + value.slice(1) : value).join(" ").slice(0, 120);
+  const fallback = brief.replace(/^(tôi muốn|hãy|vui lòng|thiết kế)\s+/iu, "").split(/\s+/).slice(0, 10).join(" ");
+  return (fallback.charAt(0).toLocaleUpperCase("vi") + fallback.slice(1)).slice(0, 120);
+}
+
+function hasConfiguredInstructionsBundle(adapterConfig: Record<string, unknown>) {
+  return Boolean(
+    adapterConfig.instructionsBundleMode ||
+    adapterConfig.instructionsRootPath ||
+    adapterConfig.instructionsEntryFile ||
+    adapterConfig.instructionsFilePath ||
+    adapterConfig.agentsMdPath,
+  );
+}
+
+function atelierCapabilitiesWithDecisionGate(capabilities: string) {
+  return `${capabilities}\n\n${ATELIER_CLARIFICATION_CAPABILITY}`;
+}
+
 export interface AtelierBootstrapSummary {
   companyId: string;
   companyPrefix: string;
@@ -61,6 +131,7 @@ export interface AtelierBootstrapSummary {
   agentIdsByKey: Record<string, string>;
   installedSkillCount: number;
   conversationIssueId: string;
+  workflow: AtelierWorkflowSummary;
 }
 
 async function isPythonSidecarHealthy(): Promise<boolean> {
@@ -121,11 +192,13 @@ const ATELIER_SPECIALIST_AGENTS = [
     title: "Kiến Trúc Sư Trưởng & Điều Phối Đa Agent",
     icon: "compass",
     capabilities:
-      "Hội thoại trung tâm với chủ nhà, lắng nghe nhu cầu, hỏi làm rõ khi thiếu tỷ lệ/kích thước, quản trị DesignBrief, điều phối 7 Agent chuyên môn và tổng hợp phương án A/B trình duyệt.",
+      "Hội thoại trung tâm với chủ nhà, lắng nghe nhu cầu, hỏi làm rõ khi thiếu tỷ lệ/kích thước, quản trị DesignBrief, điều phối 8 Agent chuyên môn chủ đạo và tổng hợp phương án A/B trình duyệt.",
     skills: [
       "interior-design-consultation",
       "design-review-approval",
       "room-dimension-validation",
+      "aesthetic-moodboard-and-styling",
+      "ergonomics-and-circulation-optimization",
     ],
     allowedTools: ["Tasks", "Conversations", "Approvals", "Đọc SceneGraph"],
     forbiddenTools: ["Ghi trực tiếp Pascal SceneGraph", "Tự tìm giá / tính giá"],
@@ -152,7 +225,12 @@ const ATELIER_SPECIALIST_AGENTS = [
     icon: "box",
     capabilities:
       "Tạo và kiểm tra tường, cửa, sàn, trần trong Pascal SceneGraph qua MCP Gateway; xuất hồ sơ kỹ thuật DXF R2007, GLB 3D, IFC4 theo đúng đơn vị mm.",
-    skills: ["pascal-scene-editing", "room-dimension-validation", "cad-dxf-ifc-export"],
+    skills: [
+      "pascal-scene-editing",
+      "room-dimension-validation",
+      "cad-dxf-ifc-export",
+      "bespoke-millwork-and-joinery",
+    ],
     allowedTools: ["Pascal SceneGraph Write (tường, sàn, trần, cửa)", "CAD Exporters (DXF, GLB, IFC4)"],
     forbiddenTools: ["Đặt nội thất rời", "Đổi vật liệu hoàn thiện"],
     tokenLimit: 6000,
@@ -165,114 +243,83 @@ const ATELIER_SPECIALIST_AGENTS = [
     icon: "layout",
     capabilities:
       "Bố trí mặt bằng nội thất Phương án A/B, kiểm tra khoảng cách lối đi thông thủy (>=600mm), vùng mở cửa và phát hiện va chạm bounding-box.",
-    skills: ["interior-layout-planning", "pascal-scene-editing", "furniture-product-matching"],
+    skills: [
+      "interior-layout-planning",
+      "pascal-scene-editing",
+      "furniture-product-matching",
+      "ergonomics-and-circulation-optimization",
+      "biophilic-indoor-landscape",
+      "bespoke-millwork-and-joinery",
+    ],
     allowedTools: ["Pascal đặt nội thất", "Kiểm tra va chạm & lối đi (Clearance)"],
     forbiddenTools: ["Đổi sơn tường, gạch nền, cấu trúc kiến trúc"],
     tokenLimit: 6000,
   },
   {
     key: "agent_style",
-    name: "Style & Material Consultant",
+    name: "Style & Materials Consultant",
     role: "designer",
-    title: "Chuyên Gia Phong Cách & Vật Liệu Bề Mặt (Mục 7B)",
+    title: "Chuyên Gia Phong Cách, Vật Liệu & Hoàn Thiện",
     icon: "palette",
     capabilities:
-      "Tư vấn bảng màu sơn tường (Dulux/Jotun), tường điểm nhấn (Accent Wall), gạch ốp lát & sàn gỗ (An Cường, Eurotile, Đồng Tâm) phù hợp ngân sách.",
-    skills: ["materials-and-finishes", "interior-design-consultation"],
-    allowedTools: ["Đọc cảnh", "Skills tham chiếu", "Bảng màu 60/30/10"],
-    forbiddenTools: ["Ghi Pascal trực tiếp", "Tự báo giá sản phẩm"],
-    tokenLimit: 4000,
-  },
-  {
-    key: "agent_render",
-    name: "Rendering Specialist",
-    role: "designer",
-    title: "Chuyên Gia Ánh Sáng & Phối Cảnh 3D",
-    icon: "camera",
-    capabilities:
-      "Thiết lập góc máy camera kiến trúc (Cutaway, Góc phối cảnh, Nhìn từ trên, Góc nhìn người 1.55m), tạo ảnh phối cảnh tham khảo và đối chiếu tính nhất quán với Scene 3D.",
-    skills: ["rendering-review", "pascal-scene-editing"],
-    allowedTools: ["Pascal Viewport Screenshot / Depth Map", "API tạo ảnh", "Blender MCP Engine"],
-    forbiddenTools: ["Sửa đổi hình học cảnh 3D", "Thay đổi vị trí nội thất"],
-    tokenLimit: 8000,
-  },
-  {
-    key: "agent_cost",
-    name: "Cost Estimator",
-    role: "finance",
-    title: "Chuyên Gia Dự Toán Khối Lượng BOQ Xác Định",
-    icon: "calculator",
-    capabilities:
-      "Bóc tách khối lượng từ hình học mm và tính dự toán BOQ bằng công thức xác định (làm tròn thùng sơn/hộp gạch, hao hụt, nhân công, vận chuyển, VAT 8%); không dùng LLM tự đoán giá.",
-    skills: ["quantity-takeoff", "vietnam-cost-estimation"],
-    allowedTools: ["Đọc SceneGraph", "Đọc bảng Inventory", "Ghi bảng Cost", "Deterministic Math Engine"],
-    forbiddenTools: ["Ghi Pascal SceneGraph", "Dùng LLM tự đoán giá"],
-    tokenLimit: 4000,
-  },
-  {
-    key: "agent_shopping",
-    name: "Shopping Researcher",
-    role: "researcher",
-    title: "Chuyên Gia Catalog & Nguồn Hàng Nội Thất Việt Nam",
-    icon: "shopping-bag",
-    capabilities:
-      "Tìm kiếm sản phẩm từ catalog nhà cung cấp Việt Nam theo phân khúc giá Thấp/Trung/Cao, kiểm tra lọt lòng cửa đi (Doorway Fit-Check) và đề xuất thay thế.",
-    skills: ["furniture-product-matching", "vietnam-cost-estimation"],
-    allowedTools: ["Web search", "Fetch trang", "Catalog Matcher", "Doorway Fit-Check"],
-    forbiddenTools: ["Ghi Pascal SceneGraph", "Tự tạo đơn hàng", "Tạo liên kết giả"],
-    tokenLimit: 4000,
-  },
-  {
-    key: "agent_ceiling_lighting",
-    name: "Ceiling & Lighting Specialist",
-    role: "engineer",
-    title: "Chuyên Gia Trần & Chiếu Sáng Kiến Trúc",
-    icon: "sun",
-    capabilities:
-      "Thiết kế hệ trần thạch cao Vĩnh Tường phẳng/giật cấp hắt sáng, bố trí đèn LED Downlight Rạng Đông, đèn thả, đèn ray nam châm theo công năng phòng.",
-    skills: ["ceiling-and-lighting-design", "pascal-scene-editing"],
-    allowedTools: ["Pascal đặt đèn/trần", "Công cụ tính độ rọi Lux"],
-    forbiddenTools: ["Chọn sản phẩm nội thất rời", "Sửa đổi tường chịu lực"],
-    tokenLimit: 4000,
-  },
-  {
-    key: "agent_material",
-    name: "Material Consultant",
-    role: "designer",
-    title: "Chuyên Gia Khảo Sát & Thẩm Định Vật Liệu",
-    icon: "layers",
-    capabilities:
-      "Tư vấn và đối soát mẫu vật liệu hoàn thiện sàn, tường, gỗ công nghiệp An Cường, gạch Eurotile Sa Thạch, đá mài Terrazzo Đồng Tâm.",
-    skills: ["materials-and-finishes", "product-material-research"],
-    allowedTools: ["Đọc SceneGraph", "Skills tham chiếu vật liệu", "Tra cứu Catalog Spec"],
+      "Định hướng phong cách và bảng màu; tư vấn, đối soát mẫu sơn, gạch, sàn, gỗ, đá và vật liệu hoàn thiện theo catalog/spec thực tế, phù hợp ngân sách mà không tự bịa giá.",
+    skills: [
+      "materials-and-finishes",
+      "interior-design-consultation",
+      "product-material-research",
+      "aesthetic-moodboard-and-styling",
+      "luxury-materials-and-tactile-textures",
+      "biophilic-indoor-landscape",
+    ],
+    allowedTools: ["Đọc SceneGraph", "Skills tham chiếu vật liệu", "Bảng màu 60/30/10", "Tra cứu Catalog Spec"],
     forbiddenTools: ["Ghi Pascal trực tiếp", "Tự định giá sản phẩm"],
-    tokenLimit: 4000,
-  },
-  {
-    key: "agent_research",
-    name: "Product & Market Researcher",
-    role: "researcher",
-    title: "Chuyên Gia Nghiên Cứu & Xác Minh Sản Phẩm Thực Tế",
-    icon: "search",
-    capabilities:
-      "Tìm kiếm sản phẩm thực tế từ các nhà cung cấp Việt Nam, trích xuất kích thước, xuất xứ, link tham khảo và trạng thái giá (không bịa giá).",
-    skills: ["product-material-research", "furniture-product-matching"],
-    allowedTools: ["Web search", "Fetch / Scrape trang web", "Catalog Verification"],
-    forbiddenTools: ["Ghi Pascal SceneGraph", "Tự tạo đơn đặt hàng"],
     tokenLimit: 6000,
   },
   {
-    key: "agent_inventory",
-    name: "Design Inventory & BOM Manager",
+    key: "agent_cost",
+    name: "Cost, BOM & Inventory Manager",
     role: "finance",
-    title: "Chuyên Gia Quản Lý Bóc Tách & Danh Mục Vật Tư",
-    icon: "clipboard-list",
+    title: "Chuyên Gia Danh Mục, Bóc Tách & Dự Toán BOQ",
+    icon: "calculator",
     capabilities:
-      "Trích xuất và quản lý danh mục toàn bộ vật tư, thiết bị, đồ rời từ Pascal SceneGraph, đồng bộ trạng thái duyệt và xuất bảng BOM hoàn chỉnh.",
-    skills: ["design-inventory-bom", "quantity-takeoff"],
-    allowedTools: ["Đọc SceneGraph", "Ghi bảng Inventory / BOM", "Export CSV/Excel"],
-    forbiddenTools: ["Ghi trực tiếp Pascal SceneGraph", "Sửa hình học cảnh"],
-    tokenLimit: 4000,
+      "Quản lý danh mục vật tư, thiết bị và đồ rời từ SceneGraph; xuất BOM/CSV/Excel, bóc tách khối lượng và tính BOQ xác định gồm hao hụt, nhân công, vận chuyển và VAT; không dùng LLM tự đoán giá.",
+    skills: ["design-inventory-bom", "quantity-takeoff", "vietnam-cost-estimation"],
+    allowedTools: ["Đọc SceneGraph", "Ghi bảng Inventory / BOM", "Export CSV/Excel", "Ghi bảng Cost", "Deterministic Math Engine"],
+    forbiddenTools: ["Ghi Pascal SceneGraph", "Dùng LLM tự đoán giá"],
+    tokenLimit: 6000,
+  },
+  {
+    key: "agent_ceiling_lighting",
+    name: "Lighting & Visualization Specialist",
+    role: "engineer",
+    title: "Chuyên Gia Trần, Chiếu Sáng & Phối Cảnh 3D",
+    icon: "sun",
+    capabilities:
+      "Thiết kế trần và chiếu sáng theo công năng, tính độ rọi; thiết lập camera kiến trúc, Cutaway, Top View và góc nhìn người để tạo phối cảnh, ảnh tham khảo và kiểm tra nhất quán với Scene 3D.",
+    skills: [
+      "ceiling-and-lighting-design",
+      "rendering-review",
+      "pascal-scene-editing",
+      "architectural-lighting-mastery",
+      "cinematic-rendering-and-composition",
+      "blender-mcp-rendering",
+    ],
+    allowedTools: ["Pascal đặt đèn/trần", "Công cụ tính độ rọi Lux", "Pascal Viewport Screenshot / Depth Map", "API tạo ảnh", "Blender MCP Engine"],
+    forbiddenTools: ["Sửa đổi tường chịu lực", "Thay đổi vị trí nội thất"],
+    tokenLimit: 8000,
+  },
+  {
+    key: "agent_research",
+    name: "Product & Sourcing Researcher",
+    role: "researcher",
+    title: "Chuyên Gia Nghiên Cứu Sản Phẩm, Catalog & Nguồn Hàng",
+    icon: "search",
+    capabilities:
+      "Tìm và xác minh sản phẩm thực tế từ nhà cung cấp Việt Nam theo phân khúc; trích xuất kích thước, xuất xứ, link và trạng thái giá, đối chiếu catalog, kiểm tra Doorway Fit và đề xuất thay thế mà không tạo liên kết giả.",
+    skills: ["product-material-research", "furniture-product-matching", "vietnam-cost-estimation"],
+    allowedTools: ["Web search", "Fetch / Scrape trang web", "Catalog Verification", "Catalog Matcher", "Doorway Fit-Check"],
+    forbiddenTools: ["Ghi Pascal SceneGraph", "Tự tạo đơn đặt hàng", "Tạo liên kết giả"],
+    tokenLimit: 7000,
   },
   {
     key: "agent_qa",
@@ -282,7 +329,11 @@ const ATELIER_SPECIALIST_AGENTS = [
     icon: "shield-check",
     capabilities:
       "Kiểm tra tự động khoảng cách thông thủy >=750mm, va chạm đồ nội thất, góc mở cửa và tính toàn vẹn của mô hình 3D Pascal.",
-    skills: ["room-dimension-validation", "design-review-approval"],
+    skills: [
+      "room-dimension-validation",
+      "design-review-approval",
+      "ergonomics-and-circulation-optimization",
+    ],
     allowedTools: ["Chỉ đọc (READ-ONLY) toàn bộ hệ thống: SceneGraph, Brief, Cost, BOM, Render"],
     forbiddenTools: ["Bất kỳ lệnh ghi (WRITE) nào vào cảnh, database hay dự toán"],
     tokenLimit: 6000,
@@ -328,7 +379,7 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
 
       const companyId = company.id;
 
-      // 2. Ensure all 8 ATELIER AI Specialist Agents exist in Paperclip's `agents` table
+      // 2. Ensure the 9-agent ATELIER AI roster exists in Paperclip's `agents` table
       const existingAgents = await db
         .select()
         .from(agents)
@@ -349,7 +400,7 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
           await db
             .update(agents)
             .set({
-              capabilities: spec.capabilities,
+              capabilities: atelierCapabilitiesWithDecisionGate(spec.capabilities),
               permissions: {
                 requireProposalApprovalForSceneWrite: true,
                 allowedSkillSlugs: [...spec.skills],
@@ -382,10 +433,10 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
             status: "idle",
             lifecycleState: "ready",
             reportsTo: spec.key === "agent_concierge" ? null : chiefArchitectId,
-            capabilities: spec.capabilities,
+            capabilities: atelierCapabilitiesWithDecisionGate(spec.capabilities),
             adapterType: "http",
             adapterConfig: {
-              endpoint: `${PYTHON_API_URL}/api/v1/projects/proj_demo_4x5m/chat/messages`,
+              endpoint: `${PYTHON_API_URL}/api/v1/chat/messages`,
               mode: "lean_or_team",
               atelierAgentKey: spec.key,
             },
@@ -413,6 +464,52 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
 
         agentIdsByKey[spec.key] = inserted!.id;
         if (spec.key === "agent_concierge") chiefArchitectId = inserted!.id;
+      }
+
+      const instructionService = agentInstructionsService(db);
+      const rosterAgentIds = Object.values(agentIdsByKey);
+      const rosterAgents = await db.select().from(agents).where(and(
+        eq(agents.companyId, companyId),
+        inArray(agents.id, rosterAgentIds),
+      ));
+      for (const agent of rosterAgents) {
+        const agentKey = (agent.metadata as Record<string, unknown> | null)?.atelierAgentKey;
+        const spec = ATELIER_SPECIALIST_AGENTS.find((candidate) => candidate.key === agentKey);
+        if (!spec) continue;
+        const adapterConfig = (agent.adapterConfig as Record<string, unknown> | null) ?? {};
+        const priorPolicy = (agent.metadata as Record<string, unknown> | null)?.atelierClarificationPolicy as
+          | { version?: number; instructionStatus?: string }
+          | undefined;
+        let nextAdapterConfig = adapterConfig;
+        let instructionStatus = priorPolicy?.version === ATELIER_CLARIFICATION_POLICY_VERSION
+          ? "installed"
+          : "existing_bundle_preserved";
+        if (!hasConfiguredInstructionsBundle(adapterConfig)) {
+          const materialized = await instructionService.materializeManagedBundle(
+            agent,
+            {
+              "AGENTS.md": buildAtelierAgentInstructions({
+                agentKey: spec.key,
+                agentName: spec.name,
+                roleSummary: spec.capabilities,
+              }),
+            },
+            { entryFile: "AGENTS.md", replaceExisting: false },
+          );
+          nextAdapterConfig = materialized.adapterConfig;
+          instructionStatus = "installed";
+        }
+        await db.update(agents).set({
+          adapterConfig: nextAdapterConfig,
+          metadata: {
+            ...((agent.metadata as Record<string, unknown> | null) ?? {}),
+            atelierClarificationPolicy: {
+              version: ATELIER_CLARIFICATION_POLICY_VERSION,
+              instructionStatus,
+            },
+          },
+          updatedAt: new Date(),
+        }).where(and(eq(agents.companyId, companyId), eq(agents.id, agent.id)));
       }
 
       // 3. Install the 12 Bundled Interior Design Skills into `company_skills`
@@ -690,6 +787,14 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
         }
       }
 
+      const workflow = await reconcileAtelierAgentWorkflow(db, {
+        companyId,
+        projectId: project.id,
+        goalId: goal.id,
+        chiefAgentId: chiefArchitectId ?? "",
+        agentIdsByKey,
+      });
+
       // 6. Seed an initial Approval record in Paperclip's `approvals` table if empty
       const existingApprovals = await db
         .select()
@@ -725,6 +830,7 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
         agentIdsByKey,
         installedSkillCount,
         conversationIssueId: conversationIssue?.id ?? "",
+        workflow,
       };
     } finally {
       bootstrapPromise = null;
@@ -736,6 +842,33 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
 
 export function atelierBridgeRoutes(db: Db) {
   const router = Router();
+  const access = accessService(db);
+  const projectsSvc = projectService(db);
+
+  async function accessibleAtelierProject(req: Request, res: Response, projectId: string) {
+    const project = await getAccessibleResource(req, res, projectsSvc.getById(projectId), "Project not found");
+    if (!project) return null;
+    const decision = await access.decide({
+      actor: req.actor,
+      action: "project:read",
+      resource: { type: "project", companyId: project.companyId, projectId: project.id },
+    });
+    if (!decision.allowed) {
+      res.status(404).json({ error: "Project not found" });
+      return null;
+    }
+    return project;
+  }
+
+  async function pascalProjectWorkspace(projectId: string) {
+    if (!(await ensurePythonCadSidecarOnDemand())) throw new Error("Pascal sidecar is unavailable");
+    const response = await fetch(`${PYTHON_API_URL}/api/v1/native-projects/${encodeURIComponent(projectId)}/workspace`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({})) as { detail?: string };
+      throw new Error(payload.detail || `Pascal workspace request failed (${response.status})`);
+    }
+    return response.json() as Promise<Record<string, unknown>>;
+  }
 
   // Trigger non-blocking bootstrap & Python sidecar check when server starts
   setTimeout(() => {
@@ -763,6 +896,450 @@ export function atelierBridgeRoutes(db: Db) {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  });
+
+  router.get("/atelier/workflow", async (req, res) => {
+    assertBoardOrAgent(req);
+    const requestedProjectId = typeof req.query.project_id === "string" ? req.query.project_id.trim() : "";
+    if (requestedProjectId) {
+      const project = await db.select({ id: projects.id, companyId: projects.companyId }).from(projects).where(eq(projects.id, requestedProjectId)).then((rows) => rows[0] ?? null);
+      if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+      assertCompanyAccess(req, project.companyId);
+      const view = await getAtelierProjectWorkflowView(db, project.companyId, project.id);
+      res.json({ ok: true, company_id: project.companyId, project_id: project.id, run: view.run, root_issue: view.rootIssue, stages: view.stages });
+      return;
+    }
+    const boot = await ensureAtelierPaperclipBootstrap(db);
+    assertCompanyAccess(req, boot.companyId);
+    const stageIssueIds = boot.workflow.stages.map((stage) => stage.issueId);
+    const stageIssues = stageIssueIds.length > 0
+      ? await db.select().from(issues).where(and(
+          eq(issues.companyId, boot.companyId),
+          inArray(issues.id, stageIssueIds),
+        ))
+      : [];
+    const issueById = new Map(stageIssues.map((issue) => [issue.id, issue]));
+    res.json({
+      ok: true,
+      version: boot.workflow.version,
+      company_id: boot.companyId,
+      project_id: boot.projectId,
+      root_issue_id: boot.workflow.rootIssueId,
+      nodes: ATELIER_WORKFLOW_STAGES.map((stage) => {
+        const summary = boot.workflow.stages.find((item) => item.stageKey === stage.key);
+        const issue = summary ? issueById.get(summary.issueId) : null;
+        return {
+          stage_key: stage.key,
+          label: stage.label,
+          agent_key: stage.agentKey,
+          agent_id: boot.agentIdsByKey[stage.agentKey] ?? null,
+          depends_on: stage.dependsOn,
+          handoff_targets: atelierHandoffTargets(stage.agentKey),
+          issue_id: summary?.issueId ?? null,
+          identifier: issue?.identifier ?? summary?.identifier ?? null,
+          status: issue?.status ?? summary?.status ?? null,
+          parent_id: issue?.parentId ?? summary?.parentId ?? null,
+          blocked_by_issue_ids: summary?.blockedByIssueIds ?? [],
+        };
+      }),
+      edges: ATELIER_WORKFLOW_STAGES.flatMap((stage) => stage.dependsOn.map((source) => ({
+        from_stage: source,
+        to_stage: stage.key,
+      }))),
+    });
+  });
+
+  router.get("/atelier/company-workflow", async (req, res) => {
+    assertBoardOrAgent(req);
+    const companyId = String(req.query.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const definition = await ensureAtelierCompanyWorkflowDefinition(db, companyId);
+    const agentRows = await db.select({ id: agents.id, name: agents.name, metadata: agents.metadata }).from(agents).where(eq(agents.companyId, companyId));
+    const agentBindings = agentRows.flatMap((agent) => {
+      const key = (agent.metadata as Record<string, unknown> | null)?.atelierAgentKey;
+      return typeof key === "string" ? [{ agent_key: key, agent_id: agent.id, name: agent.name }] : [];
+    });
+    const projectRows = await db.select({ id: projects.id, name: projects.name, status: projects.status })
+      .from(projects)
+      .where(eq(projects.companyId, companyId));
+    const runs = projectRows.length > 0
+      ? await db.select().from(atelierWorkflowRuns).where(and(eq(atelierWorkflowRuns.companyId, companyId), inArray(atelierWorkflowRuns.projectId, projectRows.map((project) => project.id))))
+      : [];
+    const runsByProject = new Map(runs.map((run) => [run.projectId, run]));
+    res.json({
+      ok: true,
+      company_id: companyId,
+      definition_id: definition.id,
+      definition_version: definition.version,
+      status: definition.status,
+      definition: atelierCanonicalWorkflowDefinition(),
+      agent_bindings: agentBindings,
+      projects: projectRows.map((project) => ({ ...project, workflow_run_id: runsByProject.get(project.id)?.id ?? null, workflow_status: runsByProject.get(project.id)?.status ?? "not_provisioned" })),
+    });
+  });
+
+  router.get("/atelier/workflow/project/:projectId", async (req, res) => {
+    assertBoardOrAgent(req);
+    const projectId = req.params.projectId as string;
+    const project = await db.select({ id: projects.id, companyId: projects.companyId }).from(projects).where(eq(projects.id, projectId)).then((rows) => rows[0] ?? null);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    assertCompanyAccess(req, project.companyId);
+    const view = await getAtelierProjectWorkflowView(db, project.companyId, project.id);
+    res.json({ ok: true, company_id: project.companyId, project_id: project.id, run: view.run, root_issue: view.rootIssue, stages: view.stages });
+  });
+
+  router.post("/atelier/workflow/backfill", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const dryRun = req.body?.dry_run !== false;
+    const result = await backfillAtelierCompanyProjects(db, companyId, { dryRun, projectId: typeof req.body?.project_id === "string" ? req.body.project_id : undefined });
+    res.status(dryRun ? 200 : 201).json({ ok: true, ...result });
+  });
+
+  router.post("/atelier/workflow/project/:projectId/reconcile", async (req, res) => {
+    assertBoard(req);
+    const projectId = req.params.projectId as string;
+    const project = await db.select({ id: projects.id, companyId: projects.companyId }).from(projects).where(eq(projects.id, projectId)).then((rows) => rows[0] ?? null);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    assertCompanyAccess(req, project.companyId);
+    const result = await ensureAtelierProjectWorkflow(db, {
+      companyId: project.companyId,
+      projectId: project.id,
+    });
+    res.status(201).json({ ok: true, project_id: project.id, run: result.run, root_issue: result.rootIssue, stages: result.stages });
+  });
+
+  router.post("/atelier/workflow/handoff", async (req, res) => {
+    assertBoardOrAgent(req);
+    if (typeof req.body?.workflow_run_id === "string" || typeof req.body?.workflowRunId === "string") {
+      const projectId = String(req.body?.project_id || req.body?.projectId || "").trim();
+      const workflowRunId = String(req.body?.workflow_run_id || req.body?.workflowRunId || "").trim();
+      const sourceStageKey = String(req.body?.source_stage_key || req.body?.sourceStageKey || "").trim();
+      const targetStageKey = String(req.body?.target_stage_key || req.body?.targetStageKey || "").trim();
+      const idempotencyKey = String(req.body?.idempotency_key || req.body?.idempotencyKey || "").trim();
+      if (!projectId || !workflowRunId || !sourceStageKey || !targetStageKey || !idempotencyKey) throw unprocessable("project_id, workflow_run_id, source_stage_key, target_stage_key and idempotency_key are required");
+      const project = await db.select({ id: projects.id, companyId: projects.companyId }).from(projects).where(eq(projects.id, projectId)).then((rows) => rows[0] ?? null);
+      if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+      assertCompanyAccess(req, project.companyId);
+      const view = await getAtelierProjectWorkflowView(db, project.companyId, project.id, workflowRunId);
+      const source = view.stages.find((stage) => stage.stageKey === sourceStageKey);
+      const target = view.stages.find((stage) => stage.stageKey === targetStageKey);
+      if (!source?.agent || !target?.agent) throw unprocessable("Workflow stage agent binding is missing");
+      const actor = getActorInfo(req);
+      if (actor.actorType === "agent" && actor.agentId !== source.agent.id) throw forbidden("An agent can hand off only its own workflow stage");
+      const accepted = await acceptAtelierStageHandoff(db, {
+        companyId: project.companyId,
+        projectId: project.id,
+        workflowRunId,
+        sourceStageKey,
+        targetStageKey,
+        sourceAgentId: source.agent.id,
+        targetAgentId: target.agent.id,
+        idempotencyKey,
+        decisionLedger: req.body?.decision_ledger || req.body?.decisionLedger,
+        outputReferences: req.body?.output_references || req.body?.outputReferences,
+        approvalReference: req.body?.approval_reference || req.body?.approvalReference,
+      });
+      res.status(accepted.duplicate ? 200 : 201).json({ ok: true, ...accepted });
+      return;
+    }
+    const boot = await ensureAtelierPaperclipBootstrap(db);
+    assertCompanyAccess(req, boot.companyId);
+    const sourceRef = String(req.body?.source_issue_id || req.body?.sourceIssueId || "").trim();
+    const targetAgentKey = String(req.body?.target_agent_key || req.body?.targetAgentKey || "").trim() as AtelierAgentKey;
+    const title = String(req.body?.title || "").trim();
+    const description = String(req.body?.description || "").trim();
+    if (!sourceRef || !targetAgentKey || !title) {
+      throw unprocessable("source_issue_id, target_agent_key and title are required");
+    }
+
+    const source = await db.select().from(issues).where(and(
+      eq(issues.companyId, boot.companyId),
+      sql`(${issues.id}::text = ${sourceRef} or lower(coalesce(${issues.identifier}, '')) = lower(${sourceRef}))`,
+    )).then((rows) => rows[0] ?? null);
+    if (!source) {
+      res.status(404).json({ error: "Source issue not found" });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    if (actor.actorType === "agent" && source.assigneeAgentId !== actor.agentId) {
+      throw forbidden("An agent can hand off only its own assigned task");
+    }
+    const sourceAgentId = actor.actorType === "agent" ? actor.agentId : source.assigneeAgentId;
+    const sourceAgent = sourceAgentId
+      ? await db.select().from(agents).where(and(
+          eq(agents.companyId, boot.companyId),
+          eq(agents.id, sourceAgentId),
+        )).then((rows) => rows[0] ?? null)
+      : null;
+    const sourceAgentKey = (sourceAgent?.metadata as Record<string, unknown> | null)?.atelierAgentKey as AtelierAgentKey | undefined;
+    if (!sourceAgentKey) throw unprocessable("Source issue is not assigned to an Atelier workflow agent");
+    assertAtelierHandoffAllowed(sourceAgentKey, targetAgentKey);
+
+    const targetAgentId = boot.agentIdsByKey[targetAgentKey];
+    if (!targetAgentId) throw unprocessable(`Target Atelier agent ${targetAgentKey} is unavailable`);
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ sourceIssueId: source.id, targetAgentKey, title, description }))
+      .digest("hex")
+      .slice(0, 24);
+    const originId = `atelier-handoff:${source.id}:${targetAgentKey}:${fingerprint}`;
+    const task = await issueService(db).create(boot.companyId, {
+      projectId: source.projectId ?? boot.projectId,
+      goalId: source.goalId,
+      parentId: source.id,
+      parentDepthPolicy: "allow_nested",
+      expectedParentId: source.id,
+      title,
+      description: description || `Handoff từ ${sourceAgent?.name ?? sourceAgentKey} tới ${targetAgentKey}.`,
+      status: "todo",
+      priority: source.priority,
+      assigneeAgentId: targetAgentId,
+      createdByAgentId: actor.actorType === "agent" ? actor.agentId : null,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      responsibleUserId: source.responsibleUserId ?? "local-board",
+      originKind: "manual",
+      originId,
+      blockedByIssueIds: ["done", "cancelled"].includes(source.status) ? [] : [source.id],
+      idempotencyKey: originId,
+      allowDuplicate: false,
+    });
+
+    res.status(201).json({
+      ok: true,
+      source_agent_key: sourceAgentKey,
+      target_agent_key: targetAgentKey,
+      task,
+    });
+  });
+
+  router.post("/atelier/brief-assessment", async (req, res) => {
+    assertBoardOrAgent(req);
+    const brief = typeof req.body?.brief === "string" ? req.body.brief.trim() : "";
+    if (!brief) throw unprocessable("brief is required");
+    const assessment = assessAtelierBrief(brief);
+    res.status(assessment.status === "ready" ? 200 : 422).json(assessment);
+  });
+
+  // Project-first intake orchestration. The receipt lives in Paperclip's durable
+  // activity log, while Pascal initialization is an idempotent recoverable step.
+  router.post("/companies/:companyId/atelier/project-intakes", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.params.companyId);
+    assertCompanyAccess(req, companyId);
+    const brief = substantiveProjectBrief(req.body?.brief, req.body?.confirmStart);
+    const briefAssessment = assessAtelierBrief(brief);
+    if (briefAssessment.status !== "ready") {
+      res.status(422).json({
+        error: "Brief còn thiếu quyết định thuộc quyền người dùng; Atelier sẽ không tự chốt thay bạn.",
+        code: "ATELIER_NEEDS_INPUT",
+        ...briefAssessment,
+      });
+      return;
+    }
+    const idempotencyKey = typeof req.body?.idempotencyKey === "string" ? req.body.idempotencyKey.trim() : "";
+    if (!idempotencyKey || idempotencyKey.length > 255) throw unprocessable("A valid idempotency key is required");
+    const actor = getActorInfo(req);
+    const actorUserId = req.actor.userId ?? "local-board";
+    const receiptKey = `atelier-intake:${companyId}:${actor.actorId}:${idempotencyKey}`;
+    const fingerprint = createHash("sha256").update(JSON.stringify({ brief })).digest("hex");
+
+    let receiptId = "";
+    let project: Awaited<ReturnType<typeof projectsSvc.getById>> = null;
+    let conversationIssueId = "";
+    let publication: Awaited<ReturnType<typeof persistActivity>>["publication"] | null = null;
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${receiptKey}, 0))`);
+      const prior = await tx.select().from(activityLog).where(and(
+        eq(activityLog.companyId, companyId),
+        eq(activityLog.action, "atelier.project_intake"),
+        sql`${activityLog.details}->>'idempotencyKey' = ${receiptKey}`,
+      )).then((rows) => rows[0] ?? null);
+      if (prior) {
+        if (prior.details?.fingerprint !== fingerprint) throw conflict("Project intake idempotency key was used with a different brief");
+        receiptId = prior.id;
+        conversationIssueId = typeof prior.details?.conversationIssueId === "string" ? prior.details.conversationIssueId : "";
+        project = await projectService(tx as unknown as Db).getById(prior.entityId);
+        if (!project) throw conflict("Previously created project is no longer available");
+        return;
+      }
+
+      const companyAgents = await tx.select().from(agents).where(eq(agents.companyId, companyId));
+      const chief = companyAgents.find((agent) =>
+        (agent.metadata as Record<string, unknown> | null)?.atelierAgentKey === "agent_concierge" ||
+        agent.name.includes("Chief Architect") || agent.name.includes("Kiến Trúc Sư Trưởng"));
+      project = await projectService(tx as unknown as Db).create(companyId, {
+        name: projectNameFromBrief(brief),
+        description: brief,
+        status: "backlog",
+        leadAgentId: chief?.id ?? null,
+        icon: "home",
+        privacyOwnerUserId: actorUserId,
+      });
+      const activity = await persistActivity(tx as unknown as Db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "atelier.project_intake",
+        entityType: "project",
+        entityId: project.id,
+        details: {
+          idempotencyKey: receiptKey,
+          fingerprint,
+          phase: "project_created",
+          conversationIssueId: null,
+          pascalInitialization: "pending",
+        },
+      });
+      receiptId = activity.activity.id;
+      publication = activity.publication;
+    });
+
+    if (!project) throw new Error("Native Project creation did not return a project");
+    if (publication) publishActivity(publication);
+
+    const companyAgents = await db.select().from(agents).where(eq(agents.companyId, companyId));
+    const chief = companyAgents.find((agent) =>
+      (agent.metadata as Record<string, unknown> | null)?.atelierAgentKey === "agent_concierge" ||
+      agent.name.includes("Chief Architect") || agent.name.includes("Kiến Trúc Sư Trưởng"));
+    if (!chief) {
+      await db.update(activityLog).set({
+        details: { idempotencyKey: receiptKey, fingerprint, phase: "conversation_failed", conversationIssueId: null, pascalInitialization: "pending", error: "Chief Architect agent is unavailable" },
+      }).where(eq(activityLog.id, receiptId));
+      res.status(202).json({ project, conversationIssueId: null, initializationStatus: "blocked", error: "Chief Architect agent is unavailable" });
+      return;
+    }
+
+    if (!conversationIssueId) {
+      const conversation = await issueService(db).create(companyId, {
+        projectId: project.id,
+        conversationAgentId: chief.id,
+        conversationUserId: `atelier-project:${actorUserId}:${project.id}`,
+        conversationState: "active",
+        assigneeAgentId: chief.id,
+        createdByUserId: actorUserId,
+        responsibleUserId: actorUserId,
+        title: `Intake — ${project.name}`,
+        description: brief,
+        status: "in_progress",
+        priority: "high",
+        originKind: "manual",
+        idempotencyKey: `atelier-project-intake:${receiptKey}:conversation`,
+        allowDuplicate: true,
+      });
+      conversationIssueId = conversation.id;
+      const existingBrief = await db.select({ id: issueComments.id }).from(issueComments).where(and(
+        eq(issueComments.issueId, conversation.id),
+        eq(issueComments.clientRequestId, `atelier-intake:${idempotencyKey}`),
+      )).then((rows) => rows[0] ?? null);
+      if (!existingBrief) {
+        await insertIssueComment(db, {
+          companyId,
+          issueId: conversation.id,
+          authorUserId: actorUserId,
+          authorType: "user",
+          clientRequestId: `atelier-intake:${idempotencyKey}`,
+          body: brief,
+        });
+      }
+    }
+
+    let initializationStatus: "ready" | "retry_required" = "ready";
+    let initializationError: string | null = null;
+    try {
+      if (!(await ensurePythonCadSidecarOnDemand())) throw new Error("Pascal sidecar is unavailable");
+      const initializeResponse = await fetch(`${PYTHON_API_URL}/api/v1/native-projects/initialize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          native_project_id: project.id,
+          company_id: companyId,
+          project_name: project.name,
+          brief,
+          conversation_issue_id: conversationIssueId,
+        }),
+      });
+      if (!initializeResponse.ok) {
+        const payload = await initializeResponse.json().catch(() => ({})) as { detail?: string };
+        throw new Error(payload.detail || `Pascal initialization failed (${initializeResponse.status})`);
+      }
+    } catch (error) {
+      initializationStatus = "retry_required";
+      initializationError = error instanceof Error ? error.message : String(error);
+    }
+
+    await db.update(activityLog).set({ details: {
+      idempotencyKey: receiptKey,
+      fingerprint,
+      phase: initializationStatus === "ready" ? "ready" : "pascal_failed",
+      conversationIssueId,
+      pascalInitialization: initializationStatus,
+      ...(initializationError ? { error: initializationError } : {}),
+    } }).where(eq(activityLog.id, receiptId));
+
+    res.status(initializationStatus === "ready" ? 201 : 202).json({
+      project,
+      conversationIssueId,
+      initializationStatus,
+      error: initializationError,
+    });
+  });
+
+  router.get("/projects/:projectId/atelier/workspace", async (req, res) => {
+    const project = await accessibleAtelierProject(req, res, String(req.params.projectId));
+    if (!project) return;
+    try {
+      res.json(await pascalProjectWorkspace(project.id));
+    } catch (error) {
+      res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post("/projects/:projectId/atelier/rooms", async (req, res) => {
+    const project = await accessibleAtelierProject(req, res, String(req.params.projectId));
+    if (!project) return;
+    if (!(await ensurePythonCadSidecarOnDemand())) {
+      res.status(503).json({ error: "Pascal sidecar is unavailable" });
+      return;
+    }
+    const response = await fetch(`${PYTHON_API_URL}/api/v1/native-projects/${encodeURIComponent(project.id)}/rooms`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req.body ?? {}),
+    });
+    res.status(response.status).send(await response.text());
+  });
+
+  router.post("/projects/:projectId/atelier/scenes/:sceneId/link", async (req, res) => {
+    const project = await accessibleAtelierProject(req, res, String(req.params.projectId));
+    if (!project) return;
+    if (!(await ensurePythonCadSidecarOnDemand())) {
+      res.status(503).json({ error: "Pascal sidecar is unavailable" });
+      return;
+    }
+    const response = await fetch(`${PYTHON_API_URL}/api/v1/native-projects/${encodeURIComponent(project.id)}/scenes/${encodeURIComponent(String(req.params.sceneId))}/link`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req.body ?? {}),
+    });
+    res.status(response.status).send(await response.text());
+  });
+
+  router.get("/projects/:projectId/atelier/scenes/:sceneId", async (req, res) => {
+    const project = await accessibleAtelierProject(req, res, String(req.params.projectId));
+    if (!project) return;
+    try {
+      const workspace = await pascalProjectWorkspace(project.id) as { scenes?: Array<{ scene_id?: string }> };
+      const sceneId = String(req.params.sceneId);
+      if (!workspace.scenes?.some((scene) => scene.scene_id === sceneId)) {
+        res.status(404).json({ error: "Scene not found in this project" });
+        return;
+      }
+      const response = await fetch(`${PYTHON_API_URL}/api/v1/projects/${encodeURIComponent(sceneId)}`);
+      res.status(response.status).send(await response.text());
+    } catch (error) {
+      res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -852,7 +1429,8 @@ export function atelierBridgeRoutes(db: Db) {
   // ============================================================================
   router.post("/atelier/scene", async (req, res) => {
     const body = req.body ?? {};
-    const project_id = body.project_id || body.projectId || "proj_demo_4x5m";
+    const project_id = body.project_id || body.projectId;
+    if (!project_id) throw unprocessable("project_id is required for a scene operation");
     const operation = body.operation || body.op;
     const expected_revision = typeof body.expected_revision === "number" ? body.expected_revision : (typeof body.baseRevision === "number" ? body.baseRevision : undefined);
     const patch = body.patch;
@@ -1048,7 +1626,8 @@ export function atelierBridgeRoutes(db: Db) {
   // User pins a comment onto a 3D object/position -> creates Paperclip Task + Conversation entry + Proposal diff
   // ============================================================================
   router.get("/atelier/pins/:projectId", async (req, res) => {
-    const projectId = String(req.params.projectId || "proj_demo_4x5m");
+    const projectId = String(req.params.projectId || "").trim();
+    if (!projectId) throw unprocessable("projectId is required");
     const pins = projectPinsStore.get(projectId) ?? [
       {
         id: "pin_demo_sofa_01",
@@ -1072,7 +1651,8 @@ export function atelierBridgeRoutes(db: Db) {
   });
 
   router.post("/atelier/pins/:projectId", async (req, res) => {
-    const projectId = String(req.params.projectId || "proj_demo_4x5m");
+    const projectId = String(req.params.projectId || "").trim();
+    if (!projectId) throw unprocessable("projectId is required");
     const body = req.body ?? {};
     const entity_id = body.entity_id || body.objectId || null;
     const entity_name = body.entity_name || body.objectLabel || "Vị trí trong phòng 3D";
@@ -1212,6 +1792,238 @@ export function atelierBridgeRoutes(db: Db) {
         ok: true,
         pin: newPin,
         paperclipTask: createdTask,
+      });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // ============================================================================
+  // 4B. ANTIGRAVITY IDE REVERSE BRIDGE ENDPOINTS FOR PAPERCLIP CONVERSATIONS
+  // Allows local Antigravity IDE Agent (`scripts/ide_bridge.py`) to inspect
+  // pending Paperclip chat turns and inject direct Agent replies ($0 API Cost)
+  // ============================================================================
+  router.get("/atelier/ide-bridge/pending", async (_req, res) => {
+    try {
+      const boot = await ensureAtelierPaperclipBootstrap(db);
+      const allIssues = await db
+        .select()
+        .from(issues)
+        .where(eq(issues.companyId, boot.companyId));
+      const allAgents = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.companyId, boot.companyId));
+      const agentMap = new Map(allAgents.map((a) => [a.id, a]));
+
+      const chats = allIssues.filter((i) => Boolean(i.conversationAgentId));
+      const conversations = [];
+
+      for (const chat of chats) {
+        const comments = await db
+          .select()
+          .from(issueComments)
+          .where(and(eq(issueComments.issueId, chat.id), isNull(issueComments.deletedAt)))
+          .orderBy(desc(issueComments.createdAt));
+
+        const latestComment = comments[0] ?? null;
+        const latestUserComment = comments.find((c) => Boolean(c.authorUserId) && !c.authorAgentId) ?? null;
+        const latestAgentComment = comments.find((c) => Boolean(c.authorAgentId)) ?? null;
+        const needsReply = Boolean(
+          latestUserComment &&
+            (!latestAgentComment ||
+              new Date(latestUserComment.createdAt).getTime() > new Date(latestAgentComment.createdAt).getTime()),
+        );
+        const agent = chat.conversationAgentId ? agentMap.get(chat.conversationAgentId) : undefined;
+
+        conversations.push({
+          issue_id: chat.id,
+          identifier: chat.identifier,
+          title: chat.title,
+          status: chat.status,
+          conversation_state: chat.conversationState,
+          execution_run_id: chat.executionRunId,
+          agent_id: chat.conversationAgentId,
+          agent_name: agent?.name ?? "Agent",
+          agent_model: (agent?.adapterConfig as Record<string, unknown> | null)?.model ?? null,
+          needs_reply: needsReply,
+          latest_comment: latestComment
+            ? {
+                id: latestComment.id,
+                author_type: latestComment.authorAgentId ? "agent" : "user",
+                body: latestComment.body,
+                created_at: latestComment.createdAt,
+              }
+            : null,
+          latest_user_comment: latestUserComment
+            ? {
+                id: latestUserComment.id,
+                body: latestUserComment.body,
+                created_at: latestUserComment.createdAt,
+              }
+            : null,
+        });
+      }
+
+      res.json({
+        ok: true,
+        company_id: boot.companyId,
+        conversations,
+      });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  async function clearIssueExecutionBlockers(companyId: string, issueId: string, agentId: string | null) {
+    const recoverySvc = issueRecoveryActionService(db);
+    await recoverySvc.resolveActiveForIssue({
+      companyId,
+      sourceIssueId: issueId,
+      status: "cancelled",
+      outcome: "cancelled",
+      resolutionNote: "Cleared via Antigravity IDE Bridge",
+    });
+
+    // Clear any residual automaticRecovery replay-blocked flags on recovery actions for this issue
+    await db
+      .update(issueRecoveryActions)
+      .set({
+        status: "cancelled",
+        outcome: "cancelled",
+        evidence: sql`(${issueRecoveryActions.evidence} - 'automaticRecovery')`,
+        resolvedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(issueRecoveryActions.companyId, companyId),
+          eq(issueRecoveryActions.sourceIssueId, issueId),
+        ),
+      );
+
+    if (agentId) {
+      await db
+        .update(agentWakeupRequests)
+        .set({ status: "succeeded", updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentWakeupRequests.companyId, companyId),
+            eq(agentWakeupRequests.agentId, agentId),
+            inArray(agentWakeupRequests.status, ["deferred_issue_execution", "queued"]),
+          ),
+        );
+    }
+
+    await db
+      .update(issues)
+      .set({
+        executionRunId: null,
+        checkoutRunId: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(issues.id, issueId));
+  }
+
+  router.post("/atelier/ide-bridge/unblock", async (req, res) => {
+    try {
+      const boot = await ensureAtelierPaperclipBootstrap(db);
+      const body = req.body ?? {};
+      const rawIssueId = String(body.issue_id || body.issueId || "").trim();
+      const allIssues = await db
+        .select()
+        .from(issues)
+        .where(eq(issues.companyId, boot.companyId));
+      const targets = rawIssueId
+        ? allIssues.filter((i) => i.id === rawIssueId || i.identifier?.toLowerCase() === rawIssueId.toLowerCase())
+        : allIssues.filter((i) => Boolean(i.conversationAgentId));
+
+      for (const t of targets) {
+        await clearIssueExecutionBlockers(boot.companyId, t.id, t.conversationAgentId ?? t.assigneeAgentId ?? null);
+        if (t.conversationAgentId && t.status === "blocked") {
+          await db
+            .update(issues)
+            .set({ status: "in_review", conversationState: "waiting", updatedAt: new Date() })
+            .where(eq(issues.id, t.id));
+        }
+      }
+
+      res.json({
+        ok: true,
+        unblocked_identifiers: targets.map((t) => t.identifier ?? t.id),
+      });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  router.post("/atelier/ide-bridge/reply", async (req, res) => {
+    try {
+      const boot = await ensureAtelierPaperclipBootstrap(db);
+      const body = req.body ?? {};
+      const rawIssueId = String(body.issue_id || body.issueId || boot.conversationIssueId || "").trim();
+      const messageText = String(body.message || body.body || "").trim();
+      if (!messageText) {
+        res.status(400).json({ ok: false, error: "message is required" });
+        return;
+      }
+
+      const allIssues = await db
+        .select()
+        .from(issues)
+        .where(eq(issues.companyId, boot.companyId));
+      const targetIssue =
+        allIssues.find((i) => i.id === rawIssueId || i.identifier?.toLowerCase() === rawIssueId.toLowerCase()) ??
+        allIssues.find((i) => i.id === boot.conversationIssueId);
+
+      if (!targetIssue) {
+        res.status(404).json({ ok: false, error: `Issue ${rawIssueId} not found` });
+        return;
+      }
+
+      const authorAgentId =
+        String(body.agent_id || body.agentId || targetIssue.conversationAgentId || targetIssue.assigneeAgentId || boot.chiefArchitectAgentId);
+
+      // Clear any stuck failed/deferred execution blocker, recovery action, or wakeup queue on this conversation
+      await clearIssueExecutionBlockers(boot.companyId, targetIssue.id, authorAgentId);
+
+      const [insertedComment] = await insertIssueComment(db, {
+        companyId: boot.companyId,
+        issueId: targetIssue.id,
+        authorAgentId,
+        authorType: "agent",
+        origin: "comment",
+        body: messageText,
+      });
+
+      await db
+        .update(issues)
+        .set({
+          status: targetIssue.conversationAgentId ? "in_review" : targetIssue.status,
+          conversationState: targetIssue.conversationAgentId ? "waiting" : targetIssue.conversationState,
+          executionRunId: null,
+          checkoutRunId: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(issues.id, targetIssue.id));
+
+      res.status(201).json({
+        ok: true,
+        company_id: boot.companyId,
+        issue_id: targetIssue.id,
+        identifier: targetIssue.identifier,
+        agent_id: authorAgentId,
+        comment: insertedComment,
+        cost_usd: 0.0,
       });
     } catch (error) {
       res.status(500).json({

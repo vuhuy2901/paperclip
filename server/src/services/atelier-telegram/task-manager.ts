@@ -149,7 +149,7 @@ export class AtelierTelegramTaskManager {
       return agentsList.find((a) => a.key === "agent_style") || null;
     }
     if (q.includes("render") || q.includes("phối cảnh") || q.includes("ánh sáng") || q.includes("hình ảnh")) {
-      return agentsList.find((a) => a.key === "agent_render") || null;
+      return agentsList.find((a) => a.key === "agent_ceiling_lighting") || null;
     }
     if (q.includes("dự toán") || q.includes("giá") || q.includes("chi phí") || q.includes("báo giá") || q.includes("boq") || q.includes("cost")) {
       return agentsList.find((a) => a.key === "agent_cost") || null;

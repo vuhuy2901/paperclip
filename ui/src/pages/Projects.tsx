@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "react-router-dom";
 import type { Project } from "@paperclipai/shared";
 import { projectsApi } from "../api/projects";
+import { atelierApi } from "../api/atelier";
+import { describeError } from "../api/errors";
 import { useCompany } from "../context/CompanyContext";
 import { useDialogActions } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -23,9 +26,11 @@ import {
   useResourceMemberships,
 } from "../hooks/useResourceMemberships";
 import { ProjectsToolbar, type ProjectSortField, type ProjectSortDir } from "@/components/ProjectsToolbar";
-import { Hexagon } from "lucide-react";
-import { Lock } from "lucide-react";
+import { Hexagon, Lock, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 function compareProjectNames(left: Project, right: Project) {
   const nameDiff = left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
@@ -75,6 +80,13 @@ export function Projects() {
   const [query, setQuery] = useState("");
   const [sortField, setSortField] = useState<ProjectSortField>("name");
   const [sortDir, setSortDir] = useState<ProjectSortDir>("asc");
+  const [statusFilter, setStatusFilter] = useState("active");
+  const [viewMode, setViewMode] = useState<"list" | "cards">("list");
+  const [aiDialogOpen, setAiDialogOpen] = useState(false);
+  const [brief, setBrief] = useState("");
+  const [intakeKey, setIntakeKey] = useState("");
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Projects" }]);
@@ -82,7 +94,7 @@ export function Projects() {
 
   const projectsQuery = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
-    queryFn: () => projectsApi.list(selectedCompanyId!),
+    queryFn: () => projectsApi.list(selectedCompanyId!, { includeArchived: true }),
     enabled: !!selectedCompanyId,
   });
   const { data: allProjects, isLoading } = projectsQuery;
@@ -98,12 +110,35 @@ export function Projects() {
       const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
       const matching = projects.filter(project => {
         const text = `${project.name} ${project.description ?? ""}`.toLocaleLowerCase();
-        return words.every(word => text.includes(word));
+        const matchesText = words.every(word => text.includes(word));
+        const matchesStatus = statusFilter === "all"
+          ? true
+          : statusFilter === "active"
+            ? !project.archivedAt
+            : statusFilter === "archived"
+              ? Boolean(project.archivedAt)
+              : !project.archivedAt && project.status === statusFilter;
+        return matchesText && matchesStatus;
       });
       return sortProjects(matching, sortField, sortDir);
     },
-    [projects, query, sortDir, sortField],
+    [projects, query, sortDir, sortField, statusFilter],
   );
+  const startWithAi = useMutation({
+    mutationFn: () => atelierApi.startProject(selectedCompanyId!, brief.trim(), intakeKey),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(selectedCompanyId!) });
+      setAiDialogOpen(false);
+      setBrief("");
+      setIntakeKey("");
+      navigate(projectUrl(result.project));
+    },
+  });
+
+  const openAiIntake = () => {
+    setIntakeKey((current) => current || crypto.randomUUID());
+    setAiDialogOpen(true);
+  };
   const groupedProjects = useMemo(() => {
     const groups = {
       mine: [] as typeof sortedProjects,
@@ -143,7 +178,9 @@ export function Projects() {
   return (
     <div className="space-y-4">
       <ProjectsToolbar query={query} onQueryChange={setQuery} sortField={sortField} sortDir={sortDir}
-        onSortChange={(field, direction) => { setSortField(field); setSortDir(direction); }} onNewProject={openNewProject} />
+        onSortChange={(field, direction) => { setSortField(field); setSortDir(direction); }} onNewProject={openNewProject}
+        onStartWithAi={openAiIntake} statusFilter={statusFilter} onStatusFilterChange={setStatusFilter}
+        viewMode={viewMode} onViewModeChange={setViewMode} />
 
       {!isLoading && projects.length === 0 && (
         <EmptyState
@@ -174,7 +211,7 @@ export function Projects() {
                     {sectionProjects.length} project{sectionProjects.length === 1 ? "" : "s"}
                   </span>
                 </div>
-                <Card className="block py-0 overflow-hidden divide-y divide-border">
+                {viewMode === "list" ? <Card className="block py-0 overflow-hidden divide-y divide-border">
                   {sectionProjects.map((project) => {
                     const state = resourceMembershipState(membershipsQuery.data, "project", project.id);
                     const pending = membershipMutation.isPending &&
@@ -247,12 +284,48 @@ export function Projects() {
                       />
                     );
                   })}
-                </Card>
+                </Card> : <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {sectionProjects.map((project) => (
+                    <Card key={project.id} className="group overflow-hidden p-0 transition-colors hover:border-foreground/20">
+                      <Link to={projectUrl(project)} className="flex min-h-40 flex-col gap-4 p-5">
+                        <div className="flex items-start justify-between gap-3">
+                          <ProjectTile color={project.color ?? null} icon={project.icon ?? null} size="sm" />
+                          <StatusBadge status={project.status} />
+                        </div>
+                        <div className="min-w-0 space-y-1">
+                          <h3 className="truncate font-medium">{project.name}</h3>
+                          <p className="line-clamp-2 text-sm text-muted-foreground">{project.description || "Chưa có brief dự án."}</p>
+                        </div>
+                        <div className="mt-auto flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                          <span>{formatNumber(project.taskCount ?? 0)} tasks</span>
+                          <span>{project.updatedAt ? `Updated ${formatDate(project.updatedAt)}` : "No activity yet"}</span>
+                        </div>
+                      </Link>
+                    </Card>
+                  ))}
+                </div>}
               </section>
             );
           })}
         </div>
       )}
+      <Dialog open={aiDialogOpen} onOpenChange={(open) => { if (!startWithAi.isPending) setAiDialogOpen(open); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="size-5" />Bắt đầu dự án với Chief Architect</DialogTitle>
+            <DialogDescription>Mô tả không gian, nhu cầu, phong cách và ngân sách. Project chỉ được tạo sau khi brief có đủ ý nghĩa.</DialogDescription>
+          </DialogHeader>
+          <Textarea value={brief} onChange={(event) => setBrief(event.target.value)} disabled={startWithAi.isPending}
+            rows={7} placeholder="Ví dụ: Thiết kế căn hộ 80 m², 2 phòng ngủ, phong cách Japandi, ngân sách 450 triệu đồng…" />
+          {startWithAi.isError ? <p role="alert" className="text-sm text-destructive">{describeError(startWithAi.error).body}</p> : null}
+          <DialogFooter>
+            <Button type="button" variant="ghost" disabled={startWithAi.isPending} onClick={() => setAiDialogOpen(false)}>Hủy</Button>
+            <Button type="button" disabled={!brief.trim() || startWithAi.isPending} onClick={() => startWithAi.mutate()}>
+              {startWithAi.isPending ? "Đang khởi tạo…" : "Tạo dự án & bắt đầu hội thoại"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

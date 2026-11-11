@@ -271,6 +271,15 @@ export { companyObservability } from "./company_observability.js";
 
 export * from "./prompt_injection_prevention.js";
 export { workflows } from "./workflows.js";
+export {
+  atelierWorkflowRuns,
+  atelierWorkflowStageExecutions,
+  atelierWorkflowEvents,
+  ATELIER_WORKFLOW_RUN_STATUSES,
+  ATELIER_WORKFLOW_STAGE_STATUSES,
+  type AtelierWorkflowRunStatus,
+  type AtelierWorkflowStageStatus,
+} from "./atelier_workflow_runs.js";
 
 export { userWorkspacePreferences } from "./user_workspace_preferences.js";
 

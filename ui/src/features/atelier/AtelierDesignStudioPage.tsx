@@ -1,14 +1,16 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Download,
   History,
-  MapPin,
   MessageCircle,
-  PanelRight,
-  Sparkles,
-  CheckCircle2,
-  AlertTriangle,
+  Moon,
+  Focus,
+  RotateCcw,
+  Save,
+  Sliders,
+  Sun,
+  Sunset,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
@@ -22,11 +24,14 @@ const LazyStudioViewport = lazy(() =>
   import("./StudioViewport").then((mod) => ({ default: mod.StudioViewport })),
 );
 
-const API_BASE = "/api/v1";
+type DockId = "inspector" | "assistant";
 
-function formatVND(val?: number | null): string {
-  if (val === undefined || val === null) return "0 ₫";
-  return new Intl.NumberFormat("vi-VN").format(Math.round(val)) + " ₫";
+function formatVND(value?: number | null) {
+  return new Intl.NumberFormat("vi-VN").format(Math.round(value || 0)) + " ₫";
+}
+function readDockWidth(key: string, fallback: number) {
+  const value = Number(window.localStorage.getItem(key));
+  return Number.isFinite(value) && value >= 260 && value <= 480 ? value : fallback;
 }
 
 export function AtelierDesignStudioPage() {
@@ -35,337 +40,141 @@ export function AtelierDesignStudioPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const {
-    projects,
-    activeProjectId,
-    setActiveProjectId,
-    project,
-    estimate,
-    materialsCatalog,
-    chatHistory,
-    revisions,
-    pins,
-    selectedEntityId,
-    setSelectedEntityId,
-    viewMode,
-    setViewMode,
-    cameraPreset,
-    setCameraPreset,
-    busyMessage,
-    handleMaterialChange,
-    handleSendChat,
-    handleAnswerQuestion,
-    handleProposalDecision,
-    handleRestoreRevision,
-    handleApplyDesignOption,
-    handleSaveSelectedFurnitureTransform,
-    handleCreateSpatialPin,
+    projects, activeProjectId, setActiveProjectId, project, estimate,
+    materialsCatalog, pbrMaterials, assetLibrary, chatHistory, revisions,
+    selectedEntityId, setSelectedEntityId, viewMode, setViewMode,
+    cameraPreset, setCameraPreset, lightingPreset, setLightingPreset,
+    busyMessage, errorMessage, handleMaterialChange, handleSendChat,
+    handleAnswerQuestion, handleProposalDecision, handleRestoreRevision,
+    handleUpdateFurnitureField, handleSaveScene, handleExport, handleAssignAsset,
+    handleCreateMaterialProposal, handleCreateSurfaceMaterialProposal,
+    handleRequestSmartFit, handleRequestPlacementOptions, handleCreatePlacementProposal,
   } = useAtelierStudio();
 
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [assistantOpen, setAssistantOpen] = useState(true);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [revisionDrawerOpen, setRevisionDrawerOpen] = useState(false);
-  const [pinModalOpen, setPinModalOpen] = useState(false);
-  const [pinComment, setPinComment] = useState("");
-  const [designOptions, setDesignOptions] = useState<any[]>([]);
-  const [generatingOptions, setGeneratingOptions] = useState(false);
+  const [cameraResetTrigger, setCameraResetTrigger] = useState(0);
+  const [cameraCommand, setCameraCommand] = useState<{ id: number; type: "fit" | "focus" | "reset" }>({ id: 0, type: "fit" });
+  const [cutawayEnabled, setCutawayEnabled] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [inspectorWidth, setInspectorWidth] = useState(() => readDockWidth("atelier.inspectorWidth", 320));
+  const [assistantWidth, setAssistantWidth] = useState(() => readDockWidth("atelier.assistantWidth", 360));
+  const resizeOrigin = useRef<{ dock: DockId; x: number; width: number } | null>(null);
 
   useEffect(() => {
-    setBreadcrumbs([
-      { label: "Thiết kế Nội thất" },
-      { label: "Không gian thiết kế 2D/3D (Pascal BIM)" },
-    ]);
+    setBreadcrumbs([{ label: "Thiết kế Nội thất" }, { label: "Không gian thiết kế 2D/3D (Pascal BIM)" }]);
   }, [setBreadcrumbs]);
 
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const origin = resizeOrigin.current;
+      if (!origin) return;
+      const next = Math.max(260, Math.min(480, origin.width + origin.x - event.clientX));
+      if (origin.dock === "inspector") setInspectorWidth(next);
+      else setAssistantWidth(next);
+    };
+    const onPointerUp = () => {
+      if (!resizeOrigin.current) return;
+      window.localStorage.setItem("atelier.inspectorWidth", String(inspectorWidth));
+      window.localStorage.setItem("atelier.assistantWidth", String(assistantWidth));
+      resizeOrigin.current = null;
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [assistantWidth, inspectorWidth]);
+
+  const beginResize = (dock: DockId, event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    resizeOrigin.current = { dock, x: event.clientX, width: dock === "inspector" ? inspectorWidth : assistantWidth };
+  };
+
   const selectedEntity =
-    project?.furniture?.find((f: any) => f.id === selectedEntityId) ||
-    project?.walls?.find((w: any) => w.id === selectedEntityId) ||
-    null;
-
-  const isScaleVerified =
-    project?.scale_confidence === "HIGH_VERIFIED_SCALE";
-
-  const handleGenerateOptions = async () => {
-    setGeneratingOptions(true);
-    try {
-      const res = await fetch(
-        `${API_BASE}/projects/${activeProjectId}/generate-options`,
-        { method: "POST" },
-      );
-      if (res.ok) {
-        const data = await res.json();
-        setDesignOptions(data.options || []);
-      }
-    } finally {
-      setGeneratingOptions(false);
-    }
-  };
-
-  const handleSubmitPin = async () => {
-    if (!pinComment.trim()) return;
-    const entityName = selectedEntity
-      ? selectedEntity.name || selectedEntity.id
-      : "Vị trí trung tâm phòng 4×5m";
-    const pos: [number, number, number] = selectedEntity?.position_mm
-      ? [
-          selectedEntity.position_mm[0] ?? 2000,
-          selectedEntity.position_mm[1] ?? 2500,
-          selectedEntity.position_mm[2] ?? 400,
-        ]
-      : [2000, 2500, 400];
-    await handleCreateSpatialPin({
-      entityId: selectedEntity?.id ?? null,
-      entityName,
-      positionMm: pos,
-      comment: pinComment.trim(),
-    });
-    setPinComment("");
-    setPinModalOpen(false);
-  };
-
-  const searchParams = new URLSearchParams(location.search);
-  const linkedIssueId = searchParams.get("issueId");
-  const linkedIssueIdentifier = searchParams.get("issueIdentifier");
-  const linkedAgent = searchParams.get("agent");
+    project?.furniture_instances?.find((item: any) => item.id === selectedEntityId) ||
+    project?.walls?.find((item: any) => item.id === selectedEntityId) || null;
+  const linkedIssueIdentifier = new URLSearchParams(location.search).get("issueIdentifier");
 
   return (
-    <div
-      className="atelier-surface-root flex h-full w-full flex-col overflow-hidden"
-      data-theme={theme}
-    >
-      {/* Linked Task Context Banner */}
-      {linkedIssueIdentifier && (
-        <div className="flex shrink-0 items-center justify-between border-b border-teal-500/30 bg-teal-500/10 px-3 py-1.5 text-xs text-teal-800 dark:text-teal-200">
-          <div className="flex items-center gap-2 font-medium">
-            <Sparkles className="size-3.5 text-teal-600 dark:text-teal-400" />
-            <span>
-              Đang mở không gian 3D liên kết với Công việc:{" "}
-              <strong className="underline underline-offset-2">{linkedIssueIdentifier}</strong>
-            </span>
-            {linkedAgent && <span className="opacity-80">({linkedAgent})</span>}
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate(`/issues/${linkedIssueIdentifier}`)}
-            className="rounded bg-teal-600/20 px-2 py-0.5 text-[11px] font-semibold text-teal-900 hover:bg-teal-600/30 dark:text-teal-100"
-          >
-            Quay lại Công việc &rarr;
-          </button>
-        </div>
-      )}
-
-      {/* Compact Studio Header inside Paperclip Workspace */}
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-3 text-xs">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Link
-            to="/chats"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary/60 px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent"
-            title="Quay lại Hội thoại với Kiến Trúc Sư Trưởng"
-          >
-            <ArrowLeft className="size-3.5" />
-            <span>Hội thoại AI</span>
-          </Link>
-
-          <select
-            aria-label="Chọn dự án nội thất"
-            className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-semibold text-foreground"
-            value={activeProjectId}
-            onChange={(e) => setActiveProjectId(e.target.value)}
-          >
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} (Rev #{p.revision})
-              </option>
-            ))}
-          </select>
-
-          <span
-            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-              isScaleVerified
-                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25"
-                : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/25"
-            }`}
-          >
-            {isScaleVerified ? (
-              <CheckCircle2 className="size-3" />
-            ) : (
-              <AlertTriangle className="size-3" />
-            )}
-            {isScaleVerified ? "Tỷ lệ chuẩn 1:1 (mm)" : "Chờ xác nhận tỷ lệ"}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setPinModalOpen((v) => !v)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-teal-700/30 bg-teal-500/10 px-2.5 py-1 text-xs font-medium text-teal-800 dark:text-teal-300 hover:bg-teal-500/20"
-            title="Ghim nhận xét trực tiếp vào đồ vật hoặc vị trí 3D để tạo Task & Đề xuất"
-          >
-            <MapPin className="size-3.5" />
-            <span>Ghim nhận xét 3D ({pins.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => navigate("/cost-estimation")}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2.5 py-1 text-xs font-mono font-semibold text-foreground hover:bg-accent"
-            title="Xem Bảng dự toán BOQ xác định"
-          >
-            <span className="text-muted-foreground font-sans font-normal">Dự toán:</span>
-            <span className="text-teal-700 dark:text-teal-400">
-              {formatVND(estimate?.grand_total_vnd)}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setRevisionDrawerOpen(true)}
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-mono font-medium hover:bg-accent"
-            title="Lịch sử phiên bản & Khôi phục (Restore)"
-          >
-            <History className="size-3.5" />
-            <span>Rev #{project?.revision ?? 1}</span>
-          </button>
-
-          <a
-            href={`${API_BASE}/projects/${activeProjectId}/export/dxf`}
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium hover:bg-accent"
-            title="Xuất bản vẽ kỹ thuật AutoCAD DXF R2007 (Đơn vị mm)"
-          >
-            <Download className="size-3.5" />
-            <span>DXF</span>
-          </a>
-
-          <a
-            href={`${API_BASE}/projects/${activeProjectId}/export/glb`}
-            className="inline-flex items-center gap-1 rounded-md bg-teal-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-teal-800"
-            title="Xuất mô hình 3D glTF Binary (.glb)"
-          >
-            <Download className="size-3.5" />
-            <span>Xuất 3D GLB</span>
-          </a>
-        </div>
-      </div>
-
-      {/* 3D Spatial Pin Popover Bar when active */}
-      {pinModalOpen ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-700/25 bg-teal-50/80 dark:bg-teal-950/30 px-4 py-2 text-xs">
-          <div className="flex items-center gap-2">
-            <MapPin className="size-4 text-teal-700 dark:text-teal-400" />
-            <span className="font-semibold text-foreground">
-              Ghim nhận xét lên đối tượng 3D đang chọn:
-            </span>
-            <span className="rounded bg-teal-700/15 px-2 py-0.5 font-mono text-teal-800 dark:text-teal-200">
-              {selectedEntity
-                ? `${selectedEntity.name || selectedEntity.id} (${selectedEntity.position_mm?.[0] ?? 0}, ${selectedEntity.position_mm?.[1] ?? 0} mm)`
-                : "Phòng khách 4×5m"}
-            </span>
-          </div>
-          <div className="flex flex-1 items-center gap-2 max-w-xl">
-            <input
-              type="text"
-              value={pinComment}
-              onChange={(e) => setPinComment(e.target.value)}
-              placeholder="Nhập nhận xét tại vị trí này (VD: Đổi sofa ngắn hơn 30cm để rộng lối đi...)"
-              className="flex-1 rounded-md border border-border bg-background px-2.5 py-1 text-xs text-foreground"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void handleSubmitPin();
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => void handleSubmitPin()}
-              className="rounded-md bg-teal-700 px-3 py-1 text-xs font-medium text-white hover:bg-teal-800"
-            >
-              Tạo Task & Đề xuất Diff
-            </button>
-            <button
-              type="button"
-              onClick={() => setPinModalOpen(false)}
-              className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-            >
-              Đóng
-            </button>
-          </div>
+    <div className="atelier-surface-root flex h-full w-full flex-col overflow-hidden" data-theme={theme}>
+      {linkedIssueIdentifier ? (
+        <div className="atelier-context-banner">
+          <span>Đang mở Scene liên kết với công việc {linkedIssueIdentifier}</span>
+          <button type="button" className="btn btn-sm" onClick={() => navigate(`/issues/${linkedIssueIdentifier}`)}>Quay lại công việc</button>
         </div>
       ) : null}
 
-      {/* Main 3-Column Studio Body */}
-      <div className="workspace-layout flex-1 min-h-0">
-        {project ? (
-          <>
-            <Suspense
-              fallback={
-                <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-                  Đang tải Pascal 3D BIM Viewport (Lazy-load Three.js)...
-                </div>
-              }
-            >
-              <LazyStudioViewport
-                project={project}
-                estimate={estimate}
-                materialsCatalog={materialsCatalog}
-                viewMode={viewMode}
-                setViewMode={setViewMode}
-                cameraPreset={cameraPreset}
-                setCameraPreset={setCameraPreset}
-                selectedEntityId={selectedEntityId}
-                setSelectedEntityId={setSelectedEntityId}
-                theme={theme}
-                inspectorOpen={inspectorOpen}
-                setInspectorOpen={setInspectorOpen}
-                assistantOpen={assistantOpen}
-                setAssistantOpen={setAssistantOpen}
-                onOpenFloorplanImport={() => navigate("/floorplan-import")}
-              />
-            </Suspense>
+      <header className="atelier-studio-header">
+        <div className="atelier-header-group">
+          <Link to="/chats" className="btn btn-sm" title="Quay lại Hội thoại"><ArrowLeft size={13} /> Hội thoại</Link>
+          <select aria-label="Chọn dự án nội thất" className="field-select atelier-project-select" value={activeProjectId} onChange={(event) => setActiveProjectId(event.target.value)}>
+            {projects.map((item: any) => <option key={item.project_id} value={item.project_id}>{item.name} (Rev #{item.revision})</option>)}
+          </select>
+          <span className={`status-badge ${project?.scale_calibrated ? "emerald" : "amber"}`}>
+            {project?.scale_calibrated ? "Tỷ lệ 1:1 mm" : "Chờ xác nhận tỷ lệ"}
+          </span>
+        </div>
+        <div className="atelier-header-actions">
+          <span className="atelier-estimate" title="Dự toán hiện tại">{formatVND(estimate?.grand_total_vnd)}</span>
+          <button type="button" className="btn btn-sm" data-testid="save-scene" onClick={() => void handleSaveScene()} disabled={Boolean(busyMessage)}><Save size={13} /> {busyMessage?.includes("lưu Scene") ? "Đang lưu" : "Lưu Scene"}</button>
+          <button type="button" className="btn btn-sm" onClick={() => setRevisionDrawerOpen(true)}><History size={13} /> Rev #{project?.revision || 0}</button>
+          <button type="button" className="btn btn-sm" data-testid="export-dxf" onClick={() => void handleExport("dxf")}><Download size={13} /> DXF</button>
+          <button type="button" className="btn btn-sm btn-primary" data-testid="export-glb" onClick={() => void handleExport("glb")}><Download size={13} /> GLB</button>
+        </div>
+      </header>
 
-            <ObjectInspector
-              open={inspectorOpen}
-              onClose={() => setInspectorOpen(false)}
-              project={project}
-              materialsCatalog={materialsCatalog}
-              selectedEntityId={selectedEntityId}
-              setSelectedEntityId={setSelectedEntityId}
-              onSaveTransform={handleSaveSelectedFurnitureTransform}
-              onMaterialChange={handleMaterialChange}
-              onOpenFullMaterials={() => navigate("/materials-catalog")}
-              onOpenCatalog={() => navigate("/shopping-catalog")}
-            />
-
-            <AIDesignAssistant
-              open={assistantOpen}
-              onClose={() => setAssistantOpen(false)}
-              project={project}
-              chatHistory={chatHistory}
-              busyMessage={busyMessage}
-              onSendMessage={handleSendChat}
-              onAnswerQuestion={handleAnswerQuestion}
-              onProposalDecision={handleProposalDecision}
-              onUndoLastRevision={() => {
-                const prevRev = Math.max(1, (project.revision || 2) - 1);
-                return handleRestoreRevision(prevRev);
-              }}
-              designOptions={designOptions}
-              generatingOptions={generatingOptions}
-              onGenerateOptions={handleGenerateOptions}
-              onApplyDesignOption={handleApplyDesignOption}
-            />
-          </>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-            Đang kết nối dữ liệu Pascal 3D SceneGraph...
-          </div>
-        )}
+      <div className="atelier-view-toolbar" role="toolbar" aria-label="Điều khiển không gian thiết kế">
+        <div className="segmented-group" aria-label="Chế độ hiển thị">
+          {(["split", "2d", "3d"] as const).map((mode) => <button key={mode} type="button" className={`seg-btn ${viewMode === mode ? "active" : ""}`} onClick={() => { setViewMode(mode); if (mode === "2d" && cameraPreset === "walk") setCameraPreset("orbit"); }}>{mode === "split" ? "2D + 3D" : mode.toUpperCase()}</button>)}
+        </div>
+        <div className="segmented-group" aria-label="Ánh sáng">
+          <button type="button" className={`seg-btn ${lightingPreset === "day" ? "active" : ""}`} onClick={() => setLightingPreset("day")}><Sun size={12} /> Ngày</button>
+          <button type="button" className={`seg-btn ${lightingPreset === "sunset" ? "active" : ""}`} onClick={() => setLightingPreset("sunset")}><Sunset size={12} /> Hoàng hôn</button>
+          <button type="button" className={`seg-btn ${lightingPreset === "night" ? "active" : ""}`} onClick={() => setLightingPreset("night")}><Moon size={12} /> Đêm</button>
+        </div>
+        <div className="segmented-group" aria-label="Camera">
+          {(["orbit", "top", "walk"] as const).map((preset) => <button key={preset} type="button" disabled={viewMode === "2d"} className={`seg-btn ${viewMode !== "2d" && cameraPreset === preset ? "active" : ""}`} onClick={() => setCameraPreset(preset)}>{preset === "orbit" ? "Orbit" : preset === "top" ? "Top" : "Walk"}</button>)}
+          <button type="button" disabled={viewMode === "2d"} className={`seg-btn ${cutawayEnabled ? "active" : ""}`} onClick={() => setCutawayEnabled((value) => !value)}>Cutaway</button>
+        </div>
+        <button type="button" className="btn btn-sm" onClick={() => setCameraCommand((current) => ({ id: current.id + 1, type: "fit" }))} title="Đưa toàn bộ phòng vào khung hình">Fit Room</button>
+        <button type="button" className="btn btn-sm" disabled={!selectedEntityId} onClick={() => setCameraCommand((current) => ({ id: current.id + 1, type: "focus" }))} title="Đưa đối tượng đang chọn vào giữa khung hình"><Focus size={12} /> Focus</button>
+        <button type="button" className="btn btn-sm" onClick={() => setCameraCommand((current) => ({ id: current.id + 1, type: "reset" }))} title="Khôi phục camera mặc định"><RotateCcw size={12} /> Reset</button>
+        <span className="atelier-toolbar-spacer" />
+        <button type="button" className={`btn btn-sm ${inspectorOpen ? "btn-soft" : ""}`} onClick={() => setInspectorOpen((value) => !value)}><Sliders size={12} /> Inspector</button>
+        <button type="button" className={`btn btn-sm ${assistantOpen ? "btn-soft" : ""}`} onClick={() => setAssistantOpen((value) => !value)}><MessageCircle size={12} /> AI Copilot</button>
       </div>
 
-      <RevisionHistoryDrawer
-        open={revisionDrawerOpen}
-        onClose={() => setRevisionDrawerOpen(false)}
-        project={project}
-        revisions={revisions}
-        onRestoreRevision={handleRestoreRevision}
-      />
+      {errorMessage ? <div className="atelier-error-banner" role="alert">{errorMessage}</div> : null}
+
+      <div className="workspace-layout flex-1 min-h-0" style={{ "--inspector-width": `${inspectorWidth}px`, "--assistant-width": `${assistantWidth}px` } as React.CSSProperties}>
+        {project ? (
+          <>
+            <Suspense fallback={<div className="atelier-loading-state">Đang tải Pascal 3D BIM...</div>}>
+              <LazyStudioViewport project={project} materialsDb={materialsCatalog} pbrMaterials={pbrMaterials} viewMode={viewMode} cameraPreset={cameraPreset} lightingPreset={lightingPreset} cameraResetTrigger={cameraResetTrigger} cameraCommand={cameraCommand} cutawayEnabled={cutawayEnabled} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} theme={theme} />
+            </Suspense>
+
+            {inspectorOpen ? (
+              <div className="dock-column inspector-column">
+                <button className="dock-resize-handle" type="button" onPointerDown={(event) => beginResize("inspector", event)} aria-label="Thay đổi chiều rộng Inspector" />
+                <ObjectInspector project={project} materialsDb={materialsCatalog} pbrMaterials={pbrMaterials} assetLibrary={assetLibrary} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onUpdateFurnitureField={handleUpdateFurnitureField} onCommitCanvasPosition={() => void handleSaveScene()} onUpdateSurfaces7B={(payload) => void handleMaterialChange(payload.wall_base_material_id, payload.accent_paint_id, payload.floor_material_id)} onPreviewMaterial={(payload) => window.dispatchEvent(new CustomEvent("atelier:material-preview", { detail: payload }))} onCreateMaterialProposal={handleCreateMaterialProposal} onCreateSurfaceMaterialProposal={handleCreateSurfaceMaterialProposal} onAssignAsset={handleAssignAsset} onResetMaterialPreview={() => setCameraResetTrigger((value) => value + 1)} onRequestSmartFit={handleRequestSmartFit} onRequestPlacementOptions={handleRequestPlacementOptions} onCreatePlacementProposal={handleCreatePlacementProposal} onClose={() => setInspectorOpen(false)} savingScene={Boolean(busyMessage?.includes("lưu"))} />
+              </div>
+            ) : null}
+
+            {assistantOpen ? (
+              <div className="dock-column assistant-column">
+                <button className="dock-resize-handle" type="button" onPointerDown={(event) => beginResize("assistant", event)} aria-label="Thay đổi chiều rộng AI Copilot" />
+                <AIDesignAssistant project={project} chatHistory={chatHistory} sendingChat={Boolean(busyMessage?.includes("Chief Architect"))} chatInput={chatInput} onChatInputChange={setChatInput} onSendChat={(text) => { const message = (text ?? chatInput).trim(); if (!message) return; void handleSendChat(message); if (!text) setChatInput(""); }} onAnswerQuestion={(questionId, answer) => void handleAnswerQuestion(questionId, answer)} onApproveProposal={(proposalId) => void handleProposalDecision(proposalId, "approve")} onRejectProposal={(proposalId) => void handleProposalDecision(proposalId, "reject")} onUndoLastRevision={() => void handleRestoreRevision(Math.max(1, (project.revision || 1) - 1))} onCloseMobile={() => setAssistantOpen(false)} />
+              </div>
+            ) : null}
+          </>
+        ) : <div className="atelier-loading-state">Đang kết nối Pascal SceneGraph...</div>}
+      </div>
+
+      <RevisionHistoryDrawer isOpen={revisionDrawerOpen} onClose={() => setRevisionDrawerOpen(false)} project={project ? { ...project, revisions } : project} onRestoreRevision={handleRestoreRevision} />
+      {selectedEntity ? <span className="sr-only">Đang chọn {selectedEntity.name || selectedEntity.id}</span> : null}
     </div>
   );
 }

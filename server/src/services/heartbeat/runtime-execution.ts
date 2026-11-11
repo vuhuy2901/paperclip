@@ -261,7 +261,6 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
       ? { kind: "skill_test" as const, issueId: issueRef.id }
       : { kind: "standard" as const };
   const authToken =
-    nativeRuntimeResolution.kind === "legacy" &&
     adapter.supportsLocalAgentJwt
       ? createLocalAgentJwt(
           agent.id,
@@ -273,7 +272,6 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         )
       : null;
   if (
-    nativeRuntimeResolution.kind === "legacy" &&
     adapter.supportsLocalAgentJwt &&
     !authToken
   ) {
@@ -698,6 +696,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
                   executionWorkspace.cwd,
                 ),
                 ...buildAgentIdentityEnv(agentIdentity),
+                ...(authToken ? { PAPERCLIP_API_KEY: authToken } : {}),
                 ...(input.instructions.instructionCopy && isAgentDirectoryCopy(input.instructions.instructionCopy) ? { AGENT_HOME: input.instructions.instructionCopy.executionRoot } : {}),
                 ...(nativeMcpServer
                   ? {

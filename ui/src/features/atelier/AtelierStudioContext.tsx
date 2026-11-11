@@ -32,7 +32,9 @@ interface AtelierStudioContextValue {
   estimate: any | null;
   materialsCatalog: any | null;
   productsCatalog: any[];
-  chatHistory: { messages: any[]; questions: any[]; proposals: any[] };
+  chatHistory: { messages: any[]; pending_questions: any[]; proposals: any[] };
+  pbrMaterials: any[];
+  assetLibrary: any[];
   revisions: any[];
   pins: SpatialPinItem[];
   selectedEntityId: string | null;
@@ -41,6 +43,8 @@ interface AtelierStudioContextValue {
   setViewMode: (mode: "split" | "2d" | "3d") => void;
   cameraPreset: "orbit" | "top" | "walk" | "cutaway";
   setCameraPreset: (preset: "orbit" | "top" | "walk" | "cutaway") => void;
+  lightingPreset: "day" | "sunset" | "night";
+  setLightingPreset: (preset: "day" | "sunset" | "night") => void;
   workflows: any[];
   runs: any[];
   agents: any[];
@@ -52,6 +56,7 @@ interface AtelierStudioContextValue {
   handleTestConnection: (connId: string) => Promise<void>;
   handleSaveConnection: (conn: any) => Promise<void>;
   busyMessage: string | null;
+  errorMessage: string | null;
   toast: string | null;
   showToast: (msg: string) => void;
   refreshProjectBundle: (pid?: string) => Promise<void>;
@@ -75,6 +80,15 @@ interface AtelierStudioContextValue {
     yMm: number,
     rotDeg: number,
   ) => Promise<void>;
+  handleUpdateFurnitureField: (entityId: string, field: string, value: unknown) => void;
+  handleSaveScene: () => Promise<void>;
+  handleExport: (format: "dxf" | "glb") => Promise<void>;
+  handleAssignAsset: (entityId: string, assetId: string) => Promise<void>;
+  handleCreateMaterialProposal: (entityId: string, payload: any) => Promise<any>;
+  handleCreateSurfaceMaterialProposal: (surfaceKey: string, payload: any) => Promise<any>;
+  handleRequestSmartFit: (entityId: string) => Promise<any>;
+  handleRequestPlacementOptions: (entityId: string) => Promise<any>;
+  handleCreatePlacementProposal: (entityId: string, option: any) => Promise<any>;
   handleCreateProject: (
     name: string,
     style: string,
@@ -94,16 +108,18 @@ const API_BASE = "/api/v1";
 
 export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<any[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string>("proj_demo_4x5m");
+  const [activeProjectId, setActiveProjectId] = useState<string>("");
   const [project, setProject] = useState<any | null>(null);
   const [estimate, setEstimate] = useState<any | null>(null);
   const [materialsCatalog, setMaterialsCatalog] = useState<any | null>(null);
   const [productsCatalog, setProductsCatalog] = useState<any[]>([]);
   const [chatHistory, setChatHistory] = useState<{
     messages: any[];
-    questions: any[];
+    pending_questions: any[];
     proposals: any[];
-  }>({ messages: [], questions: [], proposals: [] });
+  }>({ messages: [], pending_questions: [], proposals: [] });
+  const [pbrMaterials, setPbrMaterials] = useState<any[]>([]);
+  const [assetLibrary, setAssetLibrary] = useState<any[]>([]);
   const [revisions, setRevisions] = useState<any[]>([]);
   const [pins, setPins] = useState<SpatialPinItem[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>("furn_sofa_main");
@@ -111,12 +127,14 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   const [cameraPreset, setCameraPreset] = useState<"orbit" | "top" | "walk" | "cutaway">(
     "cutaway",
   );
+  const [lightingPreset, setLightingPreset] = useState<"day" | "sunset" | "night">("day");
   const [workflows, setWorkflows] = useState<any[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
   const [mcpTools, setMcpTools] = useState<any[]>([]);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = useCallback((msg: string) => {
@@ -127,12 +145,20 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   const refreshProjectBundle = useCallback(
     async (pid: string = activeProjectId) => {
       try {
-        const [projRes, estRes, chatRes, revRes, listRes, pinsRes, wfRes, runsRes, agRes, connRes, mcpRes] =
+        if (!pid) {
+          const listRes = await fetch(`${API_BASE}/projects`);
+          if (!listRes.ok) throw new Error(`Không thể tải danh sách project (${listRes.status})`);
+          const listJson = await listRes.json();
+          const nextProjects = Array.isArray(listJson) ? listJson : listJson.projects || [];
+          setProjects(nextProjects);
+          if (nextProjects[0]?.id) setActiveProjectId(nextProjects[0].id);
+          return;
+        }
+        const [projRes, estRes, chatRes, listRes, pinsRes, wfRes, runsRes, agRes, connRes, mcpRes] =
           await Promise.all([
             fetch(`${API_BASE}/projects/${pid}`),
-            fetch(`${API_BASE}/projects/${pid}/estimates`),
-            fetch(`${API_BASE}/projects/${pid}/chat`),
-            fetch(`${API_BASE}/projects/${pid}/revisions`),
+            fetch(`${API_BASE}/estimates/${pid}`),
+            fetch(`${API_BASE}/chat/history?project_id=${encodeURIComponent(pid)}`),
             fetch(`${API_BASE}/projects`),
             fetch(`/api/atelier/pins/${pid}`),
             fetch(`${API_BASE}/workflows`),
@@ -141,16 +167,15 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
             fetch(`${API_BASE}/connections`),
             fetch(`${API_BASE}/mcp/tools`),
           ]);
-        if (projRes.ok) setProject(await projRes.json());
+        if (!projRes.ok) throw new Error(`Không thể tải Scene (${projRes.status})`);
+        const projectJson = await projRes.json();
+        setProject(projectJson);
+        setRevisions(projectJson.revisions || []);
         if (estRes.ok) setEstimate(await estRes.json());
         if (chatRes.ok) setChatHistory(await chatRes.json());
-        if (revRes.ok) {
-          const revJson = await revRes.json();
-          setRevisions(revJson.revisions || []);
-        }
         if (listRes.ok) {
           const listJson = await listRes.json();
-          setProjects(listJson.projects || []);
+          setProjects(Array.isArray(listJson) ? listJson : listJson.projects || []);
         }
         if (pinsRes.ok) {
           const pinsJson = await pinsRes.json();
@@ -160,9 +185,13 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
         if (runsRes.ok) setRuns(await runsRes.json());
         if (agRes.ok) setAgents(await agRes.json());
         if (connRes.ok) setConnections(await connRes.json());
-        if (mcpRes.ok) setMcpTools(await mcpRes.json());
-      } catch {
-        // retry silently when sidecar wakes
+        if (mcpRes.ok) {
+          const mcpJson = await mcpRes.json();
+          setMcpTools(Array.isArray(mcpJson) ? mcpJson : mcpJson.tools || []);
+        }
+        setErrorMessage(null);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Không thể tải dữ liệu ATELIER");
       }
     },
     [activeProjectId],
@@ -171,17 +200,21 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void (async () => {
       try {
-        const [matRes, prodRes] = await Promise.all([
-          fetch(`${API_BASE}/catalog/materials`),
-          fetch(`${API_BASE}/catalog/products`),
+        const [matRes, prodRes, pbrRes, assetRes] = await Promise.all([
+          fetch(`${API_BASE}/materials`),
+          fetch(`${API_BASE}/catalog`),
+          fetch(`${API_BASE}/pbr-materials`),
+          fetch(`${API_BASE}/assets/library`),
         ]);
         if (matRes.ok) setMaterialsCatalog(await matRes.json());
         if (prodRes.ok) {
           const pj = await prodRes.json();
-          setProductsCatalog(pj.products || []);
+          setProductsCatalog(Array.isArray(pj) ? pj : pj.products || []);
         }
-      } catch {
-        // ignore
+        if (pbrRes.ok) setPbrMaterials((await pbrRes.json()).materials || []);
+        if (assetRes.ok) setAssetLibrary((await assetRes.json()).assets || []);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Không thể tải catalog ATELIER");
       }
       await refreshProjectBundle(activeProjectId);
     })();
@@ -193,17 +226,17 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       setBusyMessage("Đang cập nhật vật liệu Mục 7B & tính lại dự toán...");
       try {
         const res = await fetch(
-          `${API_BASE}/projects/${activeProjectId}/surface-materials`,
+          `${API_BASE}/projects/${activeProjectId}/surfaces`,
           {
-            method: "PUT",
+            method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              base_wall_paint_id:
-                basePaintId ?? project.surface_materials.base_wall_paint_id,
-              accent_wall_paint_id:
-                accentPaintId ?? project.surface_materials.accent_wall_paint_id,
+              wall_base_material_id:
+                basePaintId ?? project.rooms?.[0]?.wall_base_material_id,
+              accent_paint_id:
+                accentPaintId ?? project.walls?.find((wall: any) => wall.is_accent_wall)?.face_a_material_id,
               floor_material_id:
-                floorMatId ?? project.surface_materials.floor_material_id,
+                floorMatId ?? project.rooms?.[0]?.floor_material_id,
             }),
           },
         );
@@ -212,7 +245,9 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
           showToast(
             "Đã áp dụng vật liệu Sơn/Gạch 7B & cập nhật Dự toán BOQ (giữ nguyên khối tường 3D).",
           );
-        }
+        } else throw new Error(`Cập nhật vật liệu thất bại (${res.status})`);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Cập nhật vật liệu thất bại");
       } finally {
         setBusyMessage(null);
       }
@@ -239,7 +274,9 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
           showToast(
             "Kiến Trúc Sư Trưởng đã phản hồi và đồng bộ với Paperclip Conversation.",
           );
-        }
+        } else throw new Error(`AI Chat thất bại (${res.status})`);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "AI Chat không phản hồi");
       } finally {
         setBusyMessage(null);
       }
@@ -252,7 +289,7 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       setBusyMessage("Đang ghi nhận vào DesignBrief & tiếp tục quy trình...");
       try {
         const res = await fetch(
-          `${API_BASE}/projects/${activeProjectId}/questions/${questionId}/answer`,
+          `${API_BASE}/questions/${questionId}/answer`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -279,7 +316,7 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       );
       try {
         const res = await fetch(
-          `${API_BASE}/projects/${activeProjectId}/proposals/${proposalId}/${decision}`,
+          `${API_BASE}/proposals/${proposalId}/${decision}`,
           { method: "POST" },
         );
         if (res.ok) {
@@ -321,8 +358,8 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       if (!project) return;
       setBusyMessage(`Đang áp dụng ${opt.title} vào Scene 3D...`);
       try {
-        await fetch(`${API_BASE}/projects/${activeProjectId}/surface-materials`, {
-          method: "PUT",
+        await fetch(`${API_BASE}/projects/${activeProjectId}/surfaces`, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             base_wall_paint_id: opt.surface_materials.base_wall_paint_id,
@@ -350,20 +387,25 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   const handleReplaceProduct = useCallback(
     async (productId: string) => {
       if (!project) return;
+      const product = productsCatalog.find(
+        (item: any) => item.id === productId || item.sku === productId,
+      );
+      const sku = product?.sku ?? productId;
       const targetInstance =
-        project.furniture.find((f: any) => f.id === selectedEntityId) ||
-        project.furniture[0];
+        (project.furniture_instances || []).find((f: any) => f.id === selectedEntityId) ||
+        (project.furniture_instances || [])[0];
       if (!targetInstance) return;
       setBusyMessage("Đang kiểm tra kích thước lọt cửa & tạo đề xuất thay thế...");
       try {
         const res = await fetch(
-          `${API_BASE}/projects/${activeProjectId}/catalog/replace`,
+          `${API_BASE}/catalog/replace`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              furniture_instance_id: targetInstance.id,
-              new_product_id: productId,
+              project_id: activeProjectId,
+              sku,
+              replace_furniture_id: targetInstance.id,
             }),
           },
         );
@@ -375,44 +417,159 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
         setBusyMessage(null);
       }
     },
-    [activeProjectId, project, refreshProjectBundle, selectedEntityId, showToast],
+    [activeProjectId, productsCatalog, project, refreshProjectBundle, selectedEntityId, showToast],
   );
 
   const handleSaveSelectedFurnitureTransform = useCallback(
     async (entityId: string, xMm: number, yMm: number, rotDeg: number) => {
       if (!project) return;
-      const updated = project.furniture.map((f: any) =>
+      const updated = (project.furniture_instances || []).map((f: any) =>
         f.id === entityId
           ? {
               ...f,
-              position_mm: [xMm, yMm, f.position_mm?.[2] ?? 0],
+              x_mm: xMm,
+              y_mm: yMm,
               rotation_deg: rotDeg,
             }
           : f,
       );
+      const updatedProject = { ...project, furniture_instances: updated };
       setBusyMessage("Đang lưu tọa độ nội thất & kiểm tra va chạm...");
       try {
         const res = await fetch(
-          `${API_BASE}/projects/${activeProjectId}/furniture`,
+          `${API_BASE}/projects/${activeProjectId}/scene`,
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              furniture: updated,
-              reason: `Cập nhật vị trí nội thất (${entityId}) từ Object Inspector`,
-            }),
+            body: JSON.stringify(updatedProject),
           },
         );
         if (res.ok) {
           await refreshProjectBundle(activeProjectId);
           showToast("Đã lưu vị trí nội thất mới vào Pascal SceneGraph!");
-        }
+        } else throw new Error(`Lưu transform thất bại (${res.status})`);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Lưu transform thất bại");
       } finally {
         setBusyMessage(null);
       }
     },
     [activeProjectId, project, refreshProjectBundle, showToast],
   );
+
+  const handleUpdateFurnitureField = useCallback(
+    (entityId: string, field: string, value: unknown) => {
+      setProject((current: any) => current ? {
+        ...current,
+        furniture_instances: (current.furniture_instances || []).map((item: any) =>
+          item.id === entityId ? { ...item, [field]: value } : item,
+        ),
+      } : current);
+    },
+    [],
+  );
+
+  const handleSaveScene = useCallback(async () => {
+    if (!project) return;
+    setBusyMessage("Đang lưu SceneGraph và tạo revision...");
+    try {
+      const response = await fetch(`${API_BASE}/projects/${activeProjectId}/scene`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(project),
+      });
+      if (!response.ok) throw new Error(`Lưu Scene thất bại (${response.status})`);
+      await refreshProjectBundle(activeProjectId);
+      showToast("Đã lưu SceneGraph và tạo revision mới.");
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Lưu Scene thất bại");
+    } finally {
+      setBusyMessage(null);
+    }
+  }, [activeProjectId, project, refreshProjectBundle, showToast]);
+
+  const handleExport = useCallback(async (format: "dxf" | "glb") => {
+    setBusyMessage(`Đang xuất ${format.toUpperCase()}...`);
+    try {
+      const response = await fetch(`${API_BASE}/exports/${activeProjectId}/${format}`);
+      if (!response.ok) throw new Error(`Xuất ${format.toUpperCase()} thất bại (${response.status})`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${activeProjectId}.${format}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      showToast(`Đã xuất ${format.toUpperCase()} thực tế.`);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : `Xuất ${format.toUpperCase()} thất bại`);
+    } finally {
+      setBusyMessage(null);
+    }
+  }, [activeProjectId, showToast]);
+
+  const handleAssignAsset = useCallback(async (entityId: string, assetId: string) => {
+    const response = await fetch(`${API_BASE}/projects/${activeProjectId}/furniture/${entityId}/assign-asset`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asset_id: assetId }),
+    });
+    if (!response.ok) throw new Error(`Gán GLB thất bại (${response.status})`);
+    await refreshProjectBundle(activeProjectId);
+    return response.json();
+  }, [activeProjectId, refreshProjectBundle]);
+
+  const handleCreateMaterialProposal = useCallback(async (entityId: string, payload: any) => {
+    const response = await fetch(`${API_BASE}/projects/${activeProjectId}/furniture/${entityId}/material-proposals`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`Tạo đề xuất vật liệu thất bại (${response.status})`);
+    const result = await response.json();
+    await refreshProjectBundle(activeProjectId);
+    return result;
+  }, [activeProjectId, refreshProjectBundle]);
+
+  const handleCreateSurfaceMaterialProposal = useCallback(async (surfaceKey: string, payload: any) => {
+    const response = await fetch(`${API_BASE}/projects/${activeProjectId}/surfaces/${surfaceKey}/material-proposals`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`Tạo đề xuất vật liệu bề mặt thất bại (${response.status})`);
+    const result = await response.json();
+    await refreshProjectBundle(activeProjectId);
+    return result;
+  }, [activeProjectId, refreshProjectBundle]);
+
+  const handleRequestSmartFit = useCallback(async (entityId: string) => {
+    const response = await fetch(`${API_BASE}/projects/${activeProjectId}/furniture/${entityId}/smart-fit`);
+    if (!response.ok) throw new Error(`Smart Fit thất bại (${response.status})`);
+    return response.json();
+  }, [activeProjectId]);
+
+  const handleRequestPlacementOptions = useCallback(async (entityId: string) => {
+    const response = await fetch(`${API_BASE}/projects/${activeProjectId}/furniture/${entityId}/placement-options?limit=2`);
+    if (!response.ok) throw new Error(`Không tạo được phương án bố trí (${response.status})`);
+    return response.json();
+  }, [activeProjectId]);
+
+  const handleCreatePlacementProposal = useCallback(async (entityId: string, option: any) => {
+    const response = await fetch(`${API_BASE}/projects/${activeProjectId}/furniture/${entityId}/placement-proposals`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(option),
+    });
+    if (!response.ok) throw new Error(`Tạo đề xuất bố trí thất bại (${response.status})`);
+    const result = await response.json();
+    await refreshProjectBundle(activeProjectId);
+    return result;
+  }, [activeProjectId, refreshProjectBundle]);
 
   const handleCreateProject = useCallback(
     async (name: string, style: string, budgetVnd: number) => {
@@ -596,6 +753,8 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       estimate,
       materialsCatalog,
       productsCatalog,
+      pbrMaterials,
+      assetLibrary,
       chatHistory,
       revisions,
       pins,
@@ -605,6 +764,8 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       setViewMode,
       cameraPreset,
       setCameraPreset,
+      lightingPreset,
+      setLightingPreset,
       workflows,
       runs,
       agents,
@@ -616,6 +777,7 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       handleTestConnection,
       handleSaveConnection,
       busyMessage,
+      errorMessage,
       toast,
       showToast,
       refreshProjectBundle,
@@ -627,6 +789,15 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       handleApplyDesignOption,
       handleReplaceProduct,
       handleSaveSelectedFurnitureTransform,
+      handleUpdateFurnitureField,
+      handleSaveScene,
+      handleExport,
+      handleAssignAsset,
+      handleCreateMaterialProposal,
+      handleCreateSurfaceMaterialProposal,
+      handleRequestSmartFit,
+      handleRequestPlacementOptions,
+      handleCreatePlacementProposal,
       handleCreateProject,
       handleCreateSpatialPin,
     }),
@@ -637,12 +808,15 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       estimate,
       materialsCatalog,
       productsCatalog,
+      pbrMaterials,
+      assetLibrary,
       chatHistory,
       revisions,
       pins,
       selectedEntityId,
       viewMode,
       cameraPreset,
+      lightingPreset,
       workflows,
       runs,
       agents,
@@ -654,6 +828,7 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       handleTestConnection,
       handleSaveConnection,
       busyMessage,
+      errorMessage,
       toast,
       showToast,
       refreshProjectBundle,
@@ -665,6 +840,15 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       handleApplyDesignOption,
       handleReplaceProduct,
       handleSaveSelectedFurnitureTransform,
+      handleUpdateFurnitureField,
+      handleSaveScene,
+      handleExport,
+      handleAssignAsset,
+      handleCreateMaterialProposal,
+      handleCreateSurfaceMaterialProposal,
+      handleRequestSmartFit,
+      handleRequestPlacementOptions,
+      handleCreatePlacementProposal,
       handleCreateProject,
       handleCreateSpatialPin,
     ],

@@ -36,33 +36,41 @@ export function ConversationAtelierSidecar({
   const [selectedChip, setSelectedChip] = useState("Japandi / Modern Warm");
 
   const {
-    scene,
-    messages,
-    proposals,
-    boq,
-    sendChatMessage,
-    approveProposal,
-    rejectProposal,
-    undoScene,
+    project,
+    materialsCatalog,
+    pbrMaterials,
+    chatHistory,
+    estimate,
+    handleSendChat,
+    handleProposalDecision,
+    handleRestoreRevision,
+    revisions,
     viewMode,
     setViewMode,
     cameraPreset,
     setCameraPreset,
-    selectedId,
-    setSelectedId,
-    activeTool,
-    updateNodeTransform,
-    addWallSegment,
+    lightingPreset,
+    selectedEntityId,
+    setSelectedEntityId,
   } = useAtelierStudio();
 
-  const pendingProposals = proposals.filter((p) => p.status === "pending");
-  const latestApplied = proposals.find((p) => p.status === "applied");
+  const messages = chatHistory.messages || [];
+  const proposals = chatHistory.proposals || [];
+  const pendingProposals = proposals.filter((p: any) => p.status === "pending");
+  const latestApplied = proposals.find((p: any) => p.status === "applied");
+  const undoScene = async () => {
+    const previous = revisions
+      .map((revision: any) => Number(revision.revision ?? revision.revision_number))
+      .filter((revision: number) => Number.isFinite(revision) && revision < Number(project?.revision ?? 0))
+      .sort((a: number, b: number) => b - a)[0];
+    if (previous !== undefined) await handleRestoreRevision(previous);
+  };
 
   const handleQuickSend = async (text?: string) => {
     const msg = (text ?? quickPrompt).trim();
     if (!msg) return;
     setQuickPrompt("");
-    await sendChatMessage(msg);
+    await handleSendChat(msg);
   };
 
   if (collapsed) {
@@ -130,7 +138,7 @@ export function ConversationAtelierSidecar({
           <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
             <div className="flex items-center gap-1.5 font-medium">
               <Layers className="h-3.5 w-3.5 text-teal-600" />
-              <span>Pascal SceneGraph (Rev #{scene?.revision ?? 1})</span>
+              <span>Pascal SceneGraph (Rev #{project?.revision ?? 1})</span>
             </div>
             <div className="flex items-center gap-1">
               {(["3d", "2d", "split"] as const).map((m) => (
@@ -167,23 +175,23 @@ export function ConversationAtelierSidecar({
                 }
               >
                 <LazyStudioViewport
-                  scene={scene}
+                  project={project}
+                  materialsDb={materialsCatalog ?? { paints: [], tiles_and_flooring: [] }}
+                  pbrMaterials={pbrMaterials}
                   viewMode={viewMode}
                   cameraPreset={cameraPreset}
-                  selectedId={selectedId}
-                  onSelectNode={setSelectedId}
-                  activeTool={activeTool}
-                  onTransformNode={updateNodeTransform}
-                  onAddWall={addWallSegment}
+                  lightingPreset={lightingPreset}
+                  selectedEntityId={selectedEntityId}
+                  onSelectEntity={setSelectedEntityId}
                 />
               </Suspense>
               <div className="pointer-events-none absolute right-2 bottom-2 left-2 flex items-center justify-between rounded bg-background/90 px-2 py-1 text-[10px] backdrop-blur-xs border border-border/60">
                 <span>
-                  {scene?.rooms?.[0]?.label ?? "Phòng khách 4.0×5.0m"} (
-                  {scene?.rooms?.[0]?.area_m2 ?? 20} m²)
+                  {project?.rooms?.[0]?.label ?? "Phòng khách 4.0×5.0m"} (
+                  {project?.rooms?.[0]?.area_m2 ?? 20} m²)
                 </span>
                 <span className="font-mono text-teal-700 dark:text-teal-400">
-                  {scene?.furniture?.length ?? 5} nội thất · {scene?.walls?.length ?? 4} tường
+                  {project?.furniture_instances?.length ?? 0} nội thất · {project?.walls?.length ?? 0} tường
                 </span>
               </div>
             </div>
@@ -307,7 +315,7 @@ export function ConversationAtelierSidecar({
                   <div className="flex items-center gap-1.5 pt-1">
                     <button
                       type="button"
-                      onClick={() => void approveProposal(prop.id)}
+                      onClick={() => void handleProposalDecision(prop.id, "approve")}
                       className="inline-flex flex-1 items-center justify-center gap-1 rounded bg-teal-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-teal-800"
                     >
                       <Check className="h-3 w-3" />
@@ -315,7 +323,7 @@ export function ConversationAtelierSidecar({
                     </button>
                     <button
                       type="button"
-                      onClick={() => void rejectProposal(prop.id)}
+                      onClick={() => void handleProposalDecision(prop.id, "reject")}
                       className="inline-flex items-center justify-center gap-1 rounded border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
                     >
                       <X className="h-3 w-3" />
@@ -359,7 +367,7 @@ export function ConversationAtelierSidecar({
           <div className="flex items-baseline justify-between pt-0.5">
             <span className="text-muted-foreground">Tổng cộng (gồm VAT 10%):</span>
             <span className="font-mono text-sm font-bold text-teal-700 dark:text-teal-400">
-              {(boq?.grand_total_vnd ?? 61041654).toLocaleString("vi-VN")} ₫
+              {(estimate?.total_vnd ?? 0).toLocaleString("vi-VN")} ₫
             </span>
           </div>
           <div className="text-[10px] text-muted-foreground">

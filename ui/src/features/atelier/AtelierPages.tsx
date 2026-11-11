@@ -3,7 +3,7 @@ import { useNavigate } from "@/lib/router";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useAtelierStudio } from "./AtelierStudioContext";
-import { AIControlCenterView } from "./AIControlCenterView";
+import { AtelierProjectWorkflowMonitor, AtelierWorkflowControlCenter } from "./AtelierWorkflowMonitor";
 import {
   FloorPlanImportPage,
   MaterialsAndCatalogPage,
@@ -46,6 +46,7 @@ export function AtelierFloorPlanImportRoute() {
   const [scaleDepthMm, setScaleDepthMm] = useState(5000);
   const [scaleCeilingMm, setScaleCeilingMm] = useState(2800);
   const [uploading, setUploading] = useState(false);
+  const [lastImportResult, setLastImportResult] = useState<any | null>(null);
   const [generatingMultiRoom, setGeneratingMultiRoom] = useState(false);
 
   useEffect(() => {
@@ -66,7 +67,11 @@ export function AtelierFloorPlanImportRoute() {
   const handleGenerateMultiRoom = async () => {
     setGeneratingMultiRoom(true);
     try {
-      const pid = activeProjectId || project?.id || "proj_demo_4x5m";
+      const pid = activeProjectId || project?.id;
+      if (!pid) {
+        showToast("Hãy chọn một project trước khi tạo mặt bằng đa phòng.");
+        return;
+      }
       const res = await fetch(`${API_BASE}/projects/${pid}/house-plan/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -131,6 +136,7 @@ export function AtelierFloorPlanImportRoute() {
       );
       if (res.ok) {
         const data = await res.json();
+        setLastImportResult(data);
         await refreshProjectBundle(activeProjectId);
         showToast(
           data.requires_scale_confirmation
@@ -149,16 +155,15 @@ export function AtelierFloorPlanImportRoute() {
     <div className="atelier-surface-root h-full overflow-y-auto space-y-6" data-theme={theme}>
       <FloorPlanImportPage
         project={project}
-        scaleWidthMm={scaleWidthMm}
-        setScaleWidthMm={setScaleWidthMm}
-        scaleDepthMm={scaleDepthMm}
-        setScaleDepthMm={setScaleDepthMm}
-        scaleCeilingMm={scaleCeilingMm}
-        setScaleCeilingMm={setScaleCeilingMm}
+        uploadingFile={uploading}
+        lastImportResult={lastImportResult}
+        scaleInputMm={scaleWidthMm}
+        onScaleInputChange={setScaleWidthMm}
         onConfirmScale={handleConfirmScale}
-        onUploadFloorplan={handleUploadFloorplan}
-        uploading={uploading}
-        onOpenWorkspace={() => navigate("/design-studio")}
+        onUploadFloorplan={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void handleUploadFloorplan(file);
+        }}
       />
 
       {/* Upgrade 1 & 3: Multi-Room Whole House Generator Card */}
@@ -228,7 +233,30 @@ export function AtelierMaterialsCatalogRoute() {
     productsCatalog,
     handleMaterialChange,
     handleReplaceProduct,
+    activeProjectId,
+    selectedEntityId,
+    showToast,
   } = useAtelierStudio();
+  const [fitCheckResults, setFitCheckResults] = useState<Record<string, any>>({});
+
+  const handleFitCheck = async (sku: string) => {
+    const response = await fetch(`${API_BASE}/catalog/fit-check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: activeProjectId,
+        sku,
+        replace_furniture_id: selectedEntityId,
+      }),
+    });
+    if (!response.ok) {
+      showToast(`Kiểm tra kích thước thất bại (${response.status}).`);
+      return;
+    }
+    const result = await response.json();
+    setFitCheckResults((current) => ({ ...current, [sku]: result }));
+    showToast(result.recommendation || "Đã hoàn tất kiểm tra kích thước.");
+  };
 
   useEffect(() => {
     setBreadcrumbs([
@@ -243,11 +271,16 @@ export function AtelierMaterialsCatalogRoute() {
     <div className="atelier-surface-root h-full overflow-y-auto" data-theme={theme}>
       <MaterialsAndCatalogPage
         project={project}
-        materialsCatalog={materialsCatalog}
-        productsCatalog={productsCatalog}
-        onMaterialChange={handleMaterialChange}
-        onReplaceProduct={handleReplaceProduct}
-        onOpenWorkspace={() => navigate("/design-studio")}
+        materialsDb={materialsCatalog ?? { paints: [], tiles_and_flooring: [] }}
+        catalog={productsCatalog}
+        fitCheckResults={fitCheckResults}
+        onUpdateSurfaces7B={(payload) => void handleMaterialChange(
+          payload.wall_base_material_id,
+          payload.accent_paint_id,
+          payload.floor_material_id,
+        )}
+        onFitCheck={(sku) => void handleFitCheck(sku)}
+        onReplaceFromCatalog={(sku) => void handleReplaceProduct(sku)}
       />
     </div>
   );
@@ -257,7 +290,7 @@ export function AtelierRenderCompareRoute() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { theme } = useTheme();
   const navigate = useNavigate();
-  const { activeProjectId, project, setCameraPreset } = useAtelierStudio();
+  const { project, materialsCatalog } = useAtelierStudio();
 
   useEffect(() => {
     setBreadcrumbs([
@@ -272,12 +305,7 @@ export function AtelierRenderCompareRoute() {
     <div className="atelier-surface-root h-full overflow-y-auto" data-theme={theme}>
       <RenderAndCadPage
         project={project}
-        activeProjectId={activeProjectId}
-        apiBase={API_BASE}
-        onOpenWorkspaceWithPreset={(preset) => {
-          setCameraPreset(preset);
-          navigate("/design-studio");
-        }}
+        materialsDb={materialsCatalog ?? { paints: [], tiles_and_flooring: [] }}
       />
     </div>
   );
@@ -286,7 +314,7 @@ export function AtelierRenderCompareRoute() {
 export function AtelierCostEstimationRoute() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { theme } = useTheme();
-  const { activeProjectId, project, estimate } = useAtelierStudio();
+  const { project, estimate } = useAtelierStudio();
 
   useEffect(() => {
     setBreadcrumbs([
@@ -300,10 +328,7 @@ export function AtelierCostEstimationRoute() {
   return (
     <div className="atelier-surface-root h-full overflow-y-auto" data-theme={theme}>
       <CostEstimationPage
-        project={project}
-        estimate={estimate}
-        activeProjectId={activeProjectId}
-        apiBase={API_BASE}
+        project={{ ...project, estimate_snapshot: estimate ?? project.estimate_snapshot }}
       />
     </div>
   );
@@ -643,43 +668,21 @@ export function AtelierSystemHealthRoute() {
 
 export function AtelierControlCenterRoute() {
   const { setBreadcrumbs } = useBreadcrumbs();
-  const {
-    workflows,
-    runs,
-    agents,
-    connections,
-    mcpTools,
-    handleRunWorkflow,
-    handleUpdateWorkflow,
-    handleUpdateAgent,
-    handleTestConnection,
-    handleSaveConnection,
-  } = useAtelierStudio();
 
   useEffect(() => {
     setBreadcrumbs([
       { label: "Điều phối AI" },
-      { label: "Agent Control / Workflow (14 Nodes)" },
+      { label: "Company Workflow / Project Monitor" },
     ]);
   }, [setBreadcrumbs]);
 
-  return (
-    <div className="h-full w-full overflow-hidden flex flex-col bg-background">
-      <AIControlCenterView
-        workflows={workflows}
-        runs={runs}
-        agents={agents}
-        connections={connections}
-        mcpTools={mcpTools}
-        onRunWorkflow={handleRunWorkflow}
-        onUpdateWorkflow={handleUpdateWorkflow}
-        onUpdateAgent={handleUpdateAgent}
-        onTestConnection={handleTestConnection}
-        onSaveConnection={handleSaveConnection}
-        onAddConnection={handleSaveConnection}
-        onDeleteConnection={() => {}}
-        onResetWorkflow={handleRunWorkflow}
-      />
-    </div>
-  );
+  return <AtelierWorkflowControlCenter />;
+}
+
+export function AtelierProjectWorkflowRoute() {
+  const { setBreadcrumbs } = useBreadcrumbs();
+  useEffect(() => {
+    setBreadcrumbs([{ label: "Điều phối AI" }, { label: "Project Workflow Monitor" }]);
+  }, [setBreadcrumbs]);
+  return <AtelierProjectWorkflowMonitor />;
 }

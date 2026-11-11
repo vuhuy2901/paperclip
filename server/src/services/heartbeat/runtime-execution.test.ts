@@ -31,6 +31,7 @@ import { createHeartbeatRunState } from "./run-state.js";
 import { buildEffectiveRunSessionConfigMetadata } from "./workspaces.js";
 import { revokeHeartbeatRunGatewayTokens } from "./run-preparation.js";
 import { executeHeartbeatRuntime, type HeartbeatRuntimeExecutionInput } from "./runtime-execution.js";
+import { verifyLocalAgentJwt } from "../../agent-auth-jwt.js";
 
 import { prepareNativeHeartbeatRun } from "../native-runtime/prepare-native-run.js";
 import { buildNativeCompletionContract } from "../native-runtime/completion-contracts.js";
@@ -415,6 +416,24 @@ describe.skipIf(!support.supported)("heartbeat runtime execution boundary", () =
     expect(executePaperclipNativeSession).toHaveBeenCalledWith(expect.objectContaining({ onExecutionLeaseAcquired: acquired }));
     // Preparation is still protected until the native executor claims its lease.
     expect(acquired).not.toHaveBeenCalled();
+  });
+
+  it("injects a run-scoped agent JWT into supported native runtimes", async () => {
+    vi.stubEnv("PAPERCLIP_AGENT_JWT_SECRET", "runtime-execution-native-agent-jwt-secret");
+    const { input } = await fixture(true);
+    input.runtime.adapter.supportsLocalAgentJwt = true;
+
+    await executeHeartbeatRuntime(db, input);
+
+    const nativeCall = vi.mocked(executePaperclipNativeSession).mock.calls[0]?.[0];
+    const token = nativeCall?.runnerEnvironment?.PAPERCLIP_API_KEY;
+    expect(token).toEqual(expect.any(String));
+    expect(verifyLocalAgentJwt(String(token), { strictRunAuthority: true })).toMatchObject({
+      sub: input.agent.id,
+      company_id: input.agent.companyId,
+      adapter_type: input.agent.adapterType,
+      run_id: input.run.id,
+    });
   });
 
   it.each([false, true])("preserves the dispatch gate's early return and cleanup (native: %s)", async native => {

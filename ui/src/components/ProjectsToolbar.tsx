@@ -1,4 +1,4 @@
-import { ArrowUpDown, Check, Plus } from "lucide-react";
+import { ArrowUpDown, Check, LayoutGrid, List, Plus, Sparkles } from "lucide-react";
 import { ToolbarSearch } from "./ToolbarSearch";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -14,13 +14,19 @@ const PROJECT_SORT_OPTIONS: Array<{ field: ProjectSortField; label: string }> = 
 ];
 
 /** Canonical project search, sorting and creation controls. State stays with the page. */
-export function ProjectsToolbar({ query, onQueryChange, sortField, sortDir, onSortChange, onNewProject: openNewProject }: {
+export function ProjectsToolbar({ query, onQueryChange, sortField, sortDir, onSortChange, onNewProject: openNewProject,
+  onStartWithAi, statusFilter = "active", onStatusFilterChange, viewMode = "list", onViewModeChange }: {
   query: string;
   onQueryChange: (value: string) => void;
   sortField: ProjectSortField;
   sortDir: ProjectSortDir;
   onSortChange: (field: ProjectSortField, direction: ProjectSortDir) => void;
   onNewProject: () => void;
+  onStartWithAi?: () => void;
+  statusFilter?: string;
+  onStatusFilterChange?: (value: string) => void;
+  viewMode?: "list" | "cards";
+  onViewModeChange?: (value: "list" | "cards") => void;
 }) {
   const sortLabel = PROJECT_SORT_OPTIONS.find(option => option.field === sortField)?.label ?? "Name";
   return <div data-canonical-toolbar="projects" role="toolbar" aria-label="Projects controls" className="flex flex-wrap items-center gap-4">
@@ -61,8 +67,22 @@ export function ProjectsToolbar({ query, onQueryChange, sortField, sortDir, onSo
         </div>
       </PopoverContent>
     </Popover>
+    {onStatusFilterChange ? <select aria-label="Filter projects by status" className="h-8 rounded-md border border-input bg-background px-3 text-sm" value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value)}>
+      <option value="active">Active</option>
+      <option value="backlog">Draft / Intake</option>
+      <option value="planned">Planned</option>
+      <option value="in_progress">In progress</option>
+      <option value="completed">Completed</option>
+      <option value="archived">Archived</option>
+      <option value="all">All projects</option>
+    </select> : null}
+    {onViewModeChange ? <div className="flex items-center rounded-md border border-input p-0.5" aria-label="Project view">
+      <Button type="button" variant={viewMode === "list" ? "secondary" : "ghost"} size="icon-sm" aria-label="List view" onClick={() => onViewModeChange("list")}><List aria-hidden /></Button>
+      <Button type="button" variant={viewMode === "cards" ? "secondary" : "ghost"} size="icon-sm" aria-label="Card view" onClick={() => onViewModeChange("cards")}><LayoutGrid aria-hidden /></Button>
+    </div> : null}
     <div className="design-toolbar-actions">
-      <Button size="sm" variant="outline" data-toolbar-primary onClick={openNewProject}>
+      {onStartWithAi ? <Button size="sm" data-toolbar-primary onClick={onStartWithAi}><Sparkles className="h-4 w-4 mr-1" />Bắt đầu với AI</Button> : null}
+      <Button size="sm" variant="outline" onClick={openNewProject}>
           <Plus className="h-4 w-4 mr-1" />
           Create project
       </Button>

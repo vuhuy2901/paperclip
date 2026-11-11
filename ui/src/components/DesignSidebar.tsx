@@ -1,6 +1,7 @@
 import type { Issue } from "@paperclipai/shared";
 import { Boxes, CircleCheck, CirclePlus, FolderOpen, History, LayoutDashboard, MessageCircle, Package, Repeat, Search, Unplug, Users } from "lucide-react";
 import { useCompany } from "@/context/CompanyContext";
+import { useDialogActions } from "@/context/DialogContext";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 import { SidebarNavExpandedProvider, SidebarNavItem } from "./SidebarNavItem";
@@ -16,6 +17,7 @@ export type DesignSidebarRecentTask = Pick<Issue, "id" | "companyId" | "identifi
 /** Shared staged sidebar. The caller supplies company-scoped recent tasks and actions. */
 export function DesignSidebar({ onNewTask, recentTasks = [] }: { onNewTask: () => void; recentTasks?: readonly DesignSidebarRecentTask[] }) {
   const { selectedCompany } = useCompany();
+  const { openNewProject } = useDialogActions();
   const root = `/${selectedCompany?.issuePrefix ?? "PAP"}`;
   const companyRecentTasks = recentTasks.filter(task => task.companyId === selectedCompany?.id);
   const handleRecentScroll = useScrollbarWhileScrolling();
@@ -28,13 +30,14 @@ export function DesignSidebar({ onNewTask, recentTasks = [] }: { onNewTask: () =
         </div>
         <nav className="design-sidebar-navigation" aria-label="Main navigation">
           <div className="design-sidebar-primary">
-            <Button variant="ghost" className="design-sidebar-new-task" onClick={onNewTask}><CirclePlus aria-hidden />New Task</Button>
+            <Button variant="ghost" className="design-sidebar-new-task" onClick={openNewProject}><CirclePlus aria-hidden />+ Tạo dự án</Button>
             <SidebarNavItem className="design-sidebar-item" to={`${root}/dashboard`} label="Dashboard" icon={LayoutDashboard} />
+            <SidebarNavItem className="design-sidebar-item" to={`${root}/projects`} label="Projects" icon={FolderOpen} />
             <SidebarNavItem className="design-sidebar-item" to={`${root}/chats`} label="Chat" icon={MessageCircle} />
           </div>
           <SidebarSection label="Work">
+            <Button variant="ghost" className="design-sidebar-new-task" onClick={onNewTask}><CirclePlus aria-hidden />New Task</Button>
             <SidebarNavItem className="design-sidebar-item" to={`${root}/issues`} label="Tasks" icon={CircleCheck} />
-            <SidebarNavItem className="design-sidebar-item" to={`${root}/projects`} label="Projects" icon={FolderOpen} />
             <SidebarNavItem className="design-sidebar-item" to={`${root}/routines`} label="Routines" icon={Repeat} />
             <SidebarNavItem className="design-sidebar-item" to={`${root}/artifacts`} label="Artifacts" icon={Package} />
           </SidebarSection>
