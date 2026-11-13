@@ -52,6 +52,15 @@ import {
   ensureAtelierProjectWorkflow,
   getAtelierProjectWorkflowView,
 } from "../services/atelier-workflow-orchestration.js";
+import {
+  createAtelierWorkflowDraft,
+  listAtelierAgentCapabilities,
+  listAtelierWorkflowVersions,
+  publishAtelierWorkflowDraft,
+  updateAtelierWorkflowDraft,
+  upgradeLegacyAtelierDefinition,
+  validateAtelierWorkflowDefinition,
+} from "../services/atelier-workflow-builder.js";
 import { catalogSkills } from "@paperclipai/skills-catalog";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -199,6 +208,7 @@ const ATELIER_SPECIALIST_AGENTS = [
       "room-dimension-validation",
       "aesthetic-moodboard-and-styling",
       "ergonomics-and-circulation-optimization",
+      "atelier-ai-window-opening-recognition",
     ],
     allowedTools: ["Tasks", "Conversations", "Approvals", "Đọc SceneGraph"],
     forbiddenTools: ["Ghi trực tiếp Pascal SceneGraph", "Tự tìm giá / tính giá"],
@@ -212,7 +222,11 @@ const ATELIER_SPECIALIST_AGENTS = [
     icon: "scan",
     capabilities:
       "Đọc bản vẽ PDF/PNG/JPG/DXF, nhận diện tường/cửa đi/cửa sổ, kiểm tra đơn vị mm và mức độ tin cậy tỷ lệ (Scale Gate).",
-    skills: ["floorplan-understanding", "room-dimension-validation"],
+    skills: [
+      "floorplan-understanding",
+      "room-dimension-validation",
+      "atelier-ai-window-opening-recognition",
+    ],
     allowedTools: ["Parser DXF/PDF/ảnh", "Computer Vision (CV)", "Semantic VLM"],
     forbiddenTools: ["Ghi trực tiếp Pascal SceneGraph"],
     tokenLimit: 6000,
@@ -230,6 +244,7 @@ const ATELIER_SPECIALIST_AGENTS = [
       "room-dimension-validation",
       "cad-dxf-ifc-export",
       "bespoke-millwork-and-joinery",
+      "atelier-ai-window-opening-recognition",
     ],
     allowedTools: ["Pascal SceneGraph Write (tường, sàn, trần, cửa)", "CAD Exporters (DXF, GLB, IFC4)"],
     forbiddenTools: ["Đặt nội thất rời", "Đổi vật liệu hoàn thiện"],
@@ -333,6 +348,7 @@ const ATELIER_SPECIALIST_AGENTS = [
       "room-dimension-validation",
       "design-review-approval",
       "ergonomics-and-circulation-optimization",
+      "atelier-ai-window-opening-recognition",
     ],
     allowedTools: ["Chỉ đọc (READ-ONLY) toàn bộ hệ thống: SceneGraph, Brief, Cost, BOM, Render"],
     forbiddenTools: ["Bất kỳ lệnh ghi (WRITE) nào vào cảnh, database hay dự toán"],
@@ -499,10 +515,22 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
           nextAdapterConfig = materialized.adapterConfig;
           instructionStatus = "installed";
         }
+        const currentMetadata = (agent.metadata as Record<string, unknown> | null) ?? {};
+        const currentPermissions = (agent.permissions as Record<string, unknown> | null) ?? {};
+        const currentRuntimeConfig = (agent.runtimeConfig as Record<string, unknown> | null) ?? {};
         await db.update(agents).set({
           adapterConfig: nextAdapterConfig,
+          permissions: {
+            ...currentPermissions,
+            allowedSkillSlugs: [...spec.skills],
+          },
+          runtimeConfig: {
+            ...currentRuntimeConfig,
+            skills: [...spec.skills],
+          },
           metadata: {
-            ...((agent.metadata as Record<string, unknown> | null) ?? {}),
+            ...currentMetadata,
+            assignedSkills: [...spec.skills],
             atelierClarificationPolicy: {
               version: ATELIER_CLARIFICATION_POLICY_VERSION,
               instructionStatus,
@@ -973,10 +1001,92 @@ export function atelierBridgeRoutes(db: Db) {
       definition_id: definition.id,
       definition_version: definition.version,
       status: definition.status,
-      definition: atelierCanonicalWorkflowDefinition(),
+      definition: upgradeLegacyAtelierDefinition(definition.definition, definition.version, definition.name),
       agent_bindings: agentBindings,
       projects: projectRows.map((project) => ({ ...project, workflow_run_id: runsByProject.get(project.id)?.id ?? null, workflow_status: runsByProject.get(project.id)?.status ?? "not_provisioned" })),
     });
+  });
+
+  router.get("/atelier/workflow/definitions", async (req, res) => {
+    assertBoardOrAgent(req);
+    const companyId = String(req.query.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const versions = await listAtelierWorkflowVersions(db, companyId);
+    res.json({ ok: true, company_id: companyId, versions: versions.map((row) => ({ ...row, definition: upgradeLegacyAtelierDefinition(row.definition, row.version, row.name) })) });
+  });
+
+  router.get("/atelier/workflow/definitions/:definitionId", async (req, res) => {
+    assertBoardOrAgent(req);
+    const companyId = String(req.query.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const row = (await listAtelierWorkflowVersions(db, companyId)).find((item) => item.id === req.params.definitionId);
+    if (!row) { res.status(404).json({ error: "Workflow version not found" }); return; }
+    const definition = upgradeLegacyAtelierDefinition(row.definition, row.version, row.name);
+    const validation = await validateAtelierWorkflowDefinition(db, companyId, definition);
+    res.json({ ok: true, workflow: { ...row, definition }, validation });
+  });
+
+  router.get("/atelier/agent-capabilities", async (req, res) => {
+    assertBoardOrAgent(req);
+    const companyId = String(req.query.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    res.json({ ok: true, company_id: companyId, agents: await listAtelierAgentCapabilities(db, companyId) });
+  });
+
+  router.post("/atelier/workflow/definitions/:definitionId/draft", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const actor = getActorInfo(req);
+    const draft = await createAtelierWorkflowDraft(db, companyId, String(req.params.definitionId), actor.actorType === "user" ? actor.actorId : null);
+    res.status(201).json({ ok: true, workflow: { ...draft, definition: upgradeLegacyAtelierDefinition(draft.definition, draft.version, draft.name) } });
+  });
+
+  router.patch("/atelier/workflow/definitions/:definitionId", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const updated = await updateAtelierWorkflowDraft(db, companyId, String(req.params.definitionId), req.body?.definition, typeof req.body?.expected_updated_at === "string" ? req.body.expected_updated_at : undefined);
+    const definition = upgradeLegacyAtelierDefinition(updated.definition, updated.version, updated.name);
+    const validation = await validateAtelierWorkflowDefinition(db, companyId, definition);
+    res.json({ ok: true, workflow: { ...updated, definition }, validation });
+  });
+
+  router.post("/atelier/workflow/definitions/:definitionId/validate", async (req, res) => {
+    assertBoardOrAgent(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const row = (await listAtelierWorkflowVersions(db, companyId)).find((item) => item.id === req.params.definitionId);
+    if (!row) { res.status(404).json({ error: "Workflow version not found" }); return; }
+    const definition = req.body?.definition ?? upgradeLegacyAtelierDefinition(row.definition, row.version, row.name);
+    res.json({ ok: true, ...(await validateAtelierWorkflowDefinition(db, companyId, definition)) });
+  });
+
+  router.post("/atelier/workflow/definitions/:definitionId/test", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const row = (await listAtelierWorkflowVersions(db, companyId)).find((item) => item.id === req.params.definitionId);
+    if (!row) { res.status(404).json({ error: "Workflow version not found" }); return; }
+    const validation = await validateAtelierWorkflowDefinition(db, companyId, req.body?.definition ?? upgradeLegacyAtelierDefinition(row.definition, row.version, row.name));
+    res.json({ ok: true, dispatch: false, mode: "validation_only", validation, message: validation.valid ? "Definition is structurally executable; no production agents were dispatched." : "Test run blocked by validation errors." });
+  });
+
+  router.post("/atelier/workflow/definitions/:definitionId/publish", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const published = await publishAtelierWorkflowDraft(db, companyId, String(req.params.definitionId));
+    res.json({ ok: true, workflow: { ...published, definition: upgradeLegacyAtelierDefinition(published.definition, published.version, published.name) } });
+  });
+
+  router.post("/atelier/workflow/definitions/:definitionId/restore", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const actor = getActorInfo(req);
+    const draft = await createAtelierWorkflowDraft(db, companyId, String(req.params.definitionId), actor.actorType === "user" ? actor.actorId : null);
+    res.status(201).json({ ok: true, restored_from: req.params.definitionId, workflow: { ...draft, definition: upgradeLegacyAtelierDefinition(draft.definition, draft.version, draft.name) } });
   });
 
   router.get("/atelier/workflow/project/:projectId", async (req, res) => {

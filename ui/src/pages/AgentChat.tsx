@@ -11,7 +11,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { Link, useParams } from "@/lib/router";
 import { agentRouteRef } from "@/lib/utils";
 import { TaskDetailSurface } from "./IssueDetail";
-import { isUuidLike, type Issue } from "@paperclipai/shared";
+import { isUuidLike, legacyNormalizeAgentUrlKey, type Issue } from "@paperclipai/shared";
 import { ConversationAtelierSidecar } from "@/features/atelier/ConversationAtelierSidecar";
 
 export function AgentChat() {
@@ -32,7 +32,8 @@ export function AgentChat() {
     session.data?.user?.id ?? session.data?.session?.userId ?? null;
   const agentsView = useQueryView(agents);
   const rosterAgent = agents.data?.find(
-    (item) => item.id === agentRef || agentRouteRef(item) === agentRef,
+    (item) => item.id === agentRef || agentRouteRef(item) === agentRef
+      || legacyNormalizeAgentUrlKey(item.name) === agentRef,
   );
   const historyAgent = useQuery({
     queryKey: queryKeys.agents.detail(agentRef),

@@ -1,8 +1,8 @@
 /**
- * ATELIER AI — Dedicated Object, Furniture & Surface Material Inspector (Sections 6.3 & 11 + G4 Multi-Material & Surface Editing)
+ * ATELIER AI — Dedicated Object and Furniture Inspector (Sections 6.3 & 11)
  * Synchronizes selection between Furniture List, Object Properties (X/Y/Z, Rotation, Dimensions, Price),
- * 3D Asset Switcher, Multi-Material Slot & PBR Editor, Floor 800×800 mm (3mm grout) Surface Proposal,
- * Surface Material Swatches (Section 7B Paint/Accent/Floor), and 2D/3D Pascal Viewport.
+ * 3D Asset Switcher and 2D/3D Pascal Viewport. Color and material choices are
+ * delegated to the AI Copilot proposal flow instead of manual preset pickers.
  */
 import React, { useEffect, useState } from 'react'
 import {
@@ -14,27 +14,19 @@ import {
   Palette,
   Box,
   Sliders,
-  Check,
   X,
-  Eye,
   RefreshCw,
 } from 'lucide-react'
 
 interface ObjectInspectorProps {
   project: any
-  materialsDb: any
-  pbrMaterials?: any[]
   assetLibrary?: any[]
   selectedEntityId: string | null
   onSelectEntity: (id: string | null) => void
   onUpdateFurnitureField: (furnId: string, field: string, value: any) => void
   onCommitCanvasPosition: () => void
-  onUpdateSurfaces7B: (payload: any) => void
-  onPreviewMaterial?: (payload: any) => void
-  onCreateMaterialProposal?: (objectId: string, payload: any) => Promise<any>
-  onCreateSurfaceMaterialProposal?: (surfaceId: string, payload: any) => Promise<any>
   onAssignAsset?: (objectId: string, assetId: string) => Promise<any>
-  onResetMaterialPreview?: () => void
+  onOpenAICopilot?: () => void
   onRequestSmartFit?: (objectId: string) => Promise<any>
   onRequestPlacementOptions?: (objectId: string) => Promise<any>
   onCreatePlacementProposal?: (objectId: string, option: any) => Promise<any>
@@ -47,19 +39,13 @@ const formatFurniturePrice = (v?: number) => (v == null || v <= 0 ? 'Chưa có g
 
 export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
   project,
-  materialsDb,
-  pbrMaterials = [],
   assetLibrary = [],
   selectedEntityId,
   onSelectEntity,
   onUpdateFurnitureField,
   onCommitCanvasPosition,
-  onUpdateSurfaces7B,
-  onPreviewMaterial,
-  onCreateMaterialProposal,
-  onCreateSurfaceMaterialProposal,
   onAssignAsset,
-  onResetMaterialPreview,
+  onOpenAICopilot,
   onRequestSmartFit,
   onRequestPlacementOptions,
   onCreatePlacementProposal,
@@ -69,19 +55,8 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     selected: true,
     furnitureList: true,
-    surfaces7B: true,
-    pbrMaterial: true,
     smartFit: true,
   })
-  const [selectedSlotId, setSelectedSlotId] = useState<string>('')
-  const [selectedMaterialId, setSelectedMaterialId] = useState<string>('mat_fabric_sand')
-  const [materialTint, setMaterialTint] = useState<string>('#D3C7B5')
-  const [roughness, setRoughness] = useState<number>(0.78)
-  const [metalness, setMetalness] = useState<number>(0)
-  const [clearcoat, setClearcoat] = useState<number>(0)
-  const [sheen, setSheen] = useState<number>(0.2)
-  const [proposalPending, setProposalPending] = useState(false)
-  const [surfaceProposalPending, setSurfaceProposalPending] = useState(false)
   const [assigningAsset, setAssigningAsset] = useState(false)
   const [targetAssetId, setTargetAssetId] = useState<string>('')
   const [fitReport, setFitReport] = useState<any>(null)
@@ -93,17 +68,9 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
 
   const furniture = project?.furniture_instances || []
   const walls = project?.walls || []
-  const currentRoom = project?.rooms?.[0]
 
   const selectedFurn = furniture.find((f: any) => f.id === selectedEntityId)
   const selectedWall = walls.find((w: any) => w.id === selectedEntityId)
-  const availableSlots = selectedFurn?.material_slots || []
-  const activeSlotId = availableSlots.some((slot: any) => slot.slot_id === selectedSlotId)
-    ? selectedSlotId
-    : availableSlots[0]?.slot_id || ''
-  const activeSlot = availableSlots.find((slot: any) => slot.slot_id === activeSlotId)
-  const selectedMaterial = pbrMaterials.find((material: any) => material.material_id === selectedMaterialId)
-  const persistedOverride = selectedFurn?.material_overrides?.[activeSlotId]
 
   useEffect(() => {
     if (selectedFurn?.asset_id) {
@@ -113,87 +80,6 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
     }
   }, [selectedFurn?.id, selectedFurn?.asset_id, assetLibrary])
 
-  useEffect(() => {
-    if (!persistedOverride) return
-    setSelectedMaterialId(persistedOverride.material_id)
-    const definition = pbrMaterials.find(
-      (material: any) => material.material_id === persistedOverride.material_id
-    )
-    setMaterialTint(persistedOverride.tint || definition?.tint || '#FFFFFF')
-    setRoughness(persistedOverride.pbr?.roughness ?? definition?.pbr?.roughness ?? 0.5)
-    setMetalness(persistedOverride.pbr?.metalness ?? definition?.pbr?.metalness ?? 0)
-    setClearcoat(persistedOverride.pbr?.clearcoat ?? definition?.pbr?.clearcoat ?? 0)
-    setSheen(persistedOverride.pbr?.sheen ?? definition?.pbr?.sheen ?? 0)
-  }, [
-    selectedFurn?.id,
-    activeSlotId,
-    persistedOverride?.material_id,
-    persistedOverride?.tint,
-    persistedOverride?.pbr?.roughness,
-    persistedOverride?.pbr?.metalness,
-    persistedOverride?.pbr?.clearcoat,
-    persistedOverride?.pbr?.sheen,
-    pbrMaterials,
-  ])
-
-  const materialOverride = {
-    material_id: selectedMaterialId,
-    material_version: selectedMaterial?.version || 1,
-    tint: materialTint,
-    pbr: { roughness, metalness, clearcoat, sheen },
-  }
-
-  const previewMaterial = () => {
-    if (!selectedFurn || !activeSlot || !selectedMaterial || !onPreviewMaterial) return
-    onPreviewMaterial({
-      objectId: selectedFurn.id,
-      slotId: activeSlot.slot_id,
-      sourceMaterialName: activeSlot.source_material_name,
-      override: materialOverride,
-    })
-  }
-
-  const createMaterialProposal = async () => {
-    if (!selectedFurn || !activeSlot || !onCreateMaterialProposal) return
-    setProposalPending(true)
-    try {
-      await onCreateMaterialProposal(selectedFurn.id, {
-        slot_id: activeSlot.slot_id,
-        ...materialOverride,
-      })
-    } finally {
-      setProposalPending(false)
-    }
-  }
-
-  const handleProposeFloorTile800 = async () => {
-    if (!onCreateSurfaceMaterialProposal) return
-    setSurfaceProposalPending(true)
-    try {
-      await onCreateSurfaceMaterialProposal('floor', {
-        slot_id: 'FLOOR_MAIN',
-        material_id: 'mat_tile_sand_800',
-        material_version: 1,
-        tint: '#DFD6C7',
-        pbr: {
-          roughness: 0.36,
-          metalness: 0.0,
-          clearcoat: 0.08,
-          sheen: 0.0,
-        },
-        uv_transform: {
-          scale: [1, 1],
-          offset_mm: [0, 0],
-          rotation_deg: 0,
-          tile_size_mm: [800, 800],
-          grout_thickness_mm: 3,
-          grout_color: '#B8B1A6',
-        },
-      })
-    } finally {
-      setSurfaceProposalPending(false)
-    }
-  }
 
   const handleAssignAssetClick = async () => {
     const assetToAssign = targetAssetId || assetLibrary[0]?.asset_id
@@ -206,12 +92,8 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
     }
   }
 
-  const paints = materialsDb?.paints || []
-  const tiles = materialsDb?.tiles_and_flooring || []
-  const floorOverride = project?.surface_material_overrides?.floor
-
   return (
-    <aside id="inspector-dock" className="inspector-dock" aria-label="Thuộc tính và vật liệu">
+    <aside id="inspector-dock" className="inspector-dock" aria-label="Thuộc tính đối tượng">
       {/* Inspector Header */}
       <div
         style={{
@@ -226,7 +108,7 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13 }}>
           <Sliders size={14} style={{ color: 'var(--accent)' }} />
-          <span>Thuộc Tính & Vật Liệu</span>
+          <span>Thuộc Tính Đối Tượng</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button
@@ -454,134 +336,20 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
           )}
         </div>
 
-        {/* G2 / G4 renderer-neutral PBR material editor */}
-        {selectedFurn && availableSlots.length > 0 && (
-          <div className="inspector-section" data-testid="pbr-material-editor">
-            <button className="inspector-section-header" onClick={() => toggleSection('pbrMaterial')}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Palette size={13} style={{ color: 'var(--accent)' }} />
-                Material Slots & PBR ({availableSlots.length} slot)
-              </span>
-              {openSections.pbrMaterial ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <div className="inspector-section" data-testid="ai-material-guidance">
+          <div className="inspector-section-body" style={{ gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+              <Palette size={13} style={{ color: 'var(--accent)' }} />
+              Màu và vật liệu do AI đề xuất
+            </div>
+            <div className="text-caption">
+              Mô tả phong cách hoặc màu mong muốn. AI sẽ tìm phương án phù hợp và gửi đề xuất để bạn duyệt trước khi áp dụng.
+            </div>
+            <button type="button" className="btn btn-sm btn-primary" onClick={onOpenAICopilot}>
+              Mở AI Copilot
             </button>
-            {openSections.pbrMaterial && (
-              <div className="inspector-section-body" style={{ gap: 10 }}>
-                <div className="surface-subtle" style={{ fontSize: 11.5, lineHeight: 1.45 }}>
-                  <strong>{availableSlots.length} slot thực tế từ GLB</strong>
-                  {availableSlots.length === 1 ? (
-                    <div style={{ marginTop: 4, color: 'var(--amber-text, #92400e)' }}>
-                      Asset chỉ có một primitive/material. Override tác động toàn bộ model; để chỉnh riêng vải và chân gỗ, hãy gán model nhiều slot (VD: GlamVelvetSofa 3 slot hoặc ModernArmChair 2 slot).
-                    </div>
-                  ) : (
-                    <div style={{ marginTop: 4, color: 'var(--emerald-text, #065f46)' }}>
-                      ✓ Model đa vật liệu ({availableSlots.length} slot độc lập): có thể đổi riêng vải bọc, chân gỗ hoặc khung đế.
-                    </div>
-                  )}
-                </div>
-
-                <label className="text-caption">
-                  Material slot (Bộ phận)
-                  <select
-                    data-testid="material-slot-select"
-                    className="field-select"
-                    value={activeSlotId}
-                    onChange={(event) => setSelectedSlotId(event.target.value)}
-                  >
-                    {availableSlots.map((slot: any) => (
-                      <option key={slot.slot_id} value={slot.slot_id}>
-                        {slot.slot_id} — {slot.source_material_name} ({slot.semantic_part || 'surface'})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="text-caption">
-                  Material Definition
-                  <select
-                    data-testid="pbr-material-select"
-                    className="field-select"
-                    value={selectedMaterialId}
-                    onChange={(event) => {
-                      const next = pbrMaterials.find((material: any) => material.material_id === event.target.value)
-                      setSelectedMaterialId(event.target.value)
-                      if (next) {
-                        setMaterialTint(next.tint || next.pbr?.base_color || '#FFFFFF')
-                        setRoughness(next.pbr?.roughness ?? 0.5)
-                        setMetalness(next.pbr?.metalness ?? 0)
-                        setClearcoat(next.pbr?.clearcoat ?? 0)
-                        setSheen(next.pbr?.sheen ?? 0)
-                      }
-                    }}
-                  >
-                    {pbrMaterials.map((material: any) => (
-                      <option key={material.material_id} value={material.material_id}>
-                        {material.name} · {material.kind}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr', gap: 8, alignItems: 'center' }}>
-                  <input
-                    data-testid="material-color-picker"
-                    type="color"
-                    value={materialTint}
-                    onChange={(event) => setMaterialTint(event.target.value)}
-                    style={{ width: 44, height: 34, border: '1px solid var(--border-subtle)', borderRadius: 6 }}
-                  />
-                  <div className="surface-subtle" style={{ padding: '6px 8px', fontSize: 11 }}>
-                    <div>Slot: <span className="mono">{activeSlot?.source_material_name}</span></div>
-                    <div className="mono">Tint: {materialTint.toUpperCase()}</div>
-                  </div>
-                </div>
-
-                {[
-                  ['Roughness', roughness, setRoughness],
-                  ['Metalness', metalness, setMetalness],
-                  ['Clearcoat', clearcoat, setClearcoat],
-                  ['Sheen', sheen, setSheen],
-                ].map(([label, value, setter]: any) => (
-                  <label key={label} className="text-caption" style={{ display: 'grid', gridTemplateColumns: '78px 1fr 32px', gap: 6, alignItems: 'center' }}>
-                    <span>{label}</span>
-                    <input
-                      data-testid={`pbr-${String(label).toLowerCase()}`}
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={value}
-                      onChange={(event) => setter(Number(event.target.value))}
-                    />
-                    <span className="mono">{Number(value).toFixed(2)}</span>
-                  </label>
-                ))}
-
-                <div className="surface-subtle" style={{ fontSize: 10.5, lineHeight: 1.45 }}>
-                  <div>Texture: giữ UV + diffuse/normal/roughness gốc của GLB</div>
-                  <div>Nguồn: {selectedMaterial?.author || 'Chưa khai báo'}</div>
-                  <div>License: {selectedMaterial?.license || 'Chưa khai báo'} · Giá: Chưa có giá</div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  <button data-testid="material-preview" className="btn btn-sm btn-soft" onClick={previewMaterial}>
-                    <Eye size={12} /> Preview
-                  </button>
-                  <button
-                    data-testid="material-propose"
-                    className="btn btn-sm btn-primary"
-                    disabled={proposalPending}
-                    onClick={createMaterialProposal}
-                  >
-                    <Save size={12} /> {proposalPending ? 'Đang tạo...' : 'Tạo đề xuất'}
-                  </button>
-                  <button className="btn btn-sm" style={{ gridColumn: '1 / -1' }} onClick={onResetMaterialPreview}>
-                    <RotateCw size={12} /> Reset về revision đã lưu
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
-        )}
+        </div>
 
         {selectedFurn && (
           <div className="inspector-section" data-testid="smart-fit-editor">
@@ -729,135 +497,6 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
           )}
         </div>
 
-        {/* 3. SURFACE MATERIAL SELECTOR (Section 7B & G4 Floor 800x800mm Tile Proposal) */}
-        <div className="inspector-section">
-          <button className="inspector-section-header" onClick={() => toggleSection('surfaces7B')}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Palette size={13} style={{ color: 'var(--accent)' }} />
-              Vật Liệu Bề Mặt (Sơn & Sàn 7B)
-            </span>
-            {openSections.surfaces7B ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-
-          {openSections.surfaces7B && (
-            <div className="inspector-section-body" style={{ gap: 12 }}>
-              {/* Wall Base Paint Swatches */}
-              <div>
-                <div className="text-caption" style={{ marginBottom: 6, fontWeight: 500 }}>
-                  Sơn tường nền (Interior Base Paint)
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-                  {paints.map((p: any) => {
-                    const active = currentRoom?.wall_base_material_id === p.id
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => onUpdateSurfaces7B({ wall_base_material_id: p.id })}
-                        title={`${p.name} (${p.color_code}) — ${formatVnd(p.unit_price_vnd)}/thùng`}
-                        style={{
-                          width: 26,
-                          height: 26,
-                          borderRadius: 6,
-                          background: p.hex_color,
-                          border: active ? '2px solid var(--accent)' : '1px solid var(--border-strong)',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        {active && <Check size={12} color="#171717" />}
-                      </button>
-                    )
-                  })}
-                </div>
-                <select
-                  className="field-select"
-                  style={{ fontSize: 12 }}
-                  value={currentRoom?.wall_base_material_id || 'paint_dulux_japandi_ivory'}
-                  onChange={(e) => onUpdateSurfaces7B({ wall_base_material_id: e.target.value })}
-                >
-                  {paints.map((p: any) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({formatVnd(p.unit_price_vnd)}/thùng {p.can_size_liters}L)
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Accent Wall Paint */}
-              <div>
-                <div className="text-caption" style={{ marginBottom: 6, fontWeight: 500 }}>
-                  Tường điểm nhấn (Accent Wall — Tường Đông)
-                </div>
-                <select
-                  className="field-select"
-                  style={{ fontSize: 12 }}
-                  value={
-                    walls.find((w: any) => w.is_accent_wall)?.face_a_material_id ||
-                    'paint_dulux_sage_mist'
-                  }
-                  onChange={(e) =>
-                    onUpdateSurfaces7B({
-                      accent_wall_id: 'wall_east',
-                      accent_paint_id: e.target.value,
-                    })
-                  }
-                >
-                  {paints.map((p: any) => (
-                    <option key={p.id} value={p.id}>
-                      ★ {p.name} ({p.hex_color})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Floor Tile / Wood Selector + G4 Canonical PBR 800x800mm (3mm Grout) Proposal */}
-              <div>
-                <div className="text-caption" style={{ marginBottom: 6, fontWeight: 500 }}>
-                  Sàn gỗ / Gạch lát nền (Quy cách mm & Hao hụt)
-                </div>
-                <select
-                  data-testid="floor-material-7b-select"
-                  className="field-select"
-                  style={{ fontSize: 12 }}
-                  value={currentRoom?.floor_material_id || 'floor_wood_oak_straight'}
-                  onChange={(e) => onUpdateSurfaces7B({ floor_material_id: e.target.value })}
-                >
-                  {tiles.map((t: any) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.tile_width_mm}×{t.tile_length_mm}mm — {formatVnd(t.price_per_box_vnd)}/thùng)
-                    </option>
-                  ))}
-                </select>
-
-                {/* G4 Canonical PBR Surface Override for Floor 800x800mm with 3mm Grout */}
-                <div className="surface-subtle" style={{ marginTop: 8, padding: '8px 10px' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600 }}>
-                    G4 PBR Surface: Gạch Porcelain 800×800 mm (Ron 3 mm)
-                  </div>
-                  {floorOverride?.material_id === 'mat_tile_sand_800' && (
-                    <div className="mono" style={{ fontSize: 11, color: 'var(--emerald-text)', marginTop: 2 }}>
-                      ✓ Đang áp dụng: {floorOverride.material_id} ({floorOverride.texture_scale?.width_mm || floorOverride.uv_transform?.tile_size_mm?.[0] || 800}×{floorOverride.texture_scale?.height_mm || floorOverride.uv_transform?.tile_size_mm?.[1] || 800}mm, ron {floorOverride.texture_scale?.grout_width_mm ?? floorOverride.uv_transform?.grout_thickness_mm ?? 3}mm)
-                    </div>
-                  )}
-                  <button
-                    data-testid="propose-floor-tile-800-btn"
-                    className="btn btn-sm btn-primary"
-                    style={{ width: '100%', marginTop: 6 }}
-                    disabled={surfaceProposalPending}
-                    onClick={handleProposeFloorTile800}
-                  >
-                    <Save size={12} />{' '}
-                    {surfaceProposalPending
-                      ? 'Đang tạo đề xuất sàn 800×800...'
-                      : 'Đề xuất Gạch Porcelain 800×800 (Ron 3mm)'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
     </aside>
   )

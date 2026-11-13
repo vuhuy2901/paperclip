@@ -20,6 +20,7 @@ import {
   HelpCircle,
   Bot,
   X,
+  ExternalLink,
 } from 'lucide-react'
 
 interface AIDesignAssistantProps {
@@ -47,6 +48,17 @@ const formatDeltaVnd = (v?: number) => {
   return num > 0 ? `+${num.toLocaleString('vi-VN')} ₫` : `−${Math.abs(num).toLocaleString('vi-VN')} ₫`
 }
 
+const formatTimestamp = (ts?: string | number) => {
+  if (!ts) return ''
+  try {
+    const d = new Date(ts)
+    if (isNaN(d.getTime())) return ''
+    return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  } catch {
+    return ''
+  }
+}
+
 export const AIDesignAssistant: React.FC<AIDesignAssistantProps> = ({
   project,
   chatHistory,
@@ -63,6 +75,55 @@ export const AIDesignAssistant: React.FC<AIDesignAssistantProps> = ({
   const [subTab, setSubTab] = useState<'chat' | 'proposals' | 'brief'>('chat')
   const [showProcessedHistory, setShowProcessedHistory] = useState(false)
   const scrollEndRef = useRef<HTMLDivElement | null>(null)
+  const chatContainerRef = useRef<HTMLDivElement | null>(null)
+  const isAtBottomRef = useRef(true)
+  const [expandedHandoffs, setExpandedHandoffs] = useState<Record<string, boolean>>({})
+
+  const toggleExpandHandoff = (msgId: string) => {
+    setExpandedHandoffs((prev) => ({ ...prev, [msgId]: !prev[msgId] }))
+  }
+
+  const handleChatScroll = () => {
+    if (!chatContainerRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current
+    isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 80
+  }
+
+  // Derive participating agents and their live states from chat messages
+  const activeAgents = useMemo(() => {
+    const map = new Map<string, {
+      agent_id: string
+      name: string
+      role: string
+      avatar: string
+      color: string
+      is_lead: boolean
+      status?: string
+      task_identifier?: string
+    }>()
+
+    ;(chatHistory.messages || []).forEach((m: any) => {
+      if (m.role === 'user') return
+      const agentId = m.metadata?.agent_id || (m.sender_name?.toLowerCase().includes('chief') ? 'agent_chief_architect' : 'agent_specialist')
+      const name = m.metadata?.agent_name || m.sender_name || 'AI Agent'
+      const role = m.metadata?.agent_role || (m.metadata?.is_lead ? 'Trưởng nhóm' : 'Chuyên viên')
+      const avatar = m.metadata?.agent_avatar || '🤖'
+      const color = m.metadata?.agent_color || '#0F766E'
+      const is_lead = !!m.metadata?.is_lead
+      const status = m.metadata?.status
+      const task_identifier = m.metadata?.task_identifier
+
+      const existing = map.get(agentId)
+      if (!existing) {
+        map.set(agentId, { agent_id: agentId, name, role, avatar, color, is_lead, status, task_identifier })
+      } else {
+        if (status) existing.status = status
+        if (task_identifier) existing.task_identifier = task_identifier
+      }
+    })
+
+    return Array.from(map.values())
+  }, [chatHistory.messages])
 
   const proposals = chatHistory.proposals || []
 
@@ -101,7 +162,9 @@ export const AIDesignAssistant: React.FC<AIDesignAssistantProps> = ({
   }, [proposals])
 
   useEffect(() => {
-    scrollEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (isAtBottomRef.current) {
+      scrollEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [chatHistory.messages?.length, sendingChat])
 
   // Render a single high-craft Proposal Card (Section 10)
@@ -373,6 +436,8 @@ export const AIDesignAssistant: React.FC<AIDesignAssistantProps> = ({
       {subTab === 'chat' && (
         <>
           <div
+            ref={chatContainerRef}
+            onScroll={handleChatScroll}
             style={{
               flex: 1,
               overflowY: 'auto',
@@ -383,6 +448,59 @@ export const AIDesignAssistant: React.FC<AIDesignAssistantProps> = ({
               background: 'var(--app-bg)',
             }}
           >
+            {/* Active Multi-Agent Team Roster Strip (Section 2 & 7) */}
+            {activeAgents.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 10px',
+                  borderRadius: 'var(--radius-btn)',
+                  background: 'var(--surface-primary)',
+                  border: '1px solid var(--border-subtle)',
+                  overflowX: 'auto',
+                  scrollbarWidth: 'none',
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                  Đội ngũ ({activeAgents.length}):
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap' }}>
+                  {activeAgents.map((ag) => {
+                    const isRunning = ag.status === 'RUNNING'
+                    return (
+                      <div
+                        key={ag.agent_id}
+                        title={`${ag.name} (${ag.role}) — ${ag.status || 'READY'}`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          padding: '2px 8px',
+                          borderRadius: 999,
+                          background: 'var(--surface-secondary)',
+                          border: `1px solid ${isRunning ? 'var(--amber-border)' : 'var(--border-subtle)'}`,
+                          fontSize: 11,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <span style={{ fontSize: 12 }}>{ag.avatar}</span>
+                        <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                          {ag.name.split(' (')[0]}
+                        </span>
+                        {isRunning ? (
+                          <span className="status-dot amber" style={{ width: 6, height: 6 }} />
+                        ) : ag.status === 'COMPLETED' ? (
+                          <span style={{ color: 'var(--emerald-text)', fontSize: 10 }}>✓</span>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Suggested Quick Prompts */}
             <div className="surface-subtle" style={{ padding: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
@@ -410,6 +528,9 @@ export const AIDesignAssistant: React.FC<AIDesignAssistantProps> = ({
             {/* Conversation Messages */}
             {(chatHistory.messages || []).map((m: any) => {
               const isUser = m.role === 'user'
+              const isRunning = m.metadata?.status === 'RUNNING'
+              const isCompleted = m.metadata?.status === 'COMPLETED'
+
               return (
                 <div
                   key={m.message_id}
@@ -421,31 +542,247 @@ export const AIDesignAssistant: React.FC<AIDesignAssistantProps> = ({
                     borderRadius: 'var(--radius-card)',
                     background: isUser ? 'var(--accent)' : 'var(--surface-primary)',
                     color: isUser ? '#FFFFFF' : 'var(--text-primary)',
-                    border: isUser ? 'none' : '1px solid var(--border-subtle)',
+                    border: isUser ? 'none' : `1px solid ${isRunning ? 'var(--amber-border)' : 'var(--border-subtle)'}`,
                     boxShadow: 'var(--shadow-xs)',
                     fontSize: 13,
                     lineHeight: 1.55,
                   }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: isUser ? 'rgba(255,255,255,0.85)' : 'var(--accent)',
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span>{m.sender_name}</span>
-                    {m.metadata?.agent_id && !isUser && (
-                      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
-                        {m.metadata.agent_id}
+                  {/* Top Bar for User Message */}
+                  {isUser && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        fontSize: 11,
+                        color: 'rgba(255,255,255,0.85)',
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span style={{ fontWeight: 600 }}>{m.sender_name || 'Người dùng'}</span>
+                      <span style={{ fontSize: 10.5, opacity: 0.8 }}>
+                        {formatTimestamp(m.metadata?.timestamp || m.created_at)}
                       </span>
-                    )}
+                    </div>
+                  )}
+
+                  {/* Top Bar for Multi-Agent Message (Section 2, 4, 6) */}
+                  {!isUser && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        marginBottom: 8,
+                        paddingBottom: 6,
+                        borderBottom: '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                        {/* Agent Avatar Icon */}
+                        <div
+                          style={{
+                            width: 24,
+                            height: 24,
+                            borderRadius: 6,
+                            background: m.metadata?.agent_color
+                              ? `${m.metadata.agent_color}22`
+                              : 'var(--accent-soft)',
+                            border: `1px solid ${m.metadata?.agent_color || 'var(--accent-border)'}`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 13,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {m.metadata?.agent_avatar || '🤖'}
+                        </div>
+
+                        {/* Agent Name */}
+                        <span style={{ fontWeight: 600, fontSize: 12.5, color: 'var(--text-primary)' }}>
+                          {m.metadata?.agent_name || m.sender_name}
+                        </span>
+
+                        {/* Lead or Role Badge */}
+                        {m.metadata?.is_lead ? (
+                          <span className="status-badge amber" style={{ fontSize: 10, padding: '1px 6px' }}>
+                            Trưởng Nhóm Điều Phối
+                          </span>
+                        ) : m.metadata?.agent_role ? (
+                          <span className="status-badge teal" style={{ fontSize: 10, padding: '1px 6px' }}>
+                            {m.metadata.agent_role}
+                          </span>
+                        ) : null}
+
+                        {/* Native Task ID Link */}
+                        {(m.metadata?.task_identifier || m.metadata?.native_task_id) && (
+                          <a
+                            href={`/ATL/issues/${m.metadata.task_identifier || m.metadata.native_task_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="status-badge neutral"
+                            title="Mở Task trên Paperclip"
+                            style={{
+                              fontSize: 10.5,
+                              padding: '1px 7px',
+                              textDecoration: 'none',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 3,
+                              color: 'var(--text-secondary)',
+                            }}
+                          >
+                            <ExternalLink size={10} />
+                            Task: {m.metadata.task_identifier || m.metadata.native_task_id}
+                          </a>
+                        )}
+
+                        {/* Execution Status Badge */}
+                        {m.metadata?.status && (
+                          <span
+                            className={`status-badge ${
+                              isRunning
+                                ? 'amber'
+                                : isCompleted
+                                ? 'emerald'
+                                : m.metadata.status === 'ACCEPTED'
+                                ? 'teal'
+                                : m.metadata.status === 'BLOCKED'
+                                ? 'rose'
+                                : 'neutral'
+                            }`}
+                            style={{ fontSize: 10, padding: '1px 6px' }}
+                          >
+                            {isRunning && (
+                              <span className="status-dot amber" style={{ width: 5, height: 5 }} />
+                            )}
+                            {isCompleted && '✓ '}
+                            {m.metadata.status}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Timestamp */}
+                      <div style={{ fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {formatTimestamp(m.metadata?.timestamp || m.created_at)}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Message Content */}
+                  <div style={{ whiteSpace: 'pre-line', fontSize: 13, lineHeight: 1.55 }}>
+                    {m.content}
                   </div>
 
-                  <div style={{ whiteSpace: 'pre-line' }}>{m.content}</div>
+                  {/* Collapsible Handoff Artifact Card (Section 4, 6) */}
+                  {(m.metadata?.handoff_summary || m.metadata?.payload?.handoff_artifact_id) && (
+                    <div
+                      className="surface-subtle"
+                      style={{
+                        marginTop: 10,
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          userSelect: 'none',
+                        }}
+                        onClick={() => toggleExpandHandoff(m.message_id)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                          <span>📦 Bàn giao dữ liệu (Handoff Artifact)</span>
+                          {m.metadata.payload?.handoff_artifact_id && (
+                            <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
+                              {m.metadata.payload.handoff_artifact_id}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
+                          <span style={{ fontSize: 11 }}>
+                            {expandedHandoffs[m.message_id] ? 'Thu gọn' : 'Xem chi tiết'}
+                          </span>
+                          {expandedHandoffs[m.message_id] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </div>
+                      </div>
+
+                      {expandedHandoffs[m.message_id] && (
+                        <div
+                          style={{
+                            marginTop: 8,
+                            paddingTop: 8,
+                            borderTop: '1px dashed var(--border-subtle)',
+                            fontSize: 12,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 5,
+                          }}
+                        >
+                          {m.metadata.handoff_summary?.envelope && (
+                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                              <div>
+                                <span style={{ color: 'var(--text-secondary)' }}>Kích thước: </span>
+                                <span className="mono" style={{ fontWeight: 600 }}>
+                                  {m.metadata.handoff_summary.envelope.width_m}m × {m.metadata.handoff_summary.envelope.length_m}m × {m.metadata.handoff_summary.envelope.height_m}m
+                                </span>
+                              </div>
+                              <div>
+                                <span style={{ color: 'var(--text-secondary)' }}>Diện tích: </span>
+                                <span className="mono" style={{ fontWeight: 600 }}>
+                                  {m.metadata.handoff_summary.envelope.area_m2} m²
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          {m.metadata.handoff_summary?.detected_structures && (
+                            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', color: 'var(--text-secondary)' }}>
+                              <span>
+                                Tường: <strong style={{ color: 'var(--text-primary)' }}>{m.metadata.handoff_summary.detected_structures.walls_count}</strong>
+                              </span>
+                              <span>•</span>
+                              <span>
+                                Cửa đi: <strong style={{ color: 'var(--text-primary)' }}>{m.metadata.handoff_summary.detected_structures.doors_count}</strong>
+                              </span>
+                              <span>•</span>
+                              <span>
+                                Cửa sổ: <strong style={{ color: 'var(--text-primary)' }}>{m.metadata.handoff_summary.detected_structures.windows_count}</strong>
+                              </span>
+                              <span>•</span>
+                              <span>
+                                Đồ đạc: <strong style={{ color: 'var(--text-primary)' }}>{m.metadata.handoff_summary.detected_structures.furniture_count}</strong>
+                              </span>
+                            </div>
+                          )}
+                          {m.metadata.handoff_summary?.summary_text && (
+                            <div
+                              style={{
+                                color: 'var(--text-secondary)',
+                                background: 'var(--surface-primary)',
+                                padding: '6px 8px',
+                                borderRadius: 4,
+                                marginTop: 3,
+                              }}
+                            >
+                              {m.metadata.handoff_summary.summary_text}
+                            </div>
+                          )}
+                          {m.metadata.node_id && (
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                              Workflow Node: <span className="mono">{m.metadata.node_id}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Interactive Question Request Card (ask_user interrupt) */}
                   {m.metadata?.question && (

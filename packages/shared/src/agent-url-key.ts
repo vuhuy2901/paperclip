@@ -1,5 +1,6 @@
 const AGENT_URL_KEY_DELIM_RE = /[^a-z0-9]+/g;
 const AGENT_URL_KEY_TRIM_RE = /^-+|-+$/g;
+const COMBINING_MARKS_RE = /[\u0300-\u036f]/g;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function isUuidLike(value: string | null | undefined): boolean {
@@ -8,6 +9,20 @@ export function isUuidLike(value: string | null | undefined): boolean {
 }
 
 export function normalizeAgentUrlKey(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(COMBINING_MARKS_RE, "")
+    .replace(/đ/g, "d")
+    .replace(AGENT_URL_KEY_DELIM_RE, "-")
+    .replace(AGENT_URL_KEY_TRIM_RE, "");
+  return normalized.length > 0 ? normalized : null;
+}
+
+/** Compatibility key produced before Vietnamese diacritics were transliterated. */
+export function legacyNormalizeAgentUrlKey(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const normalized = value
     .trim()

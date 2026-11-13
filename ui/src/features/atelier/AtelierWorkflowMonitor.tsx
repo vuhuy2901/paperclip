@@ -1,113 +1,50 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useActiveCompanyPrefix, useNavigate, useParams } from "@/lib/router";
-import { ArrowRight, CheckCircle2, CircleAlert, Clock3, GitBranch, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, CircleAlert, Clock3, GitBranch, LoaderCircle, RefreshCw, ShieldCheck } from "lucide-react";
+import { AtelierWorkflowBuilder } from "./AtelierWorkflowBuilder";
 
-type CompanyWorkflow = {
-  definition_version: number;
-  status: string;
-  definition: { stages: Array<{ key: string; label: string; agentKey: string; dependsOn: string[] }> };
-  projects: Array<{ id: string; name: string; status: string; workflow_run_id: string | null; workflow_status: string }>;
-};
+type StageDefinition = { key: string; label: string; agentKey: string; dependsOn: string[] };
+type CompanyWorkflow = { definition_version: number; status: string; definition: { stages: StageDefinition[] }; projects: Array<{ id: string; name: string; status: string; workflow_run_id: string | null; workflow_status: string }> };
+type ProjectWorkflow = { run: { id: string; status: string; workflowVersion: number }; root_issue: { identifier: string | null; title: string; status: string } | null; stages: Array<{ stageKey: string; status: string; blockerReason: string | null; issue: { identifier: string | null; status: string } | null; agent: { name: string } | null; dependencies: string[] }> };
 
-type ProjectWorkflow = {
-  run: { id: string; status: string; workflowVersion: number };
-  root_issue: { identifier: string | null; title: string; status: string } | null;
-  stages: Array<{
-    stageKey: string;
-    status: string;
-    blockerReason: string | null;
-    issue: { identifier: string | null; status: string } | null;
-    agent: { name: string } | null;
-    dependencies: string[];
-  }>;
-};
-
-const statusLabel: Record<string, string> = {
-  pending: "Chờ điều kiện",
-  ready: "Sẵn sàng",
-  running: "Đang chạy",
-  done: "Hoàn tất",
-  needs_input: "Cần hỏi người dùng",
-  blocked: "Đang bị chặn",
-  needs_review: "Cần review",
-  failed: "Lỗi",
-  not_provisioned: "Chưa provision",
-};
+const statusLabel: Record<string, string> = { pending: "Chờ điều kiện", ready: "Sẵn sàng", running: "Đang chạy", done: "Hoàn tất", needs_input: "Cần hỏi người dùng", blocked: "Đang bị chặn", needs_review: "Cần review", failed: "Lỗi", not_provisioned: "Chưa provision" };
+const statusTone: Record<string, string> = { done: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", ready: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300", running: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300", needs_input: "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300", needs_review: "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300", blocked: "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300", failed: "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300" };
 
 function StatusPill({ status }: { status: string }) {
-  const active = status === "done" || status === "ready";
-  const attention = status === "needs_input" || status === "blocked" || status === "failed";
-  return <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${active ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700" : attention ? "border-amber-500/30 bg-amber-500/10 text-amber-700" : "border-border bg-muted/40 text-muted-foreground"}`}>
-    {attention ? <CircleAlert className="h-3 w-3" /> : active ? <CheckCircle2 className="h-3 w-3" /> : <Clock3 className="h-3 w-3" />}
-    {statusLabel[status] ?? status}
-  </span>;
+  const attention = ["needs_input", "needs_review", "blocked", "failed"].includes(status);
+  const active = ["done", "ready", "running"].includes(status);
+  const Icon = attention ? CircleAlert : active ? CheckCircle2 : Clock3;
+  return <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${statusTone[status] ?? "border-border bg-muted/40 text-muted-foreground"}`}><Icon className="size-3.5" aria-hidden="true" />{statusLabel[status] ?? status}</span>;
 }
 
-export function AtelierWorkflowControlCenter() {
-  const prefix = useActiveCompanyPrefix();
-  const navigate = useNavigate();
-  const [data, setData] = useState<CompanyWorkflow | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const load = async () => {
-    setRefreshing(true);
-    try {
-      const response = await fetch("/api/atelier/company-workflow");
-      if (!response.ok) throw new Error(`Workflow API (${response.status})`);
-      setData(await response.json());
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Không tải được company workflow");
-    } finally {
-      setRefreshing(false);
-    }
-  };
-  useEffect(() => { void load(); }, []);
+function LoadingState({ label = "Đang tải dữ liệu workflow…" }: { label?: string }) {
+  return <div className="space-y-4" aria-busy="true"><div className="h-28 animate-pulse rounded-2xl bg-muted/50" /><div className="grid gap-4 md:grid-cols-3"><div className="h-24 animate-pulse rounded-xl bg-muted/40" /><div className="h-24 animate-pulse rounded-xl bg-muted/40" /><div className="h-24 animate-pulse rounded-xl bg-muted/40" /></div><p className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{label}</p></div>;
+}
 
-  return <div className="h-full overflow-auto bg-background p-5 text-foreground">
-    <div className="mx-auto max-w-7xl space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-muted-foreground"><GitBranch className="h-3.5 w-3.5" /> Paperclip authority</div>
-          <h1 className="text-2xl font-semibold">Atelier Company Workflow</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Chief chỉ intake, giao việc, theo dõi và review. Specialist chỉ được chạy khi dependency, approval, decision ledger và artifact gate đã đủ.</p>
-        </div>
-        <button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted/50" disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /> Làm mới</button>
-      </div>
-      {error ? <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</div> : null}
-      {!data && !error ? <div className="rounded-lg border border-border p-6 text-sm text-muted-foreground">Đang tải workflow canonical…</div> : null}
-      {data ? <>
-        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><div className="text-sm font-semibold">Definition v{data.definition_version}</div><div className="text-xs text-muted-foreground">Một definition đã publish · {data.definition.stages.length} stages</div></div><StatusPill status={data.status} /></div>
-          <div className="grid gap-2 md:grid-cols-4">{data.definition.stages.map((stage, index) => <div key={stage.key} className="rounded-lg border border-border/80 bg-muted/20 p-3"><div className="text-xs text-muted-foreground">{String(index + 1).padStart(2, "0")}</div><div className="mt-1 text-sm font-medium">{stage.label}</div><div className="mt-1 text-[11px] text-muted-foreground">{stage.dependsOn.length ? `Sau ${stage.dependsOn.join(", ")}` : "Chờ Chief intake"}</div></div>)}</div>
-        </section>
-        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between"><div><div className="text-sm font-semibold">Project monitors</div><div className="text-xs text-muted-foreground">Mỗi project có run snapshot độc lập; backfill không tự dispatch agent.</div></div><span className="text-xs text-muted-foreground">{data.projects.length} projects</span></div>
-          <div className="divide-y divide-border">{data.projects.map((project) => <button key={project.id} type="button" onClick={() => navigate(`/${prefix}/projects/${project.id}/workflow`)} className="flex w-full items-center justify-between gap-3 py-3 text-left hover:bg-muted/30"><span className="min-w-0"><span className="block truncate text-sm font-medium">{project.name}</span><span className="block truncate text-xs text-muted-foreground">{project.id}</span></span><span className="flex shrink-0 items-center gap-2"><StatusPill status={project.workflow_status} /><ArrowRight className="h-4 w-4 text-muted-foreground" /></span></button>)}</div>
-        </section>
-      </> : null}
-    </div>
-  </div>;
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-6" role="alert"><div className="flex items-start gap-3"><CircleAlert className="mt-0.5 size-5 shrink-0 text-destructive" aria-hidden="true" /><div className="min-w-0 flex-1"><h2 className="font-semibold text-foreground">Không tải được workflow</h2><p className="mt-1 text-sm text-muted-foreground">{message}. Kiểm tra Paperclip server rồi thử lại.</p><button type="button" onClick={onRetry} className="mt-4 inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-colors hover:opacity-90"><RefreshCw className="size-4" /> Thử lại</button></div></div></div>;
+}
+
+function EmptyState({ label }: { label: string }) { return <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-10 text-center text-sm text-muted-foreground">{label}</div>; }
+
+function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) {
+  return <header className="flex flex-col gap-5 border-b border-border pb-6 md:flex-row md:items-end md:justify-between"><div className="max-w-3xl"><div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground"><GitBranch className="size-4" />{eyebrow}</div><h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground">{title}</h1><p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p></div>{action}</header>;
+}
+
+export function AtelierWorkflowControlCenter() { return <AtelierWorkflowBuilder />; }
+
+export function LegacyAtelierWorkflowControlCenter() {
+  const prefix = useActiveCompanyPrefix(); const navigate = useNavigate(); const [data, setData] = useState<CompanyWorkflow | null>(null); const [error, setError] = useState<string | null>(null); const [refreshing, setRefreshing] = useState(false);
+  const load = async () => { setRefreshing(true); try { const response = await fetch("/api/atelier/company-workflow"); if (!response.ok) throw new Error(`Workflow API (${response.status})`); setData(await response.json()); setError(null); } catch (err) { setError(err instanceof Error ? err.message : "Lỗi không xác định"); } finally { setRefreshing(false); } };
+  useEffect(() => { void load(); }, []);
+  const attentionCount = useMemo(() => data?.projects.filter((project) => ["needs_input", "needs_review", "blocked", "failed"].includes(project.workflow_status)).length ?? 0, [data]);
+  const runningCount = useMemo(() => data?.projects.filter((project) => project.workflow_status === "running").length ?? 0, [data]);
+  return <div className="h-full overflow-auto bg-background px-5 py-6 text-foreground md:px-8"><div className="mx-auto max-w-7xl space-y-6"><PageHeader eyebrow="Atelier · Paperclip authority" title="Company workflow" description="Một nơi để nhìn toàn bộ pipeline thiết kế, biết project nào đang chạy và quyết định nào đang cần bạn xác nhận." action={<button type="button" onClick={() => void load()} disabled={refreshing} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"><RefreshCw className={refreshing ? "size-4 animate-spin" : "size-4"} /> Làm mới</button>} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : !data ? <LoadingState /> : <><section className="grid gap-4 md:grid-cols-3" aria-label="Workflow summary"><div className="rounded-2xl border border-border bg-card p-5"><div className="text-sm text-muted-foreground">Định nghĩa hiện tại</div><div className="mt-2 text-2xl font-semibold">v{data.definition_version}</div><div className="mt-1 text-xs text-muted-foreground">{data.definition.stages.length} stages đã publish</div></div><div className="rounded-2xl border border-border bg-card p-5"><div className="text-sm text-muted-foreground">Project đang hoạt động</div><div className="mt-2 text-2xl font-semibold">{runningCount}</div><div className="mt-1 text-xs text-muted-foreground">đang chạy trong company</div></div><div className={`rounded-2xl border p-5 ${attentionCount ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-card"}`}><div className="text-sm text-muted-foreground">Cần bạn chú ý</div><div className="mt-2 text-2xl font-semibold">{attentionCount}</div><div className="mt-1 text-xs text-muted-foreground">input, review, blocker hoặc lỗi</div></div></section><section className="rounded-2xl border border-border bg-card p-5 md:p-6"><div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between"><div><h2 className="text-lg font-semibold">Pipeline stages</h2><p className="mt-1 text-sm text-muted-foreground">Dependency được đọc từ workflow canonical; không có stage nào tự chốt dữ liệu chưa biết.</p></div><StatusPill status={data.status} /></div><div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{data.definition.stages.map((stage, index) => <div key={stage.key} className="relative rounded-xl border border-border bg-muted/20 p-4"><div className="flex items-center justify-between text-xs font-medium text-muted-foreground"><span>{String(index + 1).padStart(2, "0")}</span><ShieldCheck className="size-4" /></div><div className="mt-4 font-medium">{stage.label}</div><div className="mt-2 text-xs leading-5 text-muted-foreground">{stage.dependsOn.length ? `Sau ${stage.dependsOn.join(", ")}` : "Bắt đầu sau Chief intake"}</div></div>)}</div></section><section className="rounded-2xl border border-border bg-card"><div className="flex items-end justify-between gap-4 border-b border-border px-5 py-5 md:px-6"><div><h2 className="text-lg font-semibold">Project monitors</h2><p className="mt-1 text-sm text-muted-foreground">Mở một project để xem stage owner, dependency và blocker cụ thể.</p></div><span className="shrink-0 text-sm text-muted-foreground">{data.projects.length} projects</span></div>{data.projects.length ? <div className="divide-y divide-border">{data.projects.map((project) => <button key={project.id} type="button" onClick={() => navigate(`/${prefix}/projects/${project.id}/workflow`)} className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-muted/30 md:px-6"><span className="min-w-0 flex-1"><span className="block truncate font-medium">{project.name}</span><span className="mt-1 block truncate font-mono text-xs text-muted-foreground">{project.id}</span></span><StatusPill status={project.workflow_status} /><ArrowRight className="size-4 shrink-0 text-muted-foreground" /></button>)}</div> : <div className="p-6"><EmptyState label="Chưa có project nào được provision vào workflow này." /></div>}</section></>}</div></div>;
 }
 
 export function AtelierProjectWorkflowMonitor() {
-  const { projectId = "" } = useParams<{ projectId: string }>();
-  const prefix = useActiveCompanyPrefix();
-  const [data, setData] = useState<ProjectWorkflow | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = async () => {
-    try {
-      const response = await fetch(`/api/atelier/workflow/project/${encodeURIComponent(projectId)}`);
-      if (!response.ok) throw new Error(`Project workflow API (${response.status})`);
-      setData(await response.json());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Không tải được project workflow");
-    }
-  };
+  const { projectId = "" } = useParams<{ projectId: string }>(); const prefix = useActiveCompanyPrefix(); const [data, setData] = useState<ProjectWorkflow | null>(null); const [error, setError] = useState<string | null>(null); const [refreshing, setRefreshing] = useState(false);
+  const load = async () => { setRefreshing(true); try { const response = await fetch(`/api/atelier/workflow/project/${encodeURIComponent(projectId)}`); if (!response.ok) throw new Error(`Project workflow API (${response.status})`); setData(await response.json()); setError(null); } catch (err) { setError(err instanceof Error ? err.message : "Lỗi không xác định"); } finally { setRefreshing(false); } };
   useEffect(() => { if (projectId) void load(); }, [projectId]);
-  return <div className="h-full overflow-auto bg-background p-5 text-foreground"><div className="mx-auto max-w-6xl space-y-5">
-    <div className="flex items-start justify-between gap-3"><div><Link to={`/${prefix}/control-center`} className="text-xs text-muted-foreground hover:text-foreground">← Company workflow</Link><h1 className="mt-2 text-2xl font-semibold">Project workflow monitor</h1><p className="mt-1 text-sm text-muted-foreground">Run và stage execution được đọc trực tiếp từ Paperclip backend.</p></div>{data ? <StatusPill status={data.run.status} /> : null}</div>
-    {error ? <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</div> : null}
-    {data ? <><section className="rounded-xl border border-border bg-card p-4"><div className="grid gap-3 text-sm md:grid-cols-3"><div><div className="text-xs text-muted-foreground">Run ID</div><div className="mt-1 break-all font-mono text-xs">{data.run.id}</div></div><div><div className="text-xs text-muted-foreground">Version</div><div className="mt-1">v{data.run.workflowVersion}</div></div><div><div className="text-xs text-muted-foreground">Root</div><div className="mt-1">{data.root_issue?.identifier ?? "—"} · {data.root_issue?.status ?? "—"}</div></div></div></section><section className="overflow-hidden rounded-xl border border-border bg-card"><div className="grid grid-cols-[1.2fr_1fr_1fr_1.4fr] gap-3 border-b border-border bg-muted/30 px-4 py-3 text-xs font-medium text-muted-foreground"><span>Stage</span><span>Owner</span><span>State</span><span>Gate / dependency</span></div>{data.stages.map((stage) => <div key={stage.stageKey} className="grid grid-cols-[1.2fr_1fr_1fr_1.4fr] gap-3 border-b border-border px-4 py-3 last:border-0"><div><div className="text-sm font-medium">{stage.stageKey}</div><div className="text-xs text-muted-foreground">{stage.issue?.identifier ?? "chưa có issue"}</div></div><div className="text-sm">{stage.agent?.name ?? "—"}</div><div><StatusPill status={stage.status} /></div><div className="text-xs text-muted-foreground">{stage.blockerReason ?? (stage.dependencies.length ? `Sau ${stage.dependencies.join(", ")}` : "Sẵn sàng sau Chief intake")}</div></div>)}</section></> : !error ? <div className="rounded-lg border border-border p-6 text-sm text-muted-foreground">Đang tải project run…</div> : null}
-  </div></div>;
+  return <div className="h-full overflow-auto bg-background px-5 py-6 text-foreground md:px-8"><div className="mx-auto max-w-6xl space-y-6"><Link to={`/${prefix}/control-center`} className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" /> Company workflow</Link><PageHeader eyebrow="Atelier · Project monitor" title="Project workflow" description="Theo dõi run hiện tại và biết chính xác stage nào đang chờ điều kiện, cần review hoặc bị chặn." action={<button type="button" onClick={() => void load()} disabled={refreshing} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"><RefreshCw className={refreshing ? "size-4 animate-spin" : "size-4"} /> Làm mới</button>} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : !data ? <LoadingState label="Đang tải project run…" /> : <><section className="grid gap-4 rounded-2xl border border-border bg-card p-5 md:grid-cols-3 md:p-6"><div><div className="text-xs uppercase tracking-wide text-muted-foreground">Run ID</div><div className="mt-2 break-all font-mono text-sm">{data.run.id}</div></div><div><div className="text-xs uppercase tracking-wide text-muted-foreground">Workflow version</div><div className="mt-2 text-sm font-medium">v{data.run.workflowVersion}</div></div><div><div className="text-xs uppercase tracking-wide text-muted-foreground">Root task</div><div className="mt-2 text-sm font-medium">{data.root_issue?.identifier ?? "Chưa có"}<span className="ml-2 font-normal text-muted-foreground">{data.root_issue?.status ?? ""}</span></div></div></section><section className="rounded-2xl border border-border bg-card"><div className="flex items-center justify-between gap-4 border-b border-border px-5 py-5 md:px-6"><div><h2 className="text-lg font-semibold">Stage execution</h2><p className="mt-1 text-sm text-muted-foreground">Owner và gate của từng stage trong run này.</p></div><StatusPill status={data.run.status} /></div><div className="divide-y divide-border">{data.stages.length ? data.stages.map((stage, index) => <div key={stage.stageKey} className="grid gap-4 px-5 py-5 md:grid-cols-3 md:items-start md:px-6"><div className="flex size-9 items-center justify-center rounded-full bg-muted text-sm font-semibold text-muted-foreground">{index + 1}</div><div className="min-w-0 md:col-span-1"><div className="flex flex-wrap items-center gap-3"><h3 className="font-medium">{stage.stageKey}</h3><StatusPill status={stage.status} /></div><div className="mt-2 text-sm text-muted-foreground">{stage.agent?.name ?? "Chưa gán owner"}{stage.issue?.identifier ? ` · ${stage.issue.identifier}` : ""}</div><p className={`mt-3 text-sm leading-6 ${stage.blockerReason ? "text-rose-700 dark:text-rose-300" : "text-muted-foreground"}`}>{stage.blockerReason ?? (stage.dependencies.length ? `Đợi: ${stage.dependencies.join(", ")}` : "Sẵn sàng sau Chief intake")}</p></div><div className="text-xs text-muted-foreground md:text-right">{stage.issue?.status ?? "Chưa có task"}</div></div>) : <div className="p-6"><EmptyState label="Run này chưa có stage execution." /></div>}</div></section></>}</div></div>;
 }

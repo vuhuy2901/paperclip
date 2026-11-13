@@ -226,6 +226,11 @@ import { recoverSettledNativeRunLog } from "./native-runtime/native-run-log-reco
 import { getDefaultCompanyGoal } from "./goals.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import {
+  assertAtelierIssueAssignmentPolicy,
+  assertAtelierIssueCompletionEvidence,
+  assertAtelierIssueExecutionAdmission,
+} from "./atelier-workflow-builder.js";
+import {
   CHAT_RUN_PRESENTATION_AUTHORIZATION_REASON,
   isExternalChatPresentationContext,
   LEGACY_WITHHELD_RUN_COMMENT,
@@ -10243,6 +10248,11 @@ export function issueService(db: Db) {
         await assertAssignableAgent(db, companyId, data.assigneeAgentId, {
           kind: "work",
         });
+        await assertAtelierIssueAssignmentPolicy(db, {
+          companyId,
+          executionPolicy: data.executionPolicy,
+          agentId: data.assigneeAgentId,
+        });
       }
       if (data.assigneeUserId) {
         await assertAssignableUser(companyId, data.assigneeUserId);
@@ -11484,12 +11494,20 @@ export function issueService(db: Db) {
           nextAssigneeAgentId,
           { kind: "work" },
         );
+        await assertAtelierIssueAssignmentPolicy(dbOrTx as Db, {
+          companyId: existing.companyId,
+          executionPolicy: issueData.executionPolicy ?? existing.executionPolicy,
+          agentId: nextAssigneeAgentId!,
+        });
       }
       if (issueData.assigneeUserId) {
         await assertAssignableUser(
           existing.companyId,
           issueData.assigneeUserId,
         );
+      }
+      if (issueData.status === "done") {
+        await assertAtelierIssueCompletionEvidence(dbOrTx as Db, existing.id);
       }
       let nextProjectId =
         issueData.projectId !== undefined
@@ -12315,6 +12333,7 @@ export function issueService(db: Db) {
       await assertAssignableAgent(db, issueCompany.companyId, agentId, {
         kind: "work",
       });
+      await assertAtelierIssueExecutionAdmission(db, id, agentId);
 
       const now = new Date();
       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(

@@ -4,9 +4,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { useLocation } from "@/lib/router";
 import "./atelier-studio.css";
 
 export interface SpatialPinItem {
@@ -105,8 +107,14 @@ interface AtelierStudioContextValue {
 const AtelierStudioContext = createContext<AtelierStudioContextValue | null>(null);
 
 const API_BASE = "/api/v1";
+const PROJECT_LIST_URL = `${API_BASE}/projects?include_fixtures=false`;
 
 export function AtelierStudioProvider({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  const atelierProjectRouteActive = /\/(?:design-studio|floorplan-import|render-compare|cost-estimation|inventory-bom|shopping-catalog|chats\/|projects\/)/.test(pathname);
+  const surfaceCatalogRouteActive = /\/(?:design-studio|render-compare|chats\/|projects\/)/.test(pathname);
+  const productCatalogRouteActive = /\/(?:design-studio|shopping-catalog|projects\/)/.test(pathname);
+  const studioAssetRouteActive = /\/(?:design-studio|chats\/|projects\/)/.test(pathname);
   const [projects, setProjects] = useState<any[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string>("");
   const [project, setProject] = useState<any | null>(null);
@@ -136,6 +144,12 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [productsCatalogLoaded, setProductsCatalogLoaded] = useState(false);
+  const [studioAssetsLoaded, setStudioAssetsLoaded] = useState(false);
+  const initialProjectLoadStarted = useRef(false);
+  const surfaceCatalogLoadStarted = useRef(false);
+  const productCatalogLoadStarted = useRef(false);
+  const studioAssetLoadStarted = useRef(false);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -146,26 +160,22 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
     async (pid: string = activeProjectId) => {
       try {
         if (!pid) {
-          const listRes = await fetch(`${API_BASE}/projects`);
+          const listRes = await fetch(PROJECT_LIST_URL);
           if (!listRes.ok) throw new Error(`Không thể tải danh sách project (${listRes.status})`);
           const listJson = await listRes.json();
           const nextProjects = Array.isArray(listJson) ? listJson : listJson.projects || [];
           setProjects(nextProjects);
-          if (nextProjects[0]?.id) setActiveProjectId(nextProjects[0].id);
+          const firstProjectId = nextProjects[0]?.project_id;
+          if (typeof firstProjectId === "string") setActiveProjectId(firstProjectId);
           return;
         }
-        const [projRes, estRes, chatRes, listRes, pinsRes, wfRes, runsRes, agRes, connRes, mcpRes] =
+        const [projRes, estRes, chatRes, listRes, pinsRes] =
           await Promise.all([
             fetch(`${API_BASE}/projects/${pid}`),
             fetch(`${API_BASE}/estimates/${pid}`),
             fetch(`${API_BASE}/chat/history?project_id=${encodeURIComponent(pid)}`),
-            fetch(`${API_BASE}/projects`),
+            fetch(PROJECT_LIST_URL),
             fetch(`/api/atelier/pins/${pid}`),
-            fetch(`${API_BASE}/workflows`),
-            fetch(`${API_BASE}/runs`),
-            fetch(`${API_BASE}/agents`),
-            fetch(`${API_BASE}/connections`),
-            fetch(`${API_BASE}/mcp/tools`),
           ]);
         if (!projRes.ok) throw new Error(`Không thể tải Scene (${projRes.status})`);
         const projectJson = await projRes.json();
@@ -181,14 +191,6 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
           const pinsJson = await pinsRes.json();
           setPins(pinsJson.pins || []);
         }
-        if (wfRes.ok) setWorkflows(await wfRes.json());
-        if (runsRes.ok) setRuns(await runsRes.json());
-        if (agRes.ok) setAgents(await agRes.json());
-        if (connRes.ok) setConnections(await connRes.json());
-        if (mcpRes.ok) {
-          const mcpJson = await mcpRes.json();
-          setMcpTools(Array.isArray(mcpJson) ? mcpJson : mcpJson.tools || []);
-        }
         setErrorMessage(null);
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : "Không thể tải dữ liệu ATELIER");
@@ -198,27 +200,111 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
+    if (!atelierProjectRouteActive) return;
+    if (!activeProjectId) {
+      if (initialProjectLoadStarted.current) return;
+      initialProjectLoadStarted.current = true;
+    }
+    void refreshProjectBundle(activeProjectId);
+  }, [activeProjectId, atelierProjectRouteActive, refreshProjectBundle]);
+
+  // Section 5: Real-time Multi-Agent Chat Reconciliation Polling (every 2.5s)
+  useEffect(() => {
+    if (!atelierProjectRouteActive || !activeProjectId) return;
+    let isMounted = true;
+    let consecutiveErrors = 0;
+
+    const pollChatHistory = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/chat/history?project_id=${encodeURIComponent(activeProjectId)}`);
+        if (!res.ok) {
+          consecutiveErrors += 1;
+          return;
+        }
+        consecutiveErrors = 0;
+        const data = await res.json();
+        if (!isMounted) return;
+        setChatHistory((prev) => {
+          if (
+            prev.messages?.length !== data.messages?.length ||
+            prev.proposals?.length !== data.proposals?.length ||
+            prev.pending_questions?.length !== data.pending_questions?.length
+          ) {
+            return data;
+          }
+          const prevLast = prev.messages?.[prev.messages.length - 1]?.message_id;
+          const newLast = data.messages?.[data.messages.length - 1]?.message_id;
+          if (prevLast !== newLast) return data;
+          return prev;
+        });
+      } catch {
+        consecutiveErrors += 1;
+      }
+    };
+
+    const interval = setInterval(() => {
+      if (consecutiveErrors < 5) {
+        void pollChatHistory();
+      }
+    }, 2500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [activeProjectId, atelierProjectRouteActive]);
+
+  useEffect(() => {
+    if (!surfaceCatalogRouteActive || materialsCatalog || surfaceCatalogLoadStarted.current) return;
+    surfaceCatalogLoadStarted.current = true;
     void (async () => {
       try {
-        const [matRes, prodRes, pbrRes, assetRes] = await Promise.all([
-          fetch(`${API_BASE}/materials`),
-          fetch(`${API_BASE}/catalog`),
+        const matRes = await fetch(`${API_BASE}/materials`);
+        if (!matRes.ok) throw new Error(`Catalog vật liệu không phản hồi (${matRes.status})`);
+        setMaterialsCatalog(await matRes.json());
+      } catch (error) {
+        surfaceCatalogLoadStarted.current = false;
+        setErrorMessage(error instanceof Error ? error.message : "Không thể tải catalog ATELIER");
+      }
+    })();
+  }, [materialsCatalog, surfaceCatalogRouteActive]);
+
+  useEffect(() => {
+    if (!productCatalogRouteActive || productsCatalogLoaded || productCatalogLoadStarted.current) return;
+    productCatalogLoadStarted.current = true;
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/catalog`);
+        if (!response.ok) throw new Error(`Catalog nội thất không phản hồi (${response.status})`);
+        const payload = await response.json();
+        setProductsCatalog(Array.isArray(payload) ? payload : payload.products || []);
+        setProductsCatalogLoaded(true);
+      } catch (error) {
+        productCatalogLoadStarted.current = false;
+        setErrorMessage(error instanceof Error ? error.message : "Không thể tải catalog nội thất");
+      }
+    })();
+  }, [productCatalogRouteActive, productsCatalogLoaded]);
+
+  useEffect(() => {
+    if (!studioAssetRouteActive || studioAssetsLoaded || studioAssetLoadStarted.current) return;
+    studioAssetLoadStarted.current = true;
+    void (async () => {
+      try {
+        const [pbrResponse, assetResponse] = await Promise.all([
           fetch(`${API_BASE}/pbr-materials`),
           fetch(`${API_BASE}/assets/library`),
         ]);
-        if (matRes.ok) setMaterialsCatalog(await matRes.json());
-        if (prodRes.ok) {
-          const pj = await prodRes.json();
-          setProductsCatalog(Array.isArray(pj) ? pj : pj.products || []);
-        }
-        if (pbrRes.ok) setPbrMaterials((await pbrRes.json()).materials || []);
-        if (assetRes.ok) setAssetLibrary((await assetRes.json()).assets || []);
+        if (!pbrResponse.ok || !assetResponse.ok) throw new Error("PBR/asset library không phản hồi");
+        setPbrMaterials((await pbrResponse.json()).materials || []);
+        setAssetLibrary((await assetResponse.json()).assets || []);
+        setStudioAssetsLoaded(true);
       } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Không thể tải catalog ATELIER");
+        studioAssetLoadStarted.current = false;
+        setErrorMessage(error instanceof Error ? error.message : "Không thể tải PBR/asset library");
       }
-      await refreshProjectBundle(activeProjectId);
     })();
-  }, [activeProjectId, refreshProjectBundle]);
+  }, [studioAssetRouteActive, studioAssetsLoaded]);
 
   const handleMaterialChange = useCallback(
     async (basePaintId?: string, accentPaintId?: string, floorMatId?: string) => {

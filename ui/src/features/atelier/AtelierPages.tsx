@@ -236,6 +236,7 @@ export function AtelierMaterialsCatalogRoute() {
     activeProjectId,
     selectedEntityId,
     showToast,
+    errorMessage,
   } = useAtelierStudio();
   const [fitCheckResults, setFitCheckResults] = useState<Record<string, any>>({});
 
@@ -265,7 +266,11 @@ export function AtelierMaterialsCatalogRoute() {
     ]);
   }, [setBreadcrumbs]);
 
-  if (!project) return <div className="p-6 text-sm text-muted-foreground">Đang tải danh mục vật liệu...</div>;
+  if (!project) return (
+    <div className="p-6 text-sm text-muted-foreground" role={errorMessage ? "alert" : "status"}>
+      {errorMessage ? `Không thể tải dự án vật liệu: ${errorMessage}` : "Đang tải dự án và danh mục vật liệu..."}
+    </div>
+  );
 
   return (
     <div className="atelier-surface-root h-full overflow-y-auto" data-theme={theme}>

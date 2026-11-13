@@ -16,6 +16,8 @@ import {
   Send,
   RotateCcw,
   Download,
+  Bot,
+  ExternalLink,
 } from "lucide-react";
 
 const LazyStudioViewport = lazy(() =>
@@ -55,6 +57,9 @@ export function ConversationAtelierSidecar({
   } = useAtelierStudio();
 
   const messages = chatHistory.messages || [];
+  const workflowMessages = messages
+    .filter((message: any) => message.metadata?.event_id && message.metadata?.workflow_run_id)
+    .slice(-12);
   const proposals = chatHistory.proposals || [];
   const pendingProposals = proposals.filter((p: any) => p.status === "pending");
   const latestApplied = proposals.find((p: any) => p.status === "applied");
@@ -197,6 +202,52 @@ export function ConversationAtelierSidecar({
             </div>
           )}
         </div>
+
+        {/* Persisted native-task lifecycle, rendered in this Studio conversation. */}
+        <section className="rounded-lg border border-border bg-background p-3 shadow-2xs space-y-2" aria-label="Tiến độ nhóm agent">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-semibold text-foreground">
+              <Bot className="h-3.5 w-3.5 text-primary" />
+              Nhóm agent theo Workflow
+            </span>
+            <span className="text-[10px] text-muted-foreground">Sự kiện đã xác minh</span>
+          </div>
+          {workflowMessages.length ? (
+            <div className="space-y-2">
+              {workflowMessages.map((message: any) => {
+                const metadata = message.metadata || {};
+                const taskRef = metadata.task_identifier || metadata.native_task_id;
+                return (
+                  <article key={metadata.event_id} className="rounded-md border border-border/70 bg-muted/30 p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-[11px] font-semibold text-foreground">{message.sender_name || metadata.agent_id}</div>
+                        <div className="truncate text-[10px] text-muted-foreground">{metadata.role_title || metadata.node_label || metadata.node_id}</div>
+                      </div>
+                      <span className="shrink-0 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {metadata.status || metadata.event_type}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-foreground">{message.content}</p>
+                    <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                      <span>{message.created_at ? new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                      {taskRef ? (
+                        <a className="inline-flex items-center gap-1 font-medium text-primary hover:underline" href={`/ATL/issues/${taskRef}`}>
+                          {metadata.task_identifier || "Mở task"}
+                          <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded border border-dashed border-border p-2 text-[11px] text-muted-foreground">
+              Chưa có sự kiện native task đã xác minh cho project này.
+            </div>
+          )}
+        </section>
 
         {/* 2. DesignBrief: ConfirmedFacts / Assumptions / Preferences */}
         <div className="rounded-lg border border-border bg-background p-3 shadow-2xs space-y-2">
@@ -344,7 +395,7 @@ export function ConversationAtelierSidecar({
           {messages.length > 0 && (
             <div className="rounded bg-muted/40 p-2 text-[11px] text-muted-foreground">
               <span className="font-semibold text-foreground">Phản hồi mới nhất: </span>
-              {messages[messages.length - 1]?.text}
+              {messages[messages.length - 1]?.content ?? messages[messages.length - 1]?.text}
             </div>
           )}
         </div>

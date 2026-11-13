@@ -26,7 +26,6 @@ import {
   Users,
   Box,
   FileUp,
-  Palette,
   Camera,
   Calculator,
   ShoppingBag,
@@ -200,7 +199,6 @@ function ClassicSidebar({ children }: { children?: ReactNode }) {
           collapsible={{ open: atelierOpen, onOpenChange: setAtelierOpen }}
         >
           <SidebarNavItem to="/design-studio" label="Không gian thiết kế 2D/3D" icon={Box} textBadge="3D" />
-          <SidebarNavItem to="/materials-catalog" label="Vật liệu và hoàn thiện" icon={Palette} />
           <SidebarNavItem to="/inventory-bom" label="Danh mục nội thất" icon={ClipboardList} />
           <SidebarNavItem to="/cost-estimation" label="Dự toán" icon={Calculator} />
           <SidebarNavItem to="/render-compare" label="Phối cảnh Render" icon={Camera} />

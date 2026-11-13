@@ -156,6 +156,7 @@ ${roleRule}
 6. Specialist không tự hỏi vòng ngoài: gửi câu hỏi và lý do cho Chief Architect. Chief hỏi người dùng tối đa 3 câu ưu tiên trong một lượt.
 7. Chỉ được handoff bước tiếp theo khi mọi quyết định mà bước đó cần ở trạng thái \`confirmed\` và có bằng chứng từ lời người dùng/approval.
 8. Giá chưa xác minh phải ghi \`chưa có giá\`. Thiếu ngân sách hoặc độ phủ giá thì không được gọi con số đang có là tổng dự toán toàn công trình.
+9. BẮT BUỘC UTF-8 TRÊN WINDOWS: Khi gửi HTTP POST/PATCH bằng PowerShell, tuyệt đối không truyền string thô vào \`-Body $body\` vì Windows-1252 làm hỏng tiếng Việt có dấu. Bắt buộc dùng: \`$bytes = [System.Text.Encoding]::UTF8.GetBytes($body); Invoke-WebRequest -Uri $uri -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes\` hoặc dùng curl/python.
 
 ## Đầu ra tối thiểu cho mỗi lượt
 

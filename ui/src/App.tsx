@@ -55,11 +55,6 @@ const AtelierFloorPlanImportRoute = lazy(() =>
     default: m.AtelierFloorPlanImportRoute,
   })),
 );
-const AtelierMaterialsCatalogRoute = lazy(() =>
-  import("./features/atelier/AtelierPages").then((m) => ({
-    default: m.AtelierMaterialsCatalogRoute,
-  })),
-);
 const AtelierRenderCompareRoute = lazy(() =>
   import("./features/atelier/AtelierPages").then((m) => ({
     default: m.AtelierRenderCompareRoute,
@@ -500,7 +495,7 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="design-guide" element={<DesignGuide />} />
       <Route path="design-studio" element={<AtelierDesignStudioPage />} />
       <Route path="floorplan-import" element={<AtelierFloorPlanImportRoute />} />
-      <Route path="materials-catalog" element={<AtelierMaterialsCatalogRoute />} />
+      <Route path="materials-catalog" element={<Navigate to="../design-studio" replace />} />
       <Route path="render-compare" element={<AtelierRenderCompareRoute />} />
       <Route path="cost-estimation" element={<AtelierCostEstimationRoute />} />
       <Route path="inventory-bom" element={<AtelierInventoryBOMPage />} />

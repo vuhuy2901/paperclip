@@ -4,7 +4,7 @@ import { type BudgetServiceHooks } from "./budgets.js";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, agentConfigRevisions, agentApiKeys, heartbeatRuns } from "@paperclipai/db";
-import { isUuidLike, normalizeAgentApiKeyScope, normalizeAgentUrlKey, type AgentApiKeyScope } from "@paperclipai/shared";
+import { isUuidLike, legacyNormalizeAgentUrlKey, normalizeAgentApiKeyScope, normalizeAgentUrlKey, type AgentApiKeyScope } from "@paperclipai/shared";
 
 import { conflict, notFound, unprocessable } from "../errors.js";
 
@@ -265,13 +265,17 @@ export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       }
 
       const urlKey = normalizeAgentUrlKey(raw);
+      const legacyUrlKey = legacyNormalizeAgentUrlKey(raw);
       if (!urlKey) {
         return { agent: null, ambiguous: false } as const;
       }
 
       const rows = await db.select().from(agents).where(eq(agents.companyId, companyId));
       const matches = normalizeAgentRows(rows, rows)
-        .filter((agent) => agent.urlKey === urlKey && agent.status !== "terminated");
+        .filter((agent) => agent.status !== "terminated" && (
+          agent.urlKey === urlKey
+          || legacyNormalizeAgentUrlKey(agent.name) === legacyUrlKey
+        ));
       if (matches.length === 1) {
         return { agent: matches[0] ?? null, ambiguous: false } as const;
       }

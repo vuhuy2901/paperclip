@@ -104,3 +104,8 @@ test-results/
 
 # Content-addressed CI task results
 .turbo/
+
+# Logs & generated types
+*.log
+packages/**/*.d.ts
+

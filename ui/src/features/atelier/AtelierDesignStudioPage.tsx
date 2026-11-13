@@ -44,10 +44,9 @@ export function AtelierDesignStudioPage() {
     materialsCatalog, pbrMaterials, assetLibrary, chatHistory, revisions,
     selectedEntityId, setSelectedEntityId, viewMode, setViewMode,
     cameraPreset, setCameraPreset, lightingPreset, setLightingPreset,
-    busyMessage, errorMessage, handleMaterialChange, handleSendChat,
+    busyMessage, errorMessage, handleSendChat,
     handleAnswerQuestion, handleProposalDecision, handleRestoreRevision,
     handleUpdateFurnitureField, handleSaveScene, handleExport, handleAssignAsset,
-    handleCreateMaterialProposal, handleCreateSurfaceMaterialProposal,
     handleRequestSmartFit, handleRequestPlacementOptions, handleCreatePlacementProposal,
   } = useAtelierStudio();
 
@@ -159,7 +158,7 @@ export function AtelierDesignStudioPage() {
             {inspectorOpen ? (
               <div className="dock-column inspector-column">
                 <button className="dock-resize-handle" type="button" onPointerDown={(event) => beginResize("inspector", event)} aria-label="Thay đổi chiều rộng Inspector" />
-                <ObjectInspector project={project} materialsDb={materialsCatalog} pbrMaterials={pbrMaterials} assetLibrary={assetLibrary} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onUpdateFurnitureField={handleUpdateFurnitureField} onCommitCanvasPosition={() => void handleSaveScene()} onUpdateSurfaces7B={(payload) => void handleMaterialChange(payload.wall_base_material_id, payload.accent_paint_id, payload.floor_material_id)} onPreviewMaterial={(payload) => window.dispatchEvent(new CustomEvent("atelier:material-preview", { detail: payload }))} onCreateMaterialProposal={handleCreateMaterialProposal} onCreateSurfaceMaterialProposal={handleCreateSurfaceMaterialProposal} onAssignAsset={handleAssignAsset} onResetMaterialPreview={() => setCameraResetTrigger((value) => value + 1)} onRequestSmartFit={handleRequestSmartFit} onRequestPlacementOptions={handleRequestPlacementOptions} onCreatePlacementProposal={handleCreatePlacementProposal} onClose={() => setInspectorOpen(false)} savingScene={Boolean(busyMessage?.includes("lưu"))} />
+                <ObjectInspector project={project} assetLibrary={assetLibrary} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onUpdateFurnitureField={handleUpdateFurnitureField} onCommitCanvasPosition={() => void handleSaveScene()} onAssignAsset={handleAssignAsset} onOpenAICopilot={() => setAssistantOpen(true)} onRequestSmartFit={handleRequestSmartFit} onRequestPlacementOptions={handleRequestPlacementOptions} onCreatePlacementProposal={handleCreatePlacementProposal} onClose={() => setInspectorOpen(false)} savingScene={Boolean(busyMessage?.includes("lưu"))} />
               </div>
             ) : null}
 

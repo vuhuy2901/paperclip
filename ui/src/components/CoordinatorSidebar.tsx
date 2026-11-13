@@ -30,7 +30,6 @@ import { PinnedNavigationList, type PinnedNavigationItem } from "./PinnedNavigat
 
 const moreDestinations = [
   { label: "Không gian thiết kế 2D/3D", to: "/design-studio", icon: Boxes },
-  { label: "Vật liệu và hoàn thiện", to: "/materials-catalog", icon: Boxes },
   { label: "Danh mục nội thất", to: "/inventory-bom", icon: Boxes },
   { label: "Dự toán", to: "/cost-estimation", icon: Boxes },
   { label: "Phối cảnh Render", to: "/render-compare", icon: Boxes },
@@ -175,7 +174,6 @@ export function CoordinatorSidebar({ children }: { children?: ReactNode }) {
           <SidebarNavItem className="design-sidebar-item" to="/skills" label="Skills / Skill Studio" icon={Boxes} />
           <SidebarNavItem className="design-sidebar-item" to="/apps" label="Kết nối AI / MCP" icon={Unplug} />
           <SidebarNavItem className="design-sidebar-item" to="/design-studio" label="Không gian thiết kế 2D/3D" icon={Boxes} textBadge="3D" />
-          <SidebarNavItem className="design-sidebar-item" to="/materials-catalog" label="Vật liệu và hoàn thiện" icon={FolderOpen} />
           <SidebarNavItem className="design-sidebar-item" to="/inventory-bom" label="Danh mục nội thất" icon={Boxes} />
           <SidebarNavItem className="design-sidebar-item" to="/cost-estimation" label="Dự toán" icon={FolderOpen} />
         </div>
