@@ -98,7 +98,7 @@
     "verify": "node --import ./cli/node_modules/tsx/dist/loader.mjs scripts/ensure-workspace-package-links.ts && node scripts/local-verify.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.65.0",
     "agentmail": "^0.5.31",
     "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
