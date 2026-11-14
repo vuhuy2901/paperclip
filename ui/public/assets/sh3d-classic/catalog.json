@@ -1,0 +1,746 @@
+{
+  "style": "Warm Classic (CC-0 / CC-BY)",
+  "version": "1.0.0",
+  "parametric_categories": [
+    "rug",
+    "carpet",
+    "painting",
+    "frame",
+    "mirror",
+    "curtain",
+    "blind",
+    "door",
+    "window"
+  ],
+  "items": [
+    {
+      "slug": "bed_single",
+      "sh3d_id": "Blend Swap CC-BY#juniorBed",
+      "name": "Child bed",
+      "aliases": [
+        "bed_single",
+        "single_bed",
+        "child_bed",
+        "kid_bed"
+      ],
+      "width_m": 1.057,
+      "depth_m": 1.978,
+      "height_m": 0.656,
+      "face_count": 10814,
+      "license": "CC-BY",
+      "creator": "SirOccor & Emmanuel Puybaret",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/bed_single.glb"
+    },
+    {
+      "slug": "bed_double",
+      "sh3d_id": "Blend Swap CC-0#bed2",
+      "name": "Bed",
+      "aliases": [
+        "bed",
+        "bed_double",
+        "double_bed",
+        "queen_bed",
+        "king_bed",
+        "master_bed"
+      ],
+      "width_m": 1.447,
+      "depth_m": 2.137,
+      "height_m": 1.077,
+      "face_count": 13500,
+      "license": "CC-0",
+      "creator": "Blend Swap",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/bed_double.glb"
+    },
+    {
+      "slug": "bed_double_2",
+      "sh3d_id": "Blend Swap CC-0#bed1",
+      "name": "Bed",
+      "aliases": [
+        "bed_classic",
+        "bed_alt"
+      ],
+      "width_m": 1.407,
+      "depth_m": 2.08,
+      "height_m": 0.955,
+      "face_count": 22612,
+      "license": "CC-0",
+      "creator": "Blend Swap",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/bed_double_2.glb"
+    },
+    {
+      "slug": "bed_bunk",
+      "sh3d_id": "Blend Swap CC-BY#bunkBed",
+      "name": "Bunk bed",
+      "aliases": [
+        "bunk_bed",
+        "bed_bunk"
+      ],
+      "width_m": 1.131,
+      "depth_m": 2.05,
+      "height_m": 1.6,
+      "face_count": 23590,
+      "license": "CC-BY",
+      "creator": "NabHlEsCK & Emmanuel Puybaret",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/bed_bunk.glb"
+    },
+    {
+      "slug": "wardrobe",
+      "sh3d_id": "Blend Swap CC-BY#wardrobe",
+      "name": "Wardrobe",
+      "aliases": [
+        "wardrobe",
+        "closet",
+        "armoire",
+        "cabinet_tall"
+      ],
+      "width_m": 0.921,
+      "depth_m": 0.68,
+      "height_m": 2.0,
+      "face_count": 824,
+      "license": "CC-BY",
+      "creator": "SirOccor",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/wardrobe.glb"
+    },
+    {
+      "slug": "cupboard",
+      "sh3d_id": "Blend Swap CC-0#cupboard",
+      "name": "Cupboard",
+      "aliases": [
+        "cupboard",
+        "storage_cabinet",
+        "cabinet"
+      ],
+      "width_m": 1.005,
+      "depth_m": 0.39,
+      "height_m": 1.5,
+      "face_count": 3800,
+      "license": "CC-0",
+      "creator": "Mahmood",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/cupboard.glb"
+    },
+    {
+      "slug": "bookcase",
+      "sh3d_id": "Kator Legaz#full-bookcase",
+      "name": "Full bookcase",
+      "aliases": [
+        "bookcase",
+        "bookshelf",
+        "shelf",
+        "shelving"
+      ],
+      "width_m": 0.898,
+      "depth_m": 0.347,
+      "height_m": 2.21,
+      "face_count": 1263,
+      "license": "CC-BY",
+      "creator": "Kator Legaz",
+      "source": "KatorLegaz.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/bookcase.glb"
+    },
+    {
+      "slug": "dresser",
+      "sh3d_id": "Blend Swap CC-BY#chest",
+      "name": "Chest",
+      "aliases": [
+        "dresser",
+        "chest",
+        "chest_of_drawers",
+        "drawer_unit",
+        "credenza",
+        "tv_stand"
+      ],
+      "width_m": 1.435,
+      "depth_m": 0.536,
+      "height_m": 0.82,
+      "face_count": 3329,
+      "license": "CC-BY",
+      "creator": "Elhzar",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/dresser.glb"
+    },
+    {
+      "slug": "nightstand",
+      "sh3d_id": "Blend Swap CC-BY#bedsideTable",
+      "name": "Bedside table",
+      "aliases": [
+        "nightstand",
+        "bedside_table",
+        "bedside",
+        "side_table"
+      ],
+      "width_m": 0.5,
+      "depth_m": 0.414,
+      "height_m": 0.48,
+      "face_count": 263,
+      "license": "CC-BY",
+      "creator": "SirOccor",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/nightstand.glb"
+    },
+    {
+      "slug": "clock_tall",
+      "sh3d_id": "OlaKristianHoff#longcase_clock",
+      "name": "Longcase clock",
+      "aliases": [
+        "clock",
+        "longcase_clock",
+        "grandfather_clock"
+      ],
+      "width_m": 0.5,
+      "depth_m": 0.3,
+      "height_m": 2.0,
+      "face_count": 202,
+      "license": "CC-BY",
+      "creator": "Ola-Kristian Hoff",
+      "source": "Contributions.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/clock_tall.glb"
+    },
+    {
+      "slug": "dining_table",
+      "sh3d_id": "Blend Swap CC-0#oakTable",
+      "name": "Oak table",
+      "aliases": [
+        "dining_table",
+        "table",
+        "round_table"
+      ],
+      "width_m": 1.24,
+      "depth_m": 1.24,
+      "height_m": 0.741,
+      "face_count": 2532,
+      "license": "CC-0",
+      "creator": "Doug C",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/dining_table.glb"
+    },
+    {
+      "slug": "round_marble",
+      "sh3d_id": "OlaKristianHoff#table_granmother_marble",
+      "name": "Marble table",
+      "aliases": [
+        "coffee_table",
+        "marble_table"
+      ],
+      "width_m": 1.2,
+      "depth_m": 1.2,
+      "height_m": 0.7,
+      "face_count": 434,
+      "license": "CC-BY",
+      "creator": "Ola-Kristian Hoff",
+      "source": "Contributions.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/round_marble.glb"
+    },
+    {
+      "slug": "half_table",
+      "sh3d_id": "OlaKristianHoff#table_half_round",
+      "name": "Half round table",
+      "aliases": [
+        "console_table",
+        "half_table"
+      ],
+      "width_m": 1.02,
+      "depth_m": 0.586,
+      "height_m": 0.78,
+      "face_count": 250,
+      "license": "CC-BY",
+      "creator": "Ola-Kristian Hoff",
+      "source": "Contributions.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/half_table.glb"
+    },
+    {
+      "slug": "table_cloth",
+      "sh3d_id": "Blend Swap CC-0#tableWithTablecloth",
+      "name": "Table with tablecloth",
+      "aliases": [
+        "bistro_table",
+        "table_cloth"
+      ],
+      "width_m": 0.803,
+      "depth_m": 0.812,
+      "height_m": 0.75,
+      "face_count": 1834,
+      "license": "CC-0",
+      "creator": "Sizzler",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/table_cloth.glb"
+    },
+    {
+      "slug": "desk",
+      "sh3d_id": "Blend Swap CC-BY#officeTable",
+      "name": "Desk",
+      "aliases": [
+        "desk",
+        "study_desk",
+        "work_desk",
+        "office_desk",
+        "study_table"
+      ],
+      "width_m": 1.892,
+      "depth_m": 0.834,
+      "height_m": 0.751,
+      "face_count": 2103,
+      "license": "CC-BY",
+      "creator": "Nmn9",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/desk.glb"
+    },
+    {
+      "slug": "chair_dining",
+      "sh3d_id": "Blend Swap CC-0#antiqueChair",
+      "name": "Chair",
+      "aliases": [
+        "chair",
+        "dining_chair"
+      ],
+      "width_m": 0.498,
+      "depth_m": 0.632,
+      "height_m": 0.982,
+      "face_count": 4575,
+      "license": "CC-0",
+      "creator": "Niuskir",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/chair_dining.glb"
+    },
+    {
+      "slug": "chair_oak",
+      "sh3d_id": "Blend Swap CC-0#oakChair",
+      "name": "Oak chair",
+      "aliases": [
+        "chair_oak",
+        "study_chair",
+        "desk_chair",
+        "office_chair"
+      ],
+      "width_m": 0.491,
+      "depth_m": 0.612,
+      "height_m": 1.178,
+      "face_count": 15893,
+      "license": "CC-0",
+      "creator": "Doug C",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/chair_oak.glb"
+    },
+    {
+      "slug": "armchair_wing",
+      "sh3d_id": "OlaKristianHoff#armchair_wing",
+      "name": "Armchair",
+      "aliases": [
+        "armchair",
+        "lounge_chair",
+        "reading_chair"
+      ],
+      "width_m": 0.85,
+      "depth_m": 0.9,
+      "height_m": 1.12,
+      "face_count": 423,
+      "license": "CC-BY",
+      "creator": "Ola-Kristian Hoff",
+      "source": "Contributions.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/armchair_wing.glb"
+    },
+    {
+      "slug": "armchair_win",
+      "sh3d_id": "Blend Swap CC-0#winchesterArmchair",
+      "name": "Winchester armchair",
+      "aliases": [
+        "armchair_classic",
+        "club_chair"
+      ],
+      "width_m": 1.12,
+      "depth_m": 0.934,
+      "height_m": 0.804,
+      "face_count": 11029,
+      "license": "CC-0",
+      "creator": "Gnanasaireddy",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/armchair_win.glb"
+    },
+    {
+      "slug": "sofa_winchester",
+      "sh3d_id": "Blend Swap CC-0#winchesterSofa",
+      "name": "Winchester sofa",
+      "aliases": [
+        "sofa",
+        "couch",
+        "living_sofa",
+        "sectional"
+      ],
+      "width_m": 2.319,
+      "depth_m": 0.938,
+      "height_m": 0.804,
+      "face_count": 17881,
+      "license": "CC-0",
+      "creator": "Gnanasaireddy",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/sofa_winchester.glb"
+    },
+    {
+      "slug": "sofa_2seat",
+      "sh3d_id": "Blend Swap CC-0#sofa2",
+      "name": "Sofa",
+      "aliases": [
+        "loveseat",
+        "sofa_2seat",
+        "settee"
+      ],
+      "width_m": 1.669,
+      "depth_m": 0.747,
+      "height_m": 0.848,
+      "face_count": 8546,
+      "license": "CC-0",
+      "creator": "Blend Swap",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/sofa_2seat.glb"
+    },
+    {
+      "slug": "kitchen_cabinet",
+      "sh3d_id": "Blend Swap CC-BY#kitchenLowerCabinet",
+      "name": "Lower cabinet",
+      "aliases": [
+        "kitchen_cabinet",
+        "kitchen_counter",
+        "counter",
+        "base_cabinet"
+      ],
+      "width_m": 0.976,
+      "depth_m": 0.616,
+      "height_m": 0.878,
+      "face_count": 1046,
+      "license": "CC-BY",
+      "creator": "Jay-Artist",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/kitchen_cabinet.glb"
+    },
+    {
+      "slug": "kitchen_island",
+      "sh3d_id": "Blend Swap CC-BY#kitchenIsland",
+      "name": "Island",
+      "aliases": [
+        "kitchen_island",
+        "island"
+      ],
+      "width_m": 0.939,
+      "depth_m": 0.699,
+      "height_m": 0.831,
+      "face_count": 5316,
+      "license": "CC-BY",
+      "creator": "Jay-Artist",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/kitchen_island.glb"
+    },
+    {
+      "slug": "kitchen_stove",
+      "sh3d_id": "Blend Swap CC-0#oven",
+      "name": "Oven",
+      "aliases": [
+        "stove",
+        "oven",
+        "cooker",
+        "cooktop",
+        "range"
+      ],
+      "width_m": 0.6,
+      "depth_m": 0.515,
+      "height_m": 0.578,
+      "face_count": 11248,
+      "license": "CC-0",
+      "creator": "Martanda",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/kitchen_stove.glb"
+    },
+    {
+      "slug": "kitchen_fridge",
+      "sh3d_id": "Blend Swap CC-0#largeFridge",
+      "name": "Large fridge",
+      "aliases": [
+        "fridge",
+        "refrigerator"
+      ],
+      "width_m": 0.925,
+      "depth_m": 0.806,
+      "height_m": 1.843,
+      "face_count": 2823,
+      "license": "CC-0",
+      "creator": "Vladoffsky",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/kitchen_fridge.glb"
+    },
+    {
+      "slug": "kitchen_sink",
+      "sh3d_id": "Blend Swap CC-BY#kitchenSink",
+      "name": "Sink",
+      "aliases": [
+        "kitchen_sink",
+        "sink"
+      ],
+      "width_m": 0.976,
+      "depth_m": 0.616,
+      "height_m": 0.976,
+      "face_count": 6479,
+      "license": "CC-BY",
+      "creator": "Jay-Artist, Kator Legaz & Emmanuel Puybaret",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/kitchen_sink.glb"
+    },
+    {
+      "slug": "bath_tub",
+      "sh3d_id": "OlaKristianHoff#bathtub_jet_system",
+      "name": "Bathtub jet system",
+      "aliases": [
+        "bathtub",
+        "bath",
+        "tub"
+      ],
+      "width_m": 1.6,
+      "depth_m": 0.7,
+      "height_m": 0.58,
+      "face_count": 4040,
+      "license": "CC-BY",
+      "creator": "Ola-Kristian Hoff",
+      "source": "Contributions.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/bath_tub.glb"
+    },
+    {
+      "slug": "bath_vanity",
+      "sh3d_id": "Blend Swap CC-0#washbasin",
+      "name": "Washbasin",
+      "aliases": [
+        "washbasin",
+        "basin",
+        "vanity",
+        "bathroom_sink"
+      ],
+      "width_m": 0.564,
+      "depth_m": 0.457,
+      "height_m": 0.931,
+      "face_count": 24504,
+      "license": "CC-0",
+      "creator": "Nhumrod",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/bath_vanity.glb"
+    },
+    {
+      "slug": "bath_toilet",
+      "sh3d_id": "Blend Swap CC-0#toiletsUnit",
+      "name": "Toilet unit",
+      "aliases": [
+        "toilet",
+        "wc"
+      ],
+      "width_m": 0.353,
+      "depth_m": 0.692,
+      "height_m": 0.772,
+      "face_count": 10081,
+      "license": "CC-0",
+      "creator": "Nhumrod",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/bath_toilet.glb"
+    },
+    {
+      "slug": "bath_shower",
+      "sh3d_id": "Blend Swap CC-0#showerStall",
+      "name": "Shower stall",
+      "aliases": [
+        "shower",
+        "shower_stall",
+        "shower_enclosure"
+      ],
+      "width_m": 0.9306,
+      "depth_m": 1.1189,
+      "height_m": 2.0002,
+      "face_count": 9479,
+      "license": "CC-0",
+      "creator": "Asterlil",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/bath_shower.glb"
+    },
+    {
+      "slug": "lamp_table",
+      "sh3d_id": "Blend Swap CC-BY#lamp",
+      "name": "Lamp",
+      "aliases": [
+        "lamp",
+        "table_lamp",
+        "bedside_lamp"
+      ],
+      "width_m": 0.305,
+      "depth_m": 0.305,
+      "height_m": 0.409,
+      "face_count": 5032,
+      "license": "CC-BY",
+      "creator": "Bulgakov",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/lamp_table.glb"
+    },
+    {
+      "slug": "lamp_vase",
+      "sh3d_id": "Kator Legaz#pedestal-vase-lamp",
+      "name": "Pedestal vase lamp",
+      "aliases": [
+        "floor_lamp",
+        "standing_lamp",
+        "pedestal_lamp"
+      ],
+      "width_m": 0.282,
+      "depth_m": 0.282,
+      "height_m": 0.8,
+      "face_count": 3128,
+      "license": "CC-BY",
+      "creator": "Kator Legaz",
+      "source": "KatorLegaz.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/lamp_vase.glb"
+    },
+    {
+      "slug": "lamp_wall",
+      "sh3d_id": "Blend Swap CC-0#wallLight",
+      "name": "Wall light",
+      "aliases": [
+        "wall_lamp",
+        "sconce",
+        "ceiling_lamp",
+        "pendant_lamp"
+      ],
+      "width_m": 0.228,
+      "depth_m": 0.246,
+      "height_m": 0.538,
+      "face_count": 4040,
+      "license": "CC-0",
+      "creator": "Ndakasha",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/lamp_wall.glb"
+    },
+    {
+      "slug": "plant_orchid",
+      "sh3d_id": "Blend Swap CC-0#orchids",
+      "name": "Orchids",
+      "aliases": [
+        "orchid",
+        "flower_pot",
+        "vase"
+      ],
+      "width_m": 0.311,
+      "depth_m": 0.353,
+      "height_m": 0.574,
+      "face_count": 22737,
+      "license": "CC-0",
+      "creator": "Elysia",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": true,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin, assigned Poly Haven CC0 PBR materials",
+      "glb_url": "/assets/sh3d-classic/plant_orchid.glb"
+    },
+    {
+      "slug": "plant_small",
+      "sh3d_id": "Blend Swap CC-0#littlePlant",
+      "name": "Little plant",
+      "aliases": [
+        "plant",
+        "potted_plant",
+        "small_plant"
+      ],
+      "width_m": 0.266,
+      "depth_m": 0.266,
+      "height_m": 0.232,
+      "face_count": 2232,
+      "license": "CC-0",
+      "creator": "Rameshrj",
+      "source": "BlendSwap-CC-0.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/plant_small.glb"
+    },
+    {
+      "slug": "plant_tall",
+      "sh3d_id": "Blend Swap CC-BY#yuccaPlant",
+      "name": "Yucca",
+      "aliases": [
+        "tall_plant",
+        "tree",
+        "indoor_tree",
+        "shrub"
+      ],
+      "width_m": 1.079,
+      "depth_m": 1.024,
+      "height_m": 1.8,
+      "face_count": 11367,
+      "license": "CC-BY",
+      "creator": "Betomo16",
+      "source": "BlendSwap-CC-BY.sh3f",
+      "modified": false,
+      "modification_note": "Normalized scale to meters, Y-up bottom-center origin",
+      "glb_url": "/assets/sh3d-classic/plant_tall.glb"
+    }
+  ]
+}

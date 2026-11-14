@@ -10,11 +10,34 @@ export const ATELIER_NODE_TYPES = [
 ] as const;
 export type AtelierNodeType = (typeof ATELIER_NODE_TYPES)[number];
 
+export type AtelierStepSettings = {
+  retry?: { maxAttempts: number; backoffSeconds?: number };
+  logging?: { enabled: boolean; level?: "info" | "debug" | "error" };
+  notifications?: { onStart?: boolean; onComplete?: boolean; onError?: boolean; channel?: string };
+};
+
+export type AtelierOptionalCostBomConfig = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  runsAfterApproval: boolean;
+  requiredRole: string;
+  taskType: string;
+  capability: string;
+  description?: string;
+};
+
 export type AtelierWorkflowNode = {
   id: string;
   type: AtelierNodeType;
   name: string;
   description?: string;
+  prompt?: string;
+  stepNumber?: number;
+  totalSteps?: number;
+  stepLabel?: string;
+  sourceNodes?: string[];
+  includesValidator?: boolean;
   position?: { x: number; y: number };
   taskType?: string;
   requiredRole?: string;
@@ -27,6 +50,7 @@ export type AtelierWorkflowNode = {
   allowedTools?: string[];
   timeoutSeconds?: number;
   retryPolicy?: { maxAttempts: number; backoffSeconds?: number };
+  stepSettings?: AtelierStepSettings;
   approval?: { required: boolean; approverRole?: string; approverAgentIds?: string[] };
   conditionOutcomes?: string[];
 };
@@ -39,6 +63,9 @@ export type AtelierEditableDefinition = {
   version: number;
   nodes: AtelierWorkflowNode[];
   edges: AtelierWorkflowEdge[];
+  optionalSteps?: {
+    costBomAfterApproval?: AtelierOptionalCostBomConfig;
+  };
   canvas?: { snapToGrid?: boolean; viewport?: { x: number; y: number; zoom: number } };
   gatePolicy?: Record<string, unknown>;
   stateMachine?: string[];
@@ -163,6 +190,171 @@ export function upgradeLegacyAtelierDefinition(value: unknown, version: number, 
   return { schemaVersion: 2, key: `atelier-company-workflow:v${version}`, name, version, nodes: [start, ...agentTaskNodes, end], edges, canvas: { snapToGrid: true }, gatePolicy: legacy.gatePolicy as Record<string, unknown> ?? {}, stateMachine: stringArray(legacy.stateMachine) };
 }
 
+export function buildSimplifiedWorkflowV6Definition(
+  version = 6,
+  name = ATELIER_COMPANY_WORKFLOW_NAME,
+): AtelierEditableDefinition {
+  return {
+    schemaVersion: 2,
+    key: `atelier-company-workflow:v${version}`,
+    name,
+    version,
+    nodes: [
+      {
+        id: "intake",
+        type: "START",
+        name: "1. Nhận bản vẽ",
+        stepNumber: 1,
+        totalSteps: 5,
+        stepLabel: "Bước 1/5",
+        sourceNodes: ["start (Chief Architect Intake)"],
+        requiredRole: "chief_architect",
+        description: "Tiếp nhận yêu cầu dự án, bản vẽ 2D hoặc thông số phòng từ Chief Architect Intake.",
+        position: { x: 40, y: 180 },
+        requiredInputs: ["project_brief", "floor_plan_or_dimensions"],
+        requiredOutputs: ["validated_intake"],
+        completionCriteria: ["Đã có bản vẽ hoặc kích thước phòng hợp lệ"],
+        stepSettings: {
+          retry: { maxAttempts: 1, backoffSeconds: 0 },
+          logging: { enabled: true, level: "info" },
+          notifications: { onStart: false, onComplete: true, onError: true, channel: "execution_tab" },
+        },
+      },
+      {
+        id: "build_scene",
+        type: "AGENT_TASK",
+        name: "2. Dựng scene",
+        stepNumber: 2,
+        totalSteps: 5,
+        stepLabel: "Bước 2/5",
+        sourceNodes: ["floorplan (Floor Plan)", "geometry (Geometry / BIM)"],
+        includesValidator: true,
+        taskType: "BIM_GEOMETRY",
+        requiredRole: "geometry_agent",
+        agentSelector: { strategy: "CAPABILITY_MATCH", capability: "bim.scenegraph" },
+        description: "Đọc mặt bằng, dựng khung phòng/tường/cửa/sàn 3D và chạy validator kiểm tra hình học.",
+        position: { x: 360, y: 180 },
+        requiredInputs: ["validated_intake"],
+        requiredOutputs: ["scene_graph", "scene_validation_report"],
+        requiredArtifacts: ["geometry_artifact"],
+        completionCriteria: ["SceneGraph dựng xong và bộ validator PASS"],
+        retryPolicy: { maxAttempts: 2, backoffSeconds: 15 },
+        approval: { required: false },
+        stepSettings: {
+          retry: { maxAttempts: 2, backoffSeconds: 15 },
+          logging: { enabled: true, level: "info" },
+          notifications: { onStart: false, onComplete: true, onError: true, channel: "execution_tab" },
+        },
+      },
+      {
+        id: "style_and_furniture",
+        type: "AGENT_TASK",
+        name: "3. Chọn đồ & vật liệu",
+        stepNumber: 3,
+        totalSteps: 5,
+        stepLabel: "Bước 3/5",
+        sourceNodes: ["style (Style / Materials)", "furniture (Furniture)"],
+        taskType: "STYLE_RESEARCH",
+        requiredRole: "style_agent",
+        agentSelector: { strategy: "CAPABILITY_MATCH", capability: "style.research" },
+        description: "Bố trí nội thất không chồng lấn và gán vật liệu PBR đã chọn cho sàn, tường, đồ nội thất.",
+        position: { x: 680, y: 180 },
+        requiredInputs: ["scene_graph", "scene_validation_report"],
+        requiredOutputs: ["furniture_layout", "material_assignments", "material_hash"],
+        requiredArtifacts: ["style_furniture_artifact"],
+        completionCriteria: ["Đã chọn đủ nội thất và vật liệu PBR (có material_hash)"],
+        retryPolicy: { maxAttempts: 2, backoffSeconds: 15 },
+        approval: { required: false },
+        stepSettings: {
+          retry: { maxAttempts: 2, backoffSeconds: 15 },
+          logging: { enabled: true, level: "info" },
+          notifications: { onStart: false, onComplete: true, onError: true, channel: "execution_tab" },
+        },
+      },
+      {
+        id: "render",
+        type: "AGENT_TASK",
+        name: "4. Render",
+        stepNumber: 4,
+        totalSteps: 5,
+        stepLabel: "Bước 4/5",
+        sourceNodes: ["render (Rendering Specialist)"],
+        taskType: "RENDER",
+        requiredRole: "render_agent",
+        agentSelector: { strategy: "CAPABILITY_MATCH", capability: "render.execute" },
+        description: "Chỉ chạy SAU khi Bước 3 hoàn tất; kết xuất ảnh Blender Cycles dùng đúng vật liệu đã chọn.",
+        position: { x: 1000, y: 180 },
+        requiredInputs: ["scene_graph", "material_assignments", "material_hash"],
+        requiredOutputs: ["rendered_image_url", "material_hash_verified"],
+        requiredArtifacts: ["render_artifact"],
+        completionCriteria: [
+          "Bước 3 (Chọn đồ & vật liệu) đã Hoàn thành trước khi bắt đầu",
+          "Ảnh Cycles sử dụng đúng material_hash đã chọn",
+        ],
+        retryPolicy: { maxAttempts: 2, backoffSeconds: 30 },
+        approval: { required: false },
+        stepSettings: {
+          retry: { maxAttempts: 2, backoffSeconds: 30 },
+          logging: { enabled: true, level: "info" },
+          notifications: { onStart: true, onComplete: true, onError: true, channel: "execution_tab" },
+        },
+      },
+      {
+        id: "qa_and_deliver",
+        type: "END",
+        name: "5. Kiểm tra & giao",
+        stepNumber: 5,
+        totalSteps: 5,
+        stepLabel: "Bước 5/5",
+        sourceNodes: ["qa (QA)", "final_review (Final Review)", "end (Export and Delivery)"],
+        taskType: "FINAL_REVIEW",
+        requiredRole: "qa_agent",
+        description: "Kiểm tra QA ảnh render & scene, dừng ở cổng NGƯỜI DUYỆT trước khi xuất giao (agent không tự đóng).",
+        position: { x: 1320, y: 180 },
+        requiredInputs: ["rendered_image_url", "scene_validation_report"],
+        requiredOutputs: ["qa_report", "human_approval_decision", "delivery_package"],
+        requiredArtifacts: ["delivery_package"],
+        completionCriteria: [
+          "QA kiểm tra ảnh và scene PASS",
+          "Có xác nhận từ cổng NGƯỜI DUYỆT trước khi xuất",
+        ],
+        approval: { required: true, approverRole: "authorized_approver" },
+        stepSettings: {
+          retry: { maxAttempts: 1, backoffSeconds: 0 },
+          logging: { enabled: true, level: "info" },
+          notifications: { onStart: false, onComplete: true, onError: true, channel: "execution_tab" },
+        },
+      },
+    ],
+    edges: [
+      { id: "edge_1_2", source: "intake", target: "build_scene", outcome: "Đạt đầu vào" },
+      { id: "edge_2_3", source: "build_scene", target: "style_and_furniture", outcome: "Validator đạt" },
+      { id: "edge_3_4", source: "style_and_furniture", target: "render", outcome: "Đã chốt đồ & vật liệu" },
+      { id: "edge_4_5", source: "render", target: "qa_and_deliver", outcome: "Render hoàn tất" },
+    ],
+    optionalSteps: {
+      costBomAfterApproval: {
+        id: "cost",
+        name: "Cost/BOM (Tùy chọn sau duyệt)",
+        enabled: false,
+        runsAfterApproval: true,
+        requiredRole: "cost_agent",
+        taskType: "COST_CALCULATION",
+        capability: "cost.calculate",
+        description: "Bước tùy chọn: chỉ chạy SAU khi cổng NGƯỜI DUYỆT xác nhận Bước 5.",
+      },
+    },
+    canvas: { snapToGrid: true },
+    gatePolicy: {
+      unknownData: "needs_input",
+      noAutoDecision: true,
+      agentCannotSelfCloseBeforeApproval: true,
+      renderStrictlyAfterStep3: true,
+    },
+    stateMachine: ["Chờ", "Đang chạy", "Chờ duyệt", "Hoàn thành", "Lỗi", "Đã hủy"],
+  };
+}
+
 export async function validateAtelierWorkflowDefinition(db: Db, companyId: string, value: unknown): Promise<{ valid: boolean; issues: WorkflowValidationIssue[]; definition: AtelierEditableDefinition | null }> {
   const definition = asDefinition(value);
   const issues: WorkflowValidationIssue[] = [];
@@ -180,6 +372,9 @@ export async function validateAtelierWorkflowDefinition(db: Db, companyId: strin
       if (!node.requiredOutputs?.length) issues.push({ code: "missing_output_contract", severity: "error", message: "Agent node requires at least one output.", nodeId: node.id });
       if (!node.completionCriteria?.length) issues.push({ code: "missing_completion_criteria", severity: "error", message: "Agent node requires completion criteria.", nodeId: node.id });
       if (node.retryPolicy && (!Number.isInteger(node.retryPolicy.maxAttempts) || node.retryPolicy.maxAttempts < 1 || node.retryPolicy.maxAttempts > 10)) issues.push({ code: "invalid_retry_policy", severity: "error", message: "Retry maxAttempts must be between 1 and 10.", nodeId: node.id });
+      if (node.stepSettings?.retry && (!Number.isInteger(node.stepSettings.retry.maxAttempts) || node.stepSettings.retry.maxAttempts < 1 || node.stepSettings.retry.maxAttempts > 10)) {
+        issues.push({ code: "invalid_step_retry", severity: "error", message: "Số lần thử lại (stepSettings.retry.maxAttempts) phải từ 1 đến 10.", nodeId: node.id });
+      }
       if (node.assignedAgentId) {
         const agent = byAgent.get(node.assignedAgentId);
         if (!agent) issues.push({ code: "agent_not_found", severity: "error", message: "Assigned agent does not exist.", nodeId: node.id });
@@ -218,6 +413,40 @@ export async function validateAtelierWorkflowDefinition(db: Db, companyId: strin
     const visit = (id: string) => { if (visiting.has(id)) { issues.push({ code: "cycle", severity: "error", message: `Cycle detected at '${id}'.`, nodeId: id }); return; } if (visited.has(id)) return; visiting.add(id); for (const edge of outgoing.get(id) ?? []) visit(edge.target); visiting.delete(id); visited.add(id); };
     visit(starts[0].id);
     for (const node of definition.nodes) if (!visited.has(node.id)) issues.push({ code: "unreachable_node", severity: "error", message: `Node '${node.name}' is unreachable from Start.`, nodeId: node.id });
+
+    // Strict execution-order guarantee: Render cannot run before Step 3 (Chọn đồ & vật liệu) completes.
+    const renderNodes = definition.nodes.filter((node) => node.id === "render" || node.taskType === "RENDER");
+    const step3Nodes = definition.nodes.filter((node) => ["style_and_furniture", "style", "furniture"].includes(node.id));
+    if (renderNodes.length > 0 && step3Nodes.length > 0) {
+      const blockedIds = new Set(step3Nodes.map((item) => item.id));
+      const withoutStep3 = new Set<string>();
+      const queue = [starts[0].id];
+      while (queue.length > 0) {
+        const cur = queue.shift()!;
+        if (withoutStep3.has(cur) || blockedIds.has(cur)) continue;
+        withoutStep3.add(cur);
+        for (const edge of outgoing.get(cur) ?? []) {
+          if (!blockedIds.has(edge.target) && !withoutStep3.has(edge.target)) queue.push(edge.target);
+        }
+      }
+      for (const renderNode of renderNodes) {
+        if (withoutStep3.has(renderNode.id)) {
+          issues.push({
+            code: "render_before_step3",
+            severity: "error",
+            message: "Render (Bước 4) không được phép chạy trước khi Bước 3 (Chọn đồ & vật liệu) hoàn tất.",
+            nodeId: renderNode.id,
+          });
+        }
+      }
+    }
+  }
+  if (definition.optionalSteps?.costBomAfterApproval && definition.optionalSteps.costBomAfterApproval.runsAfterApproval !== true) {
+    issues.push({
+      code: "optional_cost_before_approval",
+      severity: "error",
+      message: "Cost/BOM tùy chọn chỉ được phép chạy sau cổng NGƯỜI DUYỆT.",
+    });
   }
   return { valid: !issues.some((issue) => issue.severity === "error"), issues, definition };
 }

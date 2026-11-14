@@ -15,7 +15,13 @@ import {
 } from "@paperclipai/db";
 import { conflict, forbidden, unprocessable } from "../errors.js";
 import { issueService } from "./issues.js";
-import { assertAtelierNodeAssignment, upgradeLegacyAtelierDefinition } from "./atelier-workflow-builder.js";
+import {
+  assertAtelierNodeAssignment,
+  upgradeLegacyAtelierDefinition,
+  validateAtelierWorkflowDefinition,
+  type AtelierEditableDefinition,
+  type AtelierWorkflowNode,
+} from "./atelier-workflow-builder.js";
 
 export const ATELIER_COMPANY_ID = "b2e1c8a5-c3c9-412c-99cb-63180c4015dc";
 export const ATELIER_COMPANY_WORKFLOW_NAME = "Atelier Company Workflow";
@@ -516,4 +522,718 @@ export async function acceptAtelierStageHandoff(db: Db, input: {
 
 export function atelierCanonicalWorkflowDefinition() {
   return workflowDefinition;
+}
+
+export const ATELIER_SIMPLE_TASK_STATES = [
+  "Chờ",
+  "Đang chạy",
+  "Chờ duyệt",
+  "Hoàn thành",
+  "Lỗi",
+  "Đã hủy",
+] as const;
+export type AtelierSimpleTaskState = (typeof ATELIER_SIMPLE_TASK_STATES)[number];
+
+export type LinearStepLog = { at: string; level: string; message: string };
+
+export type LinearStepExecution = {
+  stepNumber: number;
+  totalSteps: number;
+  stepLabel: string;
+  nodeId: string;
+  name: string;
+  agentName: string;
+  status: AtelierSimpleTaskState;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  summary: string;
+  error: string | null;
+  logs: LinearStepLog[];
+  output?: Record<string, unknown>;
+};
+
+export type LinearExecutionTrace = {
+  traceId: string;
+  mode: "run" | "test_run";
+  workflowDefinitionId: string;
+  workflowVersion: number;
+  workflowStatus: string;
+  workflowName: string;
+  sceneId: string;
+  sceneName: string;
+  status: AtelierSimpleTaskState;
+  currentStepNumber: number;
+  totalSteps: number;
+  currentStepLabel: string;
+  failedStep: { stepNumber: number; nodeId: string; name: string; error: string } | null;
+  awaitingHumanApproval: boolean;
+  humanApproval: {
+    decision: "pending" | "approved" | "rejected";
+    note?: string | null;
+    decidedAt?: string | null;
+    gateLabel: "NGƯỜI DUYỆT";
+  };
+  optionalCostBom: {
+    enabled: boolean;
+    status: AtelierSimpleTaskState | "Tắt";
+    summary: string;
+    totalVnd?: number | null;
+    itemCount?: number | null;
+    error?: string | null;
+  };
+  renderOutput?: {
+    renderUrl: string;
+    outPath: string;
+    fileName?: string;
+    fileSizeBytes?: number;
+    materialHash?: string;
+    cameraId?: string;
+    verifiedAfterStep3: boolean;
+  } | null;
+  renderOrderVerified: boolean;
+  step3CompletedBeforeRender: boolean;
+  startedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  steps: LinearStepExecution[];
+};
+
+export interface LinearSceneRunner {
+  fetchProject(sceneId: string): Promise<Record<string, any>>;
+  verifySceneGeometry(sceneId: string): Promise<Record<string, any>>;
+  confirmMaterialsAndFurniture(sceneId: string, project: Record<string, any>): Promise<Record<string, any>>;
+  renderScene(sceneId: string): Promise<Record<string, any>>;
+  fetchUnifiedBoq(sceneId: string): Promise<Record<string, any>>;
+}
+
+function createHttpSceneRunner(pythonApiUrl: string): LinearSceneRunner {
+  const base = pythonApiUrl.replace(/\/$/, "");
+  const jsonFetch = async (path: string, init?: RequestInit, timeoutMs = 120_000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${base}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = typeof data?.detail === "string" ? data.detail : data?.error || `HTTP ${response.status}`;
+        throw new Error(detail);
+      }
+      return data as Record<string, any>;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  return {
+    fetchProject: (sceneId) => jsonFetch(`/api/v1/projects/${encodeURIComponent(sceneId)}`, undefined, 15_000),
+    verifySceneGeometry: (sceneId) =>
+      jsonFetch(`/api/v1/projects/${encodeURIComponent(sceneId)}/scene-bridge/verify`, {
+        method: "POST",
+        body: JSON.stringify({ camera_id: "eye_level", time_of_day: "day" }),
+      }, 90_000),
+    confirmMaterialsAndFurniture: (sceneId, project) =>
+      jsonFetch(`/api/v1/projects/${encodeURIComponent(sceneId)}/materials`, {
+        method: "POST",
+        body: JSON.stringify({
+          active_style_preset: project.active_style_preset || "japandi",
+          reason: "Workflow Bước 3/5: Chốt nội thất & vật liệu PBR trước khi Render",
+          bump_revision: false,
+        }),
+      }, 30_000),
+    renderScene: (sceneId) =>
+      jsonFetch(`/api/v1/projects/${encodeURIComponent(sceneId)}/render-jobs`, {
+        method: "POST",
+        body: JSON.stringify({
+          camera_id: "eye_level",
+          time_of_day: "day",
+          mode: "preview",
+          wait_for_completion: true,
+          use_cache: false,
+        }),
+      }, 150_000),
+    fetchUnifiedBoq: (sceneId) =>
+      jsonFetch(`/api/v1/projects/${encodeURIComponent(sceneId)}/unified-boq`, undefined, 20_000),
+  };
+}
+
+export function assertRenderAllowedAfterStep3(
+  definition: AtelierEditableDefinition,
+  step3State: Pick<LinearStepExecution, "status" | "completedAt" | "output"> | undefined,
+): void {
+  const hasRender = definition.nodes.some((n) => n.id === "render" || n.taskType === "RENDER");
+  if (!hasRender) {
+    throw new Error("RENDER_ORDER_VIOLATION: Workflow không có bước Render.");
+  }
+  const step3Node = definition.nodes.find((n) => n.id === "style_and_furniture")
+    ?? definition.nodes.find((n) => n.id === "style")
+    ?? definition.nodes.find((n) => n.id === "furniture");
+  if (step3Node) {
+    const outgoing = new Map<string, string[]>();
+    for (const edge of definition.edges) {
+      outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]);
+    }
+    const start = definition.nodes.find((n) => n.type === "START");
+    const blocked = new Set(
+      definition.nodes.filter((n) => ["style_and_furniture", "style", "furniture"].includes(n.id)).map((n) => n.id),
+    );
+    if (start) {
+      const visited = new Set<string>();
+      const queue = [start.id];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        if (visited.has(cur) || blocked.has(cur)) continue;
+        visited.add(cur);
+        for (const nxt of outgoing.get(cur) ?? []) {
+          if (!blocked.has(nxt) && !visited.has(nxt)) queue.push(nxt);
+        }
+      }
+      if (visited.has("render")) {
+        throw new Error("RENDER_ORDER_VIOLATION: Đồ thị cho phép Render chạy khi Bước 3 chưa hoàn tất.");
+      }
+    }
+  }
+  if (!step3State || step3State.status !== "Hoàn thành" || !step3State.completedAt) {
+    throw new Error("RENDER_ORDER_VIOLATION: Render (Bước 4) không được phép bắt đầu trước khi Bước 3 (Chọn đồ & vật liệu) hoàn tất.");
+  }
+  const materials = step3State.output?.selectedMaterials as Record<string, unknown> | undefined;
+  if (!materials || !materials.floorMaterialId || !materials.wallMaterialId) {
+    throw new Error("RENDER_ORDER_VIOLATION: Chưa có dữ liệu vật liệu đã chọn từ Bước 3 để truyền cho Render.");
+  }
+}
+
+type CanonicalLinearStepTemplate = {
+  stepNumber: number;
+  nodeId: string;
+  name: string;
+  agentName: string;
+  node?: AtelierWorkflowNode;
+};
+
+function buildFiveStepTemplates(definition: AtelierEditableDefinition): CanonicalLinearStepTemplate[] {
+  const byId = new Map(definition.nodes.map((node) => [node.id, node]));
+  const pick = (ids: string[]) => ids.map((id) => byId.get(id)).find(Boolean);
+  return [
+    {
+      stepNumber: 1,
+      nodeId: pick(["intake", "start"])?.id ?? "intake",
+      name: pick(["intake"])?.name ?? "1. Nhận bản vẽ",
+      agentName: "Chief Architect",
+      node: pick(["intake", "start"]),
+    },
+    {
+      stepNumber: 2,
+      nodeId: pick(["build_scene", "geometry"])?.id ?? "build_scene",
+      name: pick(["build_scene"])?.name ?? "2. Dựng scene",
+      agentName: "Geometry / Floorplan & Validator",
+      node: pick(["build_scene", "geometry", "floorplan"]),
+    },
+    {
+      stepNumber: 3,
+      nodeId: pick(["style_and_furniture", "style"])?.id ?? "style_and_furniture",
+      name: pick(["style_and_furniture"])?.name ?? "3. Chọn đồ & vật liệu",
+      agentName: "Style & Furniture",
+      node: pick(["style_and_furniture", "style", "furniture"]),
+    },
+    {
+      stepNumber: 4,
+      nodeId: pick(["render"])?.id ?? "render",
+      name: pick(["render"])?.name ?? "4. Render",
+      agentName: "Rendering Specialist",
+      node: pick(["render"]),
+    },
+    {
+      stepNumber: 5,
+      nodeId: pick(["qa_and_deliver", "final_review", "end"])?.id ?? "qa_and_deliver",
+      name: pick(["qa_and_deliver"])?.name ?? "5. Kiểm tra & giao",
+      agentName: "QA & NGƯỜI DUYỆT",
+      node: pick(["qa_and_deliver", "final_review", "qa", "end"]),
+    },
+  ];
+}
+
+function appendStepLog(step: LinearStepExecution, node: AtelierWorkflowNode | undefined, level: string, message: string) {
+  if (node?.stepSettings?.logging?.enabled === false) return;
+  step.logs.push({ at: new Date().toISOString(), level, message });
+}
+
+async function resolveStorageRunAndProject(db: Db, companyId: string, definitionId: string, definitionVersion: number, sceneId: string) {
+  const companyProjects = await db.select({ id: projects.id, name: projects.name })
+    .from(projects)
+    .where(eq(projects.companyId, companyId))
+    .orderBy(asc(projects.createdAt));
+  if (!companyProjects.length) throw unprocessable("Company has no Paperclip project record to anchor execution log.");
+  const hint = sceneId.toLowerCase();
+  const matched = companyProjects.find((p) =>
+    (hint.includes("demo") && p.name.toLowerCase().includes("4×5m")) ||
+    (hint.includes("bedroom") && p.name.toLowerCase().includes("master")) ||
+    (hint.includes("kid") && p.name.toLowerCase().includes("trẻ em")) ||
+    p.id === sceneId,
+  ) ?? companyProjects[0]!;
+  let run = await db.select().from(atelierWorkflowRuns).where(and(
+    eq(atelierWorkflowRuns.companyId, companyId),
+    eq(atelierWorkflowRuns.projectId, matched.id),
+    eq(atelierWorkflowRuns.workflowDefinitionId, definitionId),
+    eq(atelierWorkflowRuns.workflowVersion, definitionVersion),
+  )).then((rows) => rows[0] ?? null);
+  if (!run) {
+    run = await db.insert(atelierWorkflowRuns).values({
+      companyId,
+      projectId: matched.id,
+      workflowDefinitionId: definitionId,
+      workflowVersion: definitionVersion,
+      status: "running",
+      decisionLedger: {},
+    }).returning().then((rows) => rows[0]!);
+  }
+  return { projectRowId: matched.id, run };
+}
+
+export async function getLatestPublishedAtelierWorkflow(db: Db, companyId: string) {
+  const row = await db.select().from(workflows).where(and(
+    eq(workflows.companyId, companyId),
+    eq(workflows.name, ATELIER_COMPANY_WORKFLOW_NAME),
+    eq(workflows.status, "published"),
+  )).orderBy(desc(workflows.version)).then((rows) => rows[0] ?? null);
+  return row ?? await ensureAtelierCompanyWorkflowDefinition(db, companyId);
+}
+
+export async function executeLinearWorkflowOnScene(db: Db, input: {
+  companyId: string;
+  mode: "run" | "test_run";
+  definitionId?: string;
+  sceneId: string;
+  optionalCostBomEnabled?: boolean;
+  pythonApiUrl?: string;
+  runner?: LinearSceneRunner;
+}): Promise<LinearExecutionTrace> {
+  const workflowRow = input.mode === "run"
+    ? await getLatestPublishedAtelierWorkflow(db, input.companyId)
+    : await db.select().from(workflows).where(and(eq(workflows.id, input.definitionId ?? ""), eq(workflows.companyId, input.companyId))).then((rows) => rows[0] ?? null);
+  if (!workflowRow) throw unprocessable("Không tìm thấy workflow definition để thực thi.");
+
+  const definition = upgradeLegacyAtelierDefinition(workflowRow.definition, workflowRow.version, workflowRow.name);
+  const validation = await validateAtelierWorkflowDefinition(db, input.companyId, definition);
+  if (!validation.valid) {
+    const firstErr = validation.issues.find((item) => item.severity === "error")?.message ?? "Workflow không hợp lệ";
+    throw unprocessable(`Workflow v${workflowRow.version} chưa hợp lệ: ${firstErr}`, { issues: validation.issues });
+  }
+
+  const runner = input.runner ?? createHttpSceneRunner(input.pythonApiUrl ?? process.env.PYTHON_API_URL ?? "http://127.0.0.1:8000");
+  const templates = buildFiveStepTemplates(definition);
+  const costEnabled = input.optionalCostBomEnabled ?? Boolean(definition.optionalSteps?.costBomAfterApproval?.enabled);
+  const traceId = `exec_v${workflowRow.version}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const startedAt = new Date().toISOString();
+
+  const steps: LinearStepExecution[] = templates.map((tpl) => ({
+    stepNumber: tpl.stepNumber,
+    totalSteps: 5,
+    stepLabel: `Bước ${tpl.stepNumber}/5`,
+    nodeId: tpl.nodeId,
+    name: tpl.name,
+    agentName: tpl.agentName,
+    status: "Chờ",
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+    summary: "Đang chờ tới lượt.",
+    error: null,
+    logs: [],
+  }));
+
+  const trace: LinearExecutionTrace = {
+    traceId,
+    mode: input.mode,
+    workflowDefinitionId: workflowRow.id,
+    workflowVersion: workflowRow.version,
+    workflowStatus: workflowRow.status,
+    workflowName: workflowRow.name,
+    sceneId: input.sceneId,
+    sceneName: input.sceneId,
+    status: "Đang chạy",
+    currentStepNumber: 1,
+    totalSteps: 5,
+    currentStepLabel: "Bước 1/5",
+    failedStep: null,
+    awaitingHumanApproval: false,
+    humanApproval: { decision: "pending", note: null, decidedAt: null, gateLabel: "NGƯỜI DUYỆT" },
+    optionalCostBom: {
+      enabled: costEnabled,
+      status: costEnabled ? "Chờ" : "Tắt",
+      summary: costEnabled
+        ? "Bước tùy chọn Cost/BOM sẽ chạy SAU khi cổng NGƯỜI DUYỆT xác nhận."
+        : "Bước tùy chọn Cost/BOM đang tắt.",
+    },
+    renderOutput: null,
+    renderOrderVerified: false,
+    step3CompletedBeforeRender: false,
+    startedAt,
+    updatedAt: startedAt,
+    completedAt: null,
+    steps,
+  };
+
+  let projectDoc: Record<string, any> = {};
+  let renderJobDoc: Record<string, any> = {};
+  let verifyDoc: Record<string, any> = {};
+
+  const failAtStep = (step: LinearStepExecution, node: AtelierWorkflowNode | undefined, err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    step.status = "Lỗi";
+    step.error = msg;
+    step.summary = `Lỗi tại ${step.stepLabel} (${step.name}): ${msg}`;
+    step.completedAt = new Date().toISOString();
+    step.durationMs = step.startedAt ? Date.now() - Date.parse(step.startedAt) : 0;
+    appendStepLog(step, node, "error", msg);
+    trace.status = "Lỗi";
+    trace.currentStepNumber = step.stepNumber;
+    trace.currentStepLabel = step.stepLabel;
+    trace.failedStep = { stepNumber: step.stepNumber, nodeId: step.nodeId, name: step.name, error: msg };
+    trace.updatedAt = new Date().toISOString();
+    trace.completedAt = trace.updatedAt;
+  };
+
+  // Step 1/5: Nhận bản vẽ
+  {
+    const step = steps[0];
+    const node = templates[0].node;
+    const t0 = Date.now();
+    step.status = "Đang chạy";
+    step.startedAt = new Date(t0).toISOString();
+    trace.currentStepNumber = 1;
+    trace.currentStepLabel = "Bước 1/5";
+    appendStepLog(step, node, "info", `Đang đọc bản vẽ & thông số cho scene '${input.sceneId}'...`);
+    try {
+      projectDoc = await runner.fetchProject(input.sceneId);
+      const rooms = Array.isArray(projectDoc.rooms) ? projectDoc.rooms : [];
+      const walls = Array.isArray(projectDoc.walls) ? projectDoc.walls : [];
+      if (!rooms.length || !walls.length) {
+        throw new Error("Bản vẽ thiếu dữ liệu phòng hoặc tường.");
+      }
+      trace.sceneName = String(projectDoc.name || input.sceneId);
+      step.status = "Hoàn thành";
+      step.completedAt = new Date().toISOString();
+      step.durationMs = Date.now() - t0;
+      step.output = {
+        sceneId: input.sceneId,
+        sceneName: trace.sceneName,
+        revision: projectDoc.revision ?? 1,
+        widthMm: projectDoc.width_mm,
+        depthMm: projectDoc.depth_mm,
+        ceilingHeightMm: projectDoc.ceiling_height_mm,
+        roomCount: rooms.length,
+        wallCount: walls.length,
+      };
+      step.summary = `Đã tiếp nhận "${trace.sceneName}" (${projectDoc.width_mm}×${projectDoc.depth_mm}mm, ${rooms.length} phòng, ${walls.length} tường).`;
+      appendStepLog(step, node, "info", step.summary);
+    } catch (err) {
+      failAtStep(step, node, err);
+    }
+  }
+
+  // Step 2/5: Dựng scene + validator
+  if (trace.status !== "Lỗi") {
+    const step = steps[1];
+    const node = templates[1].node;
+    const t0 = Date.now();
+    step.status = "Đang chạy";
+    step.startedAt = new Date(t0).toISOString();
+    trace.currentStepNumber = 2;
+    trace.currentStepLabel = "Bước 2/5";
+    appendStepLog(step, node, "info", "Đang dựng scene 3D và chạy bộ kiểm tra (validator) hình học...");
+    try {
+      const width = Number(projectDoc.width_mm ?? 0);
+      const depth = Number(projectDoc.depth_mm ?? 0);
+      const ceiling = Number(projectDoc.ceiling_height_mm ?? 0);
+      if (width <= 0 || depth <= 0 || ceiling <= 0) {
+        throw new Error("Validator thất bại: Kích thước phòng phải lớn hơn 0.");
+      }
+      verifyDoc = await runner.verifySceneGeometry(input.sceneId);
+      const passed = verifyDoc.ok === true && String(verifyDoc.status || "").toUpperCase() === "PASS";
+      if (!passed) {
+        throw new Error(`Validator scene không đạt: ${JSON.stringify(verifyDoc)}`);
+      }
+      step.status = "Hoàn thành";
+      step.completedAt = new Date().toISOString();
+      step.durationMs = Date.now() - t0;
+      step.output = {
+        validatorPassed: true,
+        status: verifyDoc.status,
+        durationMs: verifyDoc.duration_ms,
+        materialHash: verifyDoc.manifest?.material_hash,
+      };
+      step.summary = `Dựng scene & validator PASS (rev #${projectDoc.revision ?? 1}, ${Math.round(Number(verifyDoc.duration_ms ?? step.durationMs))}ms).`;
+      appendStepLog(step, node, "info", step.summary);
+    } catch (err) {
+      failAtStep(step, node, err);
+    }
+  }
+
+  // Step 3/5: Chọn đồ & vật liệu
+  if (trace.status !== "Lỗi") {
+    const step = steps[2];
+    const node = templates[2].node;
+    const t0 = Date.now();
+    step.status = "Đang chạy";
+    step.startedAt = new Date(t0).toISOString();
+    trace.currentStepNumber = 3;
+    trace.currentStepLabel = "Bước 3/5";
+    appendStepLog(step, node, "info", "Đang kiểm tra danh sách đồ nội thất và chốt vật liệu PBR...");
+    try {
+      const furniture = Array.isArray(projectDoc.furniture_instances) ? projectDoc.furniture_instances : [];
+      const rooms = Array.isArray(projectDoc.rooms) ? projectDoc.rooms : [];
+      if (!furniture.length) {
+        throw new Error("Scene chưa có đồ nội thất để chốt vật liệu.");
+      }
+      const primaryRoom = rooms[0] as Record<string, any>;
+      const floorMaterialId = String(primaryRoom?.floor_material_id || "floor_wood_oak_straight");
+      const wallMaterialId = String(primaryRoom?.wall_base_material_id || "paint_dulux_japandi_ivory");
+      const matRes = await runner.confirmMaterialsAndFurniture(input.sceneId, projectDoc);
+      if (matRes.ok === false) {
+        throw new Error("Không xác nhận được vật liệu PBR trên server.");
+      }
+      step.status = "Hoàn thành";
+      step.completedAt = new Date().toISOString();
+      step.durationMs = Date.now() - t0;
+      step.output = {
+        furnitureCount: furniture.length,
+        selectedMaterials: {
+          activeStylePreset: String(projectDoc.active_style_preset || "japandi"),
+          floorMaterialId,
+          wallMaterialId,
+          ceilingMaterialId: String(primaryRoom?.ceiling_material_id || "paint_ceiling_gypsum_white"),
+        },
+      };
+      step.summary = `Đã chọn ${furniture.length} món đồ và chốt vật liệu PBR (sàn: ${floorMaterialId}, tường: ${wallMaterialId}).`;
+      appendStepLog(step, node, "info", step.summary);
+    } catch (err) {
+      failAtStep(step, node, err);
+    }
+  }
+
+  // Step 4/5: Render (MUST run strictly AFTER Step 3 completes)
+  if (trace.status !== "Lỗi") {
+    const step = steps[3];
+    const node = templates[3].node;
+    const t0 = Date.now();
+    step.status = "Đang chạy";
+    step.startedAt = new Date(t0).toISOString();
+    trace.currentStepNumber = 4;
+    trace.currentStepLabel = "Bước 4/5";
+    appendStepLog(step, node, "info", "Kiểm tra điều kiện tiên quyết: Bước 3 phải Hoàn thành trước khi Render...");
+    try {
+      assertRenderAllowedAfterStep3(definition, steps[2]);
+      const step3DoneMs = Date.parse(steps[2].completedAt!);
+      trace.step3CompletedBeforeRender = t0 >= step3DoneMs;
+      trace.renderOrderVerified = trace.step3CompletedBeforeRender;
+      appendStepLog(step, node, "info", "Đạt điều kiện thứ tự (Render sau Bước 3). Đang chạy Blender Cycles...");
+      renderJobDoc = await runner.renderScene(input.sceneId);
+      if (String(renderJobDoc.status || "").toUpperCase() !== "COMPLETED") {
+        throw new Error(String(renderJobDoc.error_message || `Render trả về trạng thái ${renderJobDoc.status}`));
+      }
+      const renderUrl = String(renderJobDoc.render_url || "");
+      const outPath = String(renderJobDoc.out_path || "");
+      const materialHash = String(renderJobDoc.material_hash || "");
+      trace.renderOutput = {
+        renderUrl,
+        outPath,
+        fileName: renderJobDoc.file_name ? String(renderJobDoc.file_name) : undefined,
+        fileSizeBytes: Number(renderJobDoc.file_size_bytes ?? 0),
+        materialHash,
+        cameraId: renderJobDoc.camera_id ? String(renderJobDoc.camera_id) : "eye_level",
+        verifiedAfterStep3: trace.step3CompletedBeforeRender,
+      };
+      step.status = "Hoàn thành";
+      step.completedAt = new Date().toISOString();
+      step.durationMs = Date.now() - t0;
+      step.output = {
+        ...trace.renderOutput,
+        step3CompletedAt: steps[2].completedAt,
+        renderStartedAt: step.startedAt,
+      };
+      step.summary = `Render Blender Cycles hoàn tất (${renderJobDoc.file_name || "render.png"}, MAT_HASH=${materialHash}).`;
+      appendStepLog(step, node, "info", step.summary);
+    } catch (err) {
+      failAtStep(step, node, err);
+    }
+  }
+
+  // Step 5/5: Kiểm tra & giao (QA + cổng NGƯỜI DUYỆT — agent KHÔNG được tự đóng)
+  if (trace.status !== "Lỗi") {
+    const step = steps[4];
+    const node = templates[4].node;
+    const t0 = Date.now();
+    step.status = "Đang chạy";
+    step.startedAt = new Date(t0).toISOString();
+    trace.currentStepNumber = 5;
+    trace.currentStepLabel = "Bước 5/5";
+    appendStepLog(step, node, "info", "QA đang kiểm tra ảnh render & tính khớp vật liệu trước cổng NGƯỜI DUYỆT...");
+    try {
+      const sv = (renderJobDoc.scene_verification ?? {}) as Record<string, unknown>;
+      const sizeBytes = Number(renderJobDoc.file_size_bytes ?? 0);
+      if (!trace.renderOutput?.renderUrl || (sizeBytes > 0 && sizeBytes < 10_000)) {
+        throw new Error("QA phát hiện ảnh render không hợp lệ hoặc dung lượng quá nhỏ.");
+      }
+      if (sv.all_checks_passed === false) {
+        throw new Error("QA phát hiện scene verification không đạt.");
+      }
+      step.status = "Chờ duyệt";
+      step.summary = "QA đạt chuẩn. Đang dừng tại cổng NGƯỜI DUYỆT — agent không tự đóng/xuất trước khi bạn duyệt.";
+      step.output = {
+        qaPassed: true,
+        requiresHumanApproval: true,
+        gateLabel: "NGƯỜI DUYỆT",
+        exportBlockedUntilApproved: true,
+        materialHash: trace.renderOutput.materialHash,
+      };
+      appendStepLog(step, node, "info", step.summary);
+      trace.status = "Chờ duyệt";
+      trace.awaitingHumanApproval = true;
+      trace.updatedAt = new Date().toISOString();
+    } catch (err) {
+      failAtStep(step, node, err);
+    }
+  }
+
+  // Persist into Postgres (if DB is real Drizzle DB and not a test fake without insert)
+  if (typeof (db as any).insert === "function") {
+    try {
+      const { projectRowId, run } = await resolveStorageRunAndProject(db, input.companyId, workflowRow.id, workflowRow.version, input.sceneId);
+      await db.insert(atelierWorkflowEvents).values({
+        companyId: input.companyId,
+        projectId: projectRowId,
+        workflowRunId: run.id,
+        eventType: "linear_execution_trace",
+        idempotencyKey: trace.traceId,
+        payload: trace as unknown as Record<string, unknown>,
+      });
+    } catch {
+      // Test mocks or read-only DB callers remain resilient
+    }
+  }
+
+  return trace;
+}
+
+export async function decideLinearWorkflowApproval(db: Db, input: {
+  companyId: string;
+  traceId: string;
+  decision: "approve" | "reject";
+  note?: string;
+  optionalCostBomEnabled?: boolean;
+  pythonApiUrl?: string;
+  runner?: LinearSceneRunner;
+}): Promise<LinearExecutionTrace> {
+  const executions = await listLinearWorkflowExecutions(db, input.companyId, 50);
+  const trace = executions.find((item) => item.traceId === input.traceId);
+  if (!trace) throw unprocessable("Không tìm thấy lượt chạy workflow cần duyệt.");
+  if (!trace.awaitingHumanApproval) {
+    throw conflict("Lượt chạy này không ở trạng thái Chờ duyệt.");
+  }
+
+  const now = new Date().toISOString();
+  const step5 = trace.steps[4];
+  const costEnabled = input.optionalCostBomEnabled ?? trace.optionalCostBom.enabled;
+  trace.optionalCostBom.enabled = costEnabled;
+  trace.awaitingHumanApproval = false;
+  trace.updatedAt = now;
+  trace.completedAt = now;
+
+  if (input.decision === "reject") {
+    trace.humanApproval = {
+      decision: "rejected",
+      note: input.note ?? "Người duyệt từ chối xuất giao.",
+      decidedAt: now,
+      gateLabel: "NGƯỜI DUYỆT",
+    };
+    if (step5) {
+      step5.status = "Đã hủy";
+      step5.completedAt = now;
+      step5.durationMs = step5.startedAt ? Date.now() - Date.parse(step5.startedAt) : 0;
+      step5.summary = `NGƯỜI DUYỆT đã hủy xuất bàn giao${input.note ? `: ${input.note}` : "."}`;
+      step5.logs.push({ at: now, level: "info", message: step5.summary });
+    }
+    trace.status = "Đã hủy";
+  } else {
+    trace.humanApproval = {
+      decision: "approved",
+      note: input.note ?? "Người duyệt đã xác nhận xuất bàn giao.",
+      decidedAt: now,
+      gateLabel: "NGƯỜI DUYỆT",
+    };
+    if (step5) {
+      step5.status = "Hoàn thành";
+      step5.completedAt = now;
+      step5.durationMs = step5.startedAt ? Date.now() - Date.parse(step5.startedAt) : 0;
+      step5.summary = "NGƯỜI DUYỆT đã phê duyệt. Sẵn sàng xuất gói bàn giao.";
+      step5.logs.push({ at: now, level: "info", message: step5.summary });
+    }
+    if (costEnabled) {
+      const runner = input.runner ?? createHttpSceneRunner(input.pythonApiUrl ?? process.env.PYTHON_API_URL ?? "http://127.0.0.1:8000");
+      try {
+        const boq = await runner.fetchUnifiedBoq(trace.sceneId);
+        const items = Array.isArray(boq.items) ? boq.items : Array.isArray(boq.lines) ? boq.lines : [];
+        const totalVnd = Number(boq.summary?.grand_total_vnd ?? boq.summary?.total_vnd ?? boq.total_vnd ?? 0);
+        trace.optionalCostBom = {
+          enabled: true,
+          status: "Hoàn thành",
+          summary: `Cost/BOM sau duyệt hoàn tất (${items.length} hạng mục, tổng ~${Math.round(totalVnd).toLocaleString("vi-VN")} ₫).`,
+          totalVnd,
+          itemCount: items.length,
+          error: null,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        trace.optionalCostBom = {
+          enabled: true,
+          status: "Lỗi",
+          summary: `Cost/BOM sau duyệt gặp lỗi: ${msg}`,
+          error: msg,
+        };
+      }
+    } else {
+      trace.optionalCostBom = {
+        enabled: false,
+        status: "Tắt",
+        summary: "Cost/BOM tùy chọn đang tắt (bỏ qua sau duyệt).",
+      };
+    }
+    trace.status = "Hoàn thành";
+  }
+
+  const baseEvent = await db.select().from(atelierWorkflowEvents).where(and(
+    eq(atelierWorkflowEvents.companyId, input.companyId),
+    eq(atelierWorkflowEvents.idempotencyKey, trace.traceId),
+  )).then((rows) => rows[0] ?? null);
+  if (baseEvent) {
+    await db.insert(atelierWorkflowEvents).values({
+      companyId: input.companyId,
+      projectId: baseEvent.projectId,
+      workflowRunId: baseEvent.workflowRunId,
+      eventType: "linear_execution_decision",
+      idempotencyKey: `${trace.traceId}:decision:${Date.now()}`,
+      payload: trace as unknown as Record<string, unknown>,
+    });
+  }
+  return trace;
+}
+
+export async function listLinearWorkflowExecutions(db: Db, companyId: string, limit = 15): Promise<LinearExecutionTrace[]> {
+  const rows = await db.select().from(atelierWorkflowEvents).where(and(
+    eq(atelierWorkflowEvents.companyId, companyId),
+    inArray(atelierWorkflowEvents.eventType, ["linear_execution_trace", "linear_execution_decision"]),
+  )).orderBy(desc(atelierWorkflowEvents.createdAt));
+
+  const merged = new Map<string, LinearExecutionTrace>();
+  // Rows arrive newest first: first occurrence per traceId is latest state
+  for (const row of rows) {
+    const payload = row.payload as unknown as LinearExecutionTrace | null;
+    if (!payload?.traceId || merged.has(payload.traceId)) continue;
+    merged.set(payload.traceId, payload);
+    if (merged.size >= limit) break;
+  }
+  return Array.from(merged.values());
 }

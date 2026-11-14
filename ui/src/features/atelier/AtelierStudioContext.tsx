@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation } from "@/lib/router";
+import { applyStylePresetToProject, getPbrMaterialById } from "./pbrCatalog";
 import "./atelier-studio.css";
 
 export interface SpatialPinItem {
@@ -83,6 +84,18 @@ interface AtelierStudioContextValue {
     rotDeg: number,
   ) => Promise<void>;
   handleUpdateFurnitureField: (entityId: string, field: string, value: unknown) => void;
+  handleAssignElementMaterial: (
+    target: {
+      kind: "floor" | "wall" | "furniture_part";
+      entityId: string;
+      partId?: string;
+      wallFace?: "face_a" | "face_b";
+      category?: string;
+    },
+    materialId: string,
+    applyToAllSameType?: boolean,
+  ) => void;
+  handleApplyStylePreset: (presetId: string) => void;
   handleSaveScene: () => Promise<void>;
   handleExport: (format: "dxf" | "glb") => Promise<void>;
   handleAssignAsset: (entityId: string, assetId: string) => Promise<void>;
@@ -555,6 +568,79 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const handleAssignElementMaterial = useCallback(
+    (
+      target: {
+        kind: "floor" | "wall" | "furniture_part";
+        entityId: string;
+        partId?: string;
+        wallFace?: "face_a" | "face_b";
+        category?: string;
+      },
+      materialId: string,
+      applyToAllSameType = false,
+    ) => {
+      const pbrEntry = getPbrMaterialById(materialId);
+      setProject((current: any) => {
+        if (!current) return current;
+        const next = JSON.parse(JSON.stringify(current));
+        if (target.kind === "floor") {
+          next.surface_material_overrides ||= {};
+          next.surface_material_overrides.floor = {
+            material_id: materialId,
+            tint: pbrEntry?.base_color || "#E6D2B5",
+            pbr: {
+              roughness: pbrEntry?.roughness ?? 0.52,
+              metalness: pbrEntry?.metalness ?? 0.02,
+            },
+          };
+          if (Array.isArray(next.rooms)) {
+            next.rooms.forEach((r: any) => {
+              r.floor_material_id = materialId;
+            });
+          }
+        } else if (target.kind === "wall") {
+          const faceKey = target.wallFace === "face_b" ? "face_b_material_id" : "face_a_material_id";
+          next.walls = (next.walls || []).map((w: any) => {
+            if (applyToAllSameType || w.id === target.entityId) {
+              return { ...w, [faceKey]: materialId };
+            }
+            return w;
+          });
+        } else if (target.kind === "furniture_part") {
+          const partKey = target.partId || "body";
+          const targetItem = (next.furniture_instances || []).find((f: any) => f.id === target.entityId);
+          const targetCat = target.category || targetItem?.category;
+          next.furniture_instances = (next.furniture_instances || []).map((f: any) => {
+            const match = applyToAllSameType
+              ? f.category === targetCat
+              : f.id === target.entityId;
+            if (!match) return f;
+            const partMaterials = { ...(f.part_materials || {}), [partKey]: materialId };
+            return {
+              ...f,
+              part_materials: partMaterials,
+              color_hex: pbrEntry?.base_color || f.color_hex,
+            };
+          });
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleApplyStylePreset = useCallback(
+    (presetId: string) => {
+      setProject((current: any) => {
+        if (!current) return current;
+        return applyStylePresetToProject(current, presetId);
+      });
+      showToast(`Đã áp dụng bộ vật liệu phong cách "${presetId}" cho toàn bộ ngôi nhà!`);
+    },
+    [showToast],
+  );
+
   const handleSaveScene = useCallback(async () => {
     if (!project) return;
     setBusyMessage("Đang lưu SceneGraph và tạo revision...");
@@ -564,7 +650,67 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(project),
       });
-      if (!response.ok) throw new Error(`Lưu Scene thất bại (${response.status})`);
+      if (!response.ok) {
+        if (response.status === 422) {
+          const errPayload = await response.json().catch(() => null);
+          if (errPayload?.detail?.code === "SCENE_MEASUREMENT_VALIDATION_FAILED") {
+            const currentRes = await fetch(`${API_BASE}/projects/${activeProjectId}`);
+            if (currentRes.ok) {
+              const savedProj = await currentRes.json();
+              const geomKey = (p: any) =>
+                JSON.stringify({
+                  rooms: (p?.rooms || []).map((r: any) => ({ id: r.id, polygon_mm: r.polygon_mm })),
+                  walls: (p?.walls || []).map((w: any) => ({ id: w.id, start_mm: w.start_mm, end_mm: w.end_mm })),
+                  furn: (p?.furniture_instances || []).map((f: any) => ({
+                    id: f.id,
+                    x_mm: f.x_mm,
+                    y_mm: f.y_mm,
+                    z_mm: f.z_mm,
+                    width_mm: f.width_mm,
+                    depth_mm: f.depth_mm,
+                    height_mm: f.height_mm,
+                    rotation_deg: f.rotation_deg,
+                  })),
+                });
+              if (geomKey(savedProj) === geomKey(project)) {
+                const matRes = await fetch(`${API_BASE}/projects/${activeProjectId}/materials`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    active_style_preset: project.active_style_preset ?? null,
+                    surface_material_overrides: project.surface_material_overrides || {},
+                    rooms: (project.rooms || []).map((r: any) => ({
+                      id: r.id,
+                      floor_material_id: r.floor_material_id,
+                      wall_base_material_id: r.wall_base_material_id,
+                      ceiling_material_id: r.ceiling_material_id,
+                      skirting_material_id: r.skirting_material_id,
+                    })),
+                    walls: (project.walls || []).map((w: any) => ({
+                      id: w.id,
+                      face_a_material_id: w.face_a_material_id,
+                      face_b_material_id: w.face_b_material_id,
+                    })),
+                    furniture_instances: (project.furniture_instances || []).map((f: any) => ({
+                      id: f.id,
+                      part_materials: f.part_materials || {},
+                      color_hex: f.color_hex,
+                      material_overrides: f.material_overrides || {},
+                    })),
+                  }),
+                });
+                if (matRes.ok) {
+                  await refreshProjectBundle(activeProjectId);
+                  showToast("Đã lưu vật liệu PBR & phong cách và tạo revision mới.");
+                  setErrorMessage(null);
+                  return;
+                }
+              }
+            }
+          }
+        }
+        throw new Error(`Lưu Scene thất bại (${response.status})`);
+      }
       await refreshProjectBundle(activeProjectId);
       showToast("Đã lưu SceneGraph và tạo revision mới.");
       setErrorMessage(null);
@@ -876,6 +1022,8 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       handleReplaceProduct,
       handleSaveSelectedFurnitureTransform,
       handleUpdateFurnitureField,
+      handleAssignElementMaterial,
+      handleApplyStylePreset,
       handleSaveScene,
       handleExport,
       handleAssignAsset,
@@ -927,6 +1075,8 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       handleReplaceProduct,
       handleSaveSelectedFurnitureTransform,
       handleUpdateFurnitureField,
+      handleAssignElementMaterial,
+      handleApplyStylePreset,
       handleSaveScene,
       handleExport,
       handleAssignAsset,

@@ -16,7 +16,16 @@ import {
   Sliders,
   X,
   RefreshCw,
+  Check,
+  Sparkles,
 } from 'lucide-react'
+import { getNamedPartsForFurniture } from './assetCatalog'
+import {
+  PBR_STYLE_PRESETS,
+  getPbrMaterialsForSurface,
+  resolveMaterialOrDefault,
+  type PbrSurfaceType,
+} from './pbrCatalog'
 
 interface ObjectInspectorProps {
   project: any
@@ -24,6 +33,18 @@ interface ObjectInspectorProps {
   selectedEntityId: string | null
   onSelectEntity: (id: string | null) => void
   onUpdateFurnitureField: (furnId: string, field: string, value: any) => void
+  onAssignElementMaterial?: (
+    target: {
+      kind: 'floor' | 'wall' | 'furniture_part'
+      entityId: string
+      partId?: string
+      wallFace?: 'face_a' | 'face_b'
+      category?: string
+    },
+    materialId: string,
+    applyToAllSameType?: boolean
+  ) => void
+  onApplyStylePreset?: (presetId: string) => void
   onCommitCanvasPosition: () => void
   onAssignAsset?: (objectId: string, assetId: string) => Promise<any>
   onOpenAICopilot?: () => void
@@ -43,6 +64,8 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
   selectedEntityId,
   onSelectEntity,
   onUpdateFurnitureField,
+  onAssignElementMaterial,
+  onApplyStylePreset,
   onCommitCanvasPosition,
   onAssignAsset,
   onOpenAICopilot,
@@ -54,6 +77,7 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
 }) => {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     selected: true,
+    materials: true,
     furnitureList: true,
     smartFit: true,
   })
@@ -62,15 +86,40 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
   const [fitReport, setFitReport] = useState<any>(null)
   const [placementOptions, setPlacementOptions] = useState<any[]>([])
   const [fitLoading, setFitLoading] = useState(false)
+  const [selectedPartId, setSelectedPartId] = useState<string>('')
+  const [selectedWallFace, setSelectedWallFace] = useState<'face_a' | 'face_b'>('face_a')
 
   const toggleSection = (key: string) =>
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }))
 
   const furniture = project?.furniture_instances || []
   const walls = project?.walls || []
+  const room = project?.rooms?.[0]
 
   const selectedFurn = furniture.find((f: any) => f.id === selectedEntityId)
   const selectedWall = walls.find((w: any) => w.id === selectedEntityId)
+  const isFloorSelected = selectedEntityId === 'floor_main'
+
+  const namedParts = selectedFurn ? getNamedPartsForFurniture(selectedFurn) : []
+  const activePart =
+    namedParts.find((p) => p.partId === selectedPartId) || namedParts[0] || null
+
+  useEffect(() => {
+    if (namedParts.length > 0 && !namedParts.some((p) => p.partId === selectedPartId)) {
+      setSelectedPartId(namedParts[0].partId)
+    }
+  }, [selectedFurn?.id])
+
+  useEffect(() => {
+    const onSelectPart = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail?.partName) {
+        setSelectedPartId(detail.partName)
+      }
+    }
+    window.addEventListener('atelier:select-part', onSelectPart)
+    return () => window.removeEventListener('atelier:select-part', onSelectPart)
+  }, [])
 
   useEffect(() => {
     if (selectedFurn?.asset_id) {
@@ -319,7 +368,10 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
                     Cao: {selectedWall.height_mm}mm • Dày: {selectedWall.thickness_mm}mm
                   </div>
                   <div style={{ fontSize: 12, marginTop: 6 }}>
-                    Sơn mặt trong (Face A): <strong>{selectedWall.face_a_material_id}</strong>
+                    Mặt trong (Face A): <strong>{selectedWall.face_a_material_id}</strong>
+                  </div>
+                  <div style={{ fontSize: 12, marginTop: 2 }}>
+                    Mặt ngoài (Face B): <strong>{selectedWall.face_b_material_id || selectedWall.face_a_material_id}</strong>
                   </div>
                   {selectedWall.is_accent_wall && (
                     <span className="status-badge teal" style={{ marginTop: 6 }}>
@@ -327,11 +379,258 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
                     </span>
                   )}
                 </div>
+              ) : isFloorSelected ? (
+                <div className="surface-subtle">
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>Sàn đa giác: {room?.name || 'Phòng chính'}</div>
+                  <div className="mono" style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 4 }}>
+                    Số đỉnh đa giác: {room?.polygon_mm?.length || 4} • Vật liệu: {project?.surface_material_overrides?.floor?.material_id || room?.floor_material_id}
+                  </div>
+                </div>
               ) : (
                 <div className="text-caption">
-                  Nhấp vào một món nội thất hoặc đoạn tường trên mặt bằng 2D / không gian 3D để xem thông số kỹ thuật.
+                  Nhấp vào sàn nhà, đoạn tường hoặc món nội thất trên mặt bằng 2D / không gian 3D để xem thông số và chọn vật liệu.
                 </div>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* 1B. PBR MATERIAL SELECTOR BY ELEMENT & NAMED PART + STYLE PRESETS (PHẦN 2) */}
+        <div className="inspector-section" data-testid="pbr-material-picker-section">
+          <button className="inspector-section-header" onClick={() => toggleSection('materials')}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Palette size={13} style={{ color: 'var(--accent)' }} />
+              Chọn Vật Liệu PBR (CC0)
+            </span>
+            {openSections.materials ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+
+          {openSections.materials && (
+            <div className="inspector-section-body" style={{ gap: 10 }}>
+              {/* Full-house Style Presets */}
+              <div className="surface-subtle" style={{ padding: '8px 10px' }}>
+                <div className="text-caption" style={{ fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <Sparkles size={12} style={{ color: 'var(--accent)' }} />
+                  Bộ vật liệu sẵn theo phong cách (Cả nhà)
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 5 }}>
+                  {PBR_STYLE_PRESETS.map((preset) => {
+                    const isActive = project?.active_style_preset === preset.id
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        data-testid={`style-preset-${preset.id}`}
+                        className={`btn btn-sm ${isActive ? 'btn-primary' : 'btn-soft'}`}
+                        style={{ fontSize: 11, padding: '5px 6px', justifyContent: 'center' }}
+                        title={preset.description}
+                        onClick={() => onApplyStylePreset?.(preset.id)}
+                      >
+                        {preset.name.split(' ')[0]}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Quick Target Switcher: Floor / Wall / Selected Furniture */}
+              <div>
+                <div className="text-caption" style={{ marginBottom: 5, fontWeight: 500 }}>
+                  Phần tử đang gán vật liệu:
+                </div>
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    data-testid="select-surface-floor-btn"
+                    className={`btn btn-sm ${isFloorSelected ? 'btn-primary' : 'btn-soft'}`}
+                    style={{ fontSize: 11 }}
+                    onClick={() => onSelectEntity('floor_main')}
+                  >
+                    Sàn nhà
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="select-surface-wall-btn"
+                    className={`btn btn-sm ${selectedWall ? 'btn-primary' : 'btn-soft'}`}
+                    style={{ fontSize: 11 }}
+                    onClick={() => onSelectEntity(walls[0]?.id || 'wall_north')}
+                  >
+                    Tường ({selectedWall ? selectedWall.id : walls[0]?.id || 'wall'})
+                  </button>
+                  {selectedFurn && (
+                    <button
+                      type="button"
+                      data-testid="select-surface-furn-btn"
+                      className="btn btn-sm btn-primary"
+                      style={{ fontSize: 11 }}
+                    >
+                      {selectedFurn.name}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Sub-part selector for Wall (Face A / Face B) or Multi-part Furniture */}
+              {selectedWall && (
+                <div>
+                  <div className="text-caption" style={{ marginBottom: 4 }}>Mặt tường:</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+                    <button
+                      type="button"
+                      data-testid="wall-face-a-btn"
+                      className={`btn btn-sm ${selectedWallFace === 'face_a' ? 'btn-primary' : ''}`}
+                      style={{ fontSize: 11 }}
+                      onClick={() => setSelectedWallFace('face_a')}
+                    >
+                      Mặt trong (Face A)
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="wall-face-b-btn"
+                      className={`btn btn-sm ${selectedWallFace === 'face_b' ? 'btn-primary' : ''}`}
+                      style={{ fontSize: 11 }}
+                      onClick={() => setSelectedWallFace('face_b')}
+                    >
+                      Mặt ngoài (Face B)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {selectedFurn && namedParts.length > 0 && (
+                <div>
+                  <div className="text-caption" style={{ marginBottom: 4 }}>
+                    Bộ phận của <strong>{selectedFurn.name}</strong>:
+                  </div>
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    {namedParts.map((part) => {
+                      const isPartSel = activePart?.partId === part.partId
+                      return (
+                        <button
+                          key={part.partId}
+                          type="button"
+                          data-testid={`furn-part-${part.partId}`}
+                          className={`btn btn-sm ${isPartSel ? 'btn-primary' : ''}`}
+                          style={{ fontSize: 11, padding: '4px 8px' }}
+                          onClick={() => setSelectedPartId(part.partId)}
+                        >
+                          {part.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Filtered PBR Material Swatch List */}
+              {(() => {
+                const activeSurfaceType: PbrSurfaceType = isFloorSelected
+                  ? 'floor'
+                  : selectedWall
+                  ? 'wall'
+                  : activePart?.surfaceType || 'wood'
+
+                const rawCurrentId = isFloorSelected
+                  ? project?.surface_material_overrides?.floor?.material_id || room?.floor_material_id
+                  : selectedWall
+                  ? selectedWallFace === 'face_b'
+                    ? selectedWall.face_b_material_id
+                    : selectedWall.face_a_material_id
+                  : selectedFurn?.part_materials?.[activePart?.partId || 'body']
+
+                const resolvedCurrent = resolveMaterialOrDefault(rawCurrentId, activeSurfaceType)
+                const matchingMaterials = getPbrMaterialsForSurface(activeSurfaceType)
+
+                const handlePickMaterial = (matId: string, applyAll = false) => {
+                  if (!onAssignElementMaterial) return
+                  if (isFloorSelected) {
+                    onAssignElementMaterial({ kind: 'floor', entityId: 'floor_main' }, matId, applyAll)
+                  } else if (selectedWall) {
+                    onAssignElementMaterial(
+                      { kind: 'wall', entityId: selectedWall.id, wallFace: selectedWallFace },
+                      matId,
+                      applyAll
+                    )
+                  } else if (selectedFurn) {
+                    onAssignElementMaterial(
+                      {
+                        kind: 'furniture_part',
+                        entityId: selectedFurn.id,
+                        partId: activePart?.partId || 'body',
+                        category: selectedFurn.category,
+                      },
+                      matId,
+                      applyAll
+                    )
+                  }
+                }
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Bề mặt: {activeSurfaceType.toUpperCase()}</span>
+                      <span>Đang dùng: {resolvedCurrent.id}</span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 230, overflowY: 'auto' }}>
+                      {matchingMaterials.map((mat) => {
+                        const isCurrent = resolvedCurrent.id === mat.id
+                        return (
+                          <button
+                            key={mat.id}
+                            type="button"
+                            data-testid={`pbr-mat-option-${mat.id}`}
+                            onClick={() => handlePickMaterial(mat.id, false)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '6px 8px',
+                              borderRadius: 6,
+                              border: isCurrent ? '1.5px solid var(--accent)' : '1px solid var(--border-subtle)',
+                              background: isCurrent ? 'var(--accent-soft)' : 'var(--surface-primary)',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 26,
+                                height: 26,
+                                borderRadius: 5,
+                                backgroundColor: mat.base_color,
+                                backgroundImage: `url(${mat.diffuse_url})`,
+                                backgroundSize: 'cover',
+                                border: '1px solid rgba(0,0,0,0.18)',
+                                flexShrink: 0,
+                              }}
+                            />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 11.5, fontWeight: isCurrent ? 600 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {mat.name}
+                              </div>
+                              <div className="mono" style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
+                                {mat.license} • {mat.source} • Lặp {mat.repeat_scale_m[0]}m
+                              </div>
+                            </div>
+                            {isCurrent && <Check size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <button
+                      type="button"
+                      data-testid="apply-material-all-same-type-btn"
+                      className="btn btn-sm btn-soft"
+                      style={{ width: '100%', justifyContent: 'center', marginTop: 2 }}
+                      onClick={() => handlePickMaterial(resolvedCurrent.id, true)}
+                    >
+                      Áp dụng cho tất cả phần tử cùng loại
+                    </button>
+                  </div>
+                )
+              })()}
             </div>
           )}
         </div>

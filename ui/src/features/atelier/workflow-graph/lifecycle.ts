@@ -1,48 +1,48 @@
-import { ISSUE_STATUSES, type IssueStatus } from "@paperclipai/shared";
 import type { RoutedPoint, WorkflowEdge, WorkflowNode } from "./types";
 
-const labels: Record<IssueStatus, string> = {
-  backlog: "Backlog", todo: "To do", in_progress: "In progress", in_review: "In review",
-  blocked: "Blocked", done: "Done", cancelled: "Cancelled",
-};
+export const TASK_LIFECYCLE_STATES = [
+  { key: "waiting", name: "Chờ", description: "Việc đang chờ tới lượt hoặc chờ bước trước hoàn tất." },
+  { key: "running", name: "Đang chạy", description: "Việc đang được thực thi ở bước hiện tại." },
+  { key: "pending_approval", name: "Chờ duyệt", description: "Đang dừng tại cổng NGƯỜI DUYỆT để chờ xác nhận." },
+  { key: "completed", name: "Hoàn thành", description: "Việc đã hoàn tất và qua kiểm tra." },
+  { key: "failed", name: "Lỗi", description: "Gặp lỗi trong khi thực thi; xem chi tiết lỗi ở tab Execution." },
+  { key: "cancelled", name: "Đã hủy", description: "Việc đã bị hủy hoặc không được duyệt." },
+] as const;
 
-// Paperclip validates the target against ISSUE_STATUSES but does not constrain
-// from/to pairs. This is a truthful presentation map of common core movements,
-// not a separate execution state machine.
+export type TaskLifecycleStateKey = (typeof TASK_LIFECYCLE_STATES)[number]["key"];
+
+// Display-only 6-state reference map. Retry, logging and notification settings
+// live inside each step of Pipeline Workflow rather than on Task Lifecycle.
 export function taskLifecycleGraph(): { nodes: WorkflowNode[]; edges: WorkflowEdge[]; routes: Record<string, RoutedPoint[]> } {
-  const positions: Record<IssueStatus, { x: number; y: number }> = {
-    backlog: { x: 40, y: 180 }, todo: { x: 340, y: 180 }, in_progress: { x: 640, y: 180 },
-    in_review: { x: 940, y: 180 }, done: { x: 1240, y: 180 },
-    blocked: { x: 640, y: 400 }, cancelled: { x: 340, y: 400 },
+  const positions: Record<TaskLifecycleStateKey, { x: number; y: number }> = {
+    waiting: { x: 40, y: 180 },
+    running: { x: 340, y: 180 },
+    pending_approval: { x: 640, y: 180 },
+    completed: { x: 940, y: 180 },
+    failed: { x: 640, y: 360 },
+    cancelled: { x: 340, y: 360 },
   };
-  const nodes: WorkflowNode[] = ISSUE_STATUSES.map((status) => ({
-    id: `task_${status}`,
-    type: status === "done" || status === "cancelled" ? "END" : status === "blocked" ? "RETRY_RECOVERY" : status === "in_review" ? "APPROVAL_GATE" : status === "backlog" ? "START" : "AGENT_TASK",
-    name: labels[status],
-    description: `Paperclip issue status: ${status}`,
-    taskType: "ISSUE_STATUS",
-    requiredRole: "task_owner",
-    position: positions[status],
+  const nodes: WorkflowNode[] = TASK_LIFECYCLE_STATES.map((state) => ({
+    id: `state_${state.key}`,
+    type: state.key === "completed" || state.key === "cancelled" ? "END" : state.key === "waiting" ? "START" : "AGENT_TASK",
+    name: state.name,
+    description: state.description,
+    lifecycleStateOnly: true,
+    position: positions[state.key],
   }));
   const edges: WorkflowEdge[] = [
-    { id: "lc_backlog_todo", source: "task_backlog", target: "task_todo", outcome: "Prioritize" },
-    { id: "lc_todo_progress", source: "task_todo", target: "task_in_progress", outcome: "Start work" },
-    { id: "lc_progress_review", source: "task_in_progress", target: "task_in_review", outcome: "Submit for review" },
-    { id: "lc_review_done", source: "task_in_review", target: "task_done", outcome: "Complete" },
-    { id: "lc_progress_blocked", source: "task_in_progress", target: "task_blocked", outcome: "Block" },
-    { id: "lc_blocked_todo", source: "task_blocked", target: "task_todo", outcome: "Resume" },
-    { id: "lc_done_todo", source: "task_done", target: "task_todo", outcome: "Reopen" },
-    { id: "lc_todo_cancelled", source: "task_todo", target: "task_cancelled", outcome: "Cancel" },
+    { id: "lc_wait_run", source: "state_waiting", target: "state_running" },
+    { id: "lc_run_review", source: "state_running", target: "state_pending_approval" },
+    { id: "lc_review_done", source: "state_pending_approval", target: "state_completed" },
+    { id: "lc_run_failed", source: "state_running", target: "state_failed" },
+    { id: "lc_wait_cancelled", source: "state_waiting", target: "state_cancelled" },
   ];
   const routes: Record<string, RoutedPoint[]> = {
-    lc_backlog_todo: [{ x: 284, y: 232 }, { x: 340, y: 232 }],
-    lc_todo_progress: [{ x: 584, y: 232 }, { x: 640, y: 232 }],
-    lc_progress_review: [{ x: 884, y: 232 }, { x: 940, y: 232 }],
-    lc_review_done: [{ x: 1184, y: 232 }, { x: 1240, y: 232 }],
-    lc_progress_blocked: [{ x: 884, y: 232 }, { x: 910, y: 232 }, { x: 910, y: 452 }, { x: 640, y: 452 }],
-    lc_blocked_todo: [{ x: 884, y: 452 }, { x: 920, y: 452 }, { x: 920, y: 570 }, { x: 300, y: 570 }, { x: 300, y: 232 }, { x: 340, y: 232 }],
-    lc_done_todo: [{ x: 1484, y: 232 }, { x: 1520, y: 232 }, { x: 1520, y: 70 }, { x: 300, y: 70 }, { x: 300, y: 232 }, { x: 340, y: 232 }],
-    lc_todo_cancelled: [{ x: 584, y: 232 }, { x: 610, y: 232 }, { x: 610, y: 452 }, { x: 340, y: 452 }],
+    lc_wait_run: [{ x: 284, y: 232 }, { x: 340, y: 232 }],
+    lc_run_review: [{ x: 584, y: 232 }, { x: 640, y: 232 }],
+    lc_review_done: [{ x: 884, y: 232 }, { x: 940, y: 232 }],
+    lc_run_failed: [{ x: 584, y: 232 }, { x: 612, y: 232 }, { x: 612, y: 412 }, { x: 640, y: 412 }],
+    lc_wait_cancelled: [{ x: 284, y: 232 }, { x: 312, y: 232 }, { x: 312, y: 412 }, { x: 340, y: 412 }],
   };
   return { nodes, edges, routes };
 }

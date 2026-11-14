@@ -1,0 +1,61 @@
+{
+  "wood_floor": {
+    "polyhaven_id": "wood_floor_deck",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/wood_floor_deck",
+    "maps": {
+      "diffuse": "/assets/pbr/wood_floor/diffuse.jpg",
+      "roughness": "/assets/pbr/wood_floor/roughness.jpg",
+      "normal": "/assets/pbr/wood_floor/normal.jpg"
+    }
+  },
+  "wood_oak": {
+    "polyhaven_id": "oak_veneer_01",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/oak_veneer_01",
+    "maps": {
+      "diffuse": "/assets/pbr/wood_oak/diffuse.jpg",
+      "roughness": "/assets/pbr/wood_oak/roughness.jpg",
+      "normal": "/assets/pbr/wood_oak/normal.jpg"
+    }
+  },
+  "plaster_wall": {
+    "polyhaven_id": "plaster_grey_04",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/plaster_grey_04",
+    "maps": {
+      "diffuse": "/assets/pbr/plaster_wall/diffuse.jpg",
+      "roughness": "/assets/pbr/plaster_wall/roughness.jpg",
+      "normal": "/assets/pbr/plaster_wall/normal.jpg"
+    }
+  },
+  "fabric_linen": {
+    "polyhaven_id": "fabric_pattern_07",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/fabric_pattern_07",
+    "maps": {
+      "roughness": "/assets/pbr/fabric_linen/roughness.jpg",
+      "normal": "/assets/pbr/fabric_linen/normal.jpg"
+    }
+  },
+  "grass": {
+    "polyhaven_id": "leafy_grass",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/leafy_grass",
+    "maps": {
+      "diffuse": "/assets/pbr/grass/diffuse.jpg",
+      "roughness": "/assets/pbr/grass/roughness.jpg",
+      "normal": "/assets/pbr/grass/normal.jpg"
+    }
+  },
+  "marble": {
+    "polyhaven_id": "marble_01",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/marble_01",
+    "maps": {
+      "diffuse": "/assets/pbr/marble/diffuse.jpg",
+      "roughness": "/assets/pbr/marble/roughness.jpg",
+      "normal": "/assets/pbr/marble/normal.jpg"
+    }
+  }
+}

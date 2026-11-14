@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
 export type StudioCameraMode = 'orbit' | 'top' | 'walk'
 
-const DEFAULT_DIRECTION = new THREE.Vector3(1, 0.82, 1.08).normalize()
+const DEFAULT_DIRECTION = new THREE.Vector3(1, 1.35, 1).normalize()
 const TOP_DIRECTION = new THREE.Vector3(0, 1, 0.0001).normalize()
 
 export function fitPerspectiveCamera(
@@ -19,7 +19,7 @@ export function fitPerspectiveCamera(
     size.y / (2 * Math.tan(verticalFov / 2)),
     size.x / (2 * Math.tan(horizontalFov / 2)),
     size.z / (2 * Math.tan(verticalFov / 2)),
-  ) * 1.35
+  ) * 1.18
   camera.position.copy(target).addScaledVector(direction.clone().normalize(), Math.max(distance, 0.5))
   camera.near = Math.max(0.01, distance / 1000)
   camera.far = Math.max(100, distance * 20)

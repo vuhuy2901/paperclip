@@ -48,9 +48,13 @@ import {
   atelierCanonicalWorkflowDefinition,
   acceptAtelierStageHandoff,
   backfillAtelierCompanyProjects,
+  decideLinearWorkflowApproval,
   ensureAtelierCompanyWorkflowDefinition,
   ensureAtelierProjectWorkflow,
+  executeLinearWorkflowOnScene,
   getAtelierProjectWorkflowView,
+  getLatestPublishedAtelierWorkflow,
+  listLinearWorkflowExecutions,
 } from "../services/atelier-workflow-orchestration.js";
 import {
   createAtelierWorkflowDraft,
@@ -1067,6 +1071,103 @@ export function atelierBridgeRoutes(db: Db) {
     if (!row) { res.status(404).json({ error: "Workflow version not found" }); return; }
     const validation = await validateAtelierWorkflowDefinition(db, companyId, req.body?.definition ?? upgradeLegacyAtelierDefinition(row.definition, row.version, row.name));
     res.json({ ok: true, dispatch: false, mode: "validation_only", validation, message: validation.valid ? "Definition is structurally executable; no production agents were dispatched." : "Test run blocked by validation errors." });
+  });
+
+  router.get("/atelier/workflow/executions", async (req, res) => {
+    assertBoardOrAgent(req);
+    const companyId = String(req.query.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const [executions, latestPublished] = await Promise.all([
+      listLinearWorkflowExecutions(db, companyId, 20),
+      getLatestPublishedAtelierWorkflow(db, companyId),
+    ]);
+    let scenes: Array<{ project_id: string; name: string; active_style_preset?: string }> = [];
+    try {
+      const r = await fetch(`${PYTHON_API_URL}/api/v1/projects?include_fixtures=false`, { signal: AbortSignal.timeout(4000) });
+      if (r.ok) {
+        const list = (await r.json()) as Array<Record<string, any>>;
+        scenes = list.slice(0, 12).map((p) => ({
+          project_id: String(p.project_id),
+          name: String(p.name || p.project_id),
+          active_style_preset: p.active_style_preset ? String(p.active_style_preset) : undefined,
+        }));
+      }
+    } catch {
+      scenes = [];
+    }
+    if (!scenes.length) {
+      scenes = [
+        { project_id: "proj_demo_4x5m", name: "Căn hộ Studio Phòng Khách 4×5m — Japandi Minh Họa" },
+        { project_id: "proj_bedroom_japandi_4x4m", name: "Phòng Ngủ Master Japandi (4.19m × 4.04m)" },
+      ];
+    }
+    res.json({
+      ok: true,
+      company_id: companyId,
+      latest_published: {
+        id: latestPublished.id,
+        version: latestPublished.version,
+        status: latestPublished.status,
+        name: latestPublished.name,
+      },
+      scenes,
+      executions,
+    });
+  });
+
+  router.post("/atelier/workflow/run", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const sceneId = String(req.body?.scene_id || "proj_demo_4x5m").trim();
+    const optionalCostBomEnabled = typeof req.body?.optional_cost_bom_enabled === "boolean"
+      ? req.body.optional_cost_bom_enabled
+      : undefined;
+    const execution = await executeLinearWorkflowOnScene(db, {
+      companyId,
+      mode: "run",
+      sceneId,
+      optionalCostBomEnabled,
+      pythonApiUrl: PYTHON_API_URL,
+    });
+    res.status(201).json({ ok: true, execution });
+  });
+
+  router.post("/atelier/workflow/definitions/:definitionId/test-run", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const sceneId = String(req.body?.scene_id || "proj_demo_4x5m").trim();
+    const optionalCostBomEnabled = typeof req.body?.optional_cost_bom_enabled === "boolean"
+      ? req.body.optional_cost_bom_enabled
+      : undefined;
+    const execution = await executeLinearWorkflowOnScene(db, {
+      companyId,
+      mode: "test_run",
+      definitionId: String(req.params.definitionId),
+      sceneId,
+      optionalCostBomEnabled,
+      pythonApiUrl: PYTHON_API_URL,
+    });
+    res.status(201).json({ ok: true, execution });
+  });
+
+  router.post("/atelier/workflow/executions/:traceId/decision", async (req, res) => {
+    assertBoard(req);
+    const companyId = String(req.body?.company_id || ATELIER_COMPANY_ID);
+    assertCompanyAccess(req, companyId);
+    const decision = req.body?.decision === "reject" ? "reject" : "approve";
+    const execution = await decideLinearWorkflowApproval(db, {
+      companyId,
+      traceId: String(req.params.traceId),
+      decision,
+      note: typeof req.body?.note === "string" ? req.body.note : undefined,
+      optionalCostBomEnabled: typeof req.body?.optional_cost_bom_enabled === "boolean"
+        ? req.body.optional_cost_bom_enabled
+        : undefined,
+      pythonApiUrl: PYTHON_API_URL,
+    });
+    res.json({ ok: true, execution });
   });
 
   router.post("/atelier/workflow/definitions/:definitionId/publish", async (req, res) => {

@@ -23,11 +23,24 @@ import { createStudioCameraController, type StudioCameraMode } from './studioCam
 import { usePlanCamera, type PlanBounds } from './usePlanCamera'
 import { buildWallSolidRects } from './openingGeometry'
 import {
+  resolveFurnitureAsset,
+  resolveAssetPackForProject,
+  classifyGlbMeshPartName,
+  getNamedPartsForFurniture,
+  PBR_TEXTURES,
+} from './assetCatalog'
+import { validateSceneBeforeBuild } from './sceneValidator'
+import {
+  resolveMaterialOrDefault,
+  getPbrMaterialById,
+  type PbrSurfaceType,
+} from './pbrCatalog'
+import {
   applyMaterialOverrideToObject,
   disposeOwnedMaterials,
   type MaterialDefinitionValue,
 } from './materialResolver'
-import { Eye, Sparkles, Layers } from 'lucide-react'
+import { Eye, Sparkles, Layers, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 interface StudioViewportProps {
   project: any
@@ -134,7 +147,9 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
   }) => {
     const mountRef = useRef<HTMLDivElement | null>(null)
     const cameraControllerRef = useRef<ReturnType<typeof createStudioCameraController> | null>(null)
-    const cutawayWallsRef = useRef<Array<{ mesh: THREE.Mesh; bottom: number; top: number; cutaway: boolean }>>([])
+    const cutawayWallsRef = useRef<
+      Array<{ mesh: THREE.Mesh; capMesh?: THREE.Mesh; bottom: number; top: number; cutaway: boolean }>
+    >([])
     const [draggingId, setDraggingId] = useState<string | null>(null)
     const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null)
     const [ceilingVisible, setCeilingVisible] = useState<boolean>(false)
@@ -237,9 +252,24 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         }
 
     const selectedEntity =
-      furniture.find((f: any) => f.id === selectedEntityId) ||
-      walls.find((w: any) => w.id === selectedEntityId) ||
-      null
+      selectedEntityId === 'floor_main'
+        ? { id: 'floor_main', name: room?.name ? `Sàn ${room.name}` : 'Sàn phòng chính', surfaceType: 'floor' }
+        : furniture.find((f: any) => f.id === selectedEntityId) ||
+          walls.find((w: any) => w.id === selectedEntityId) ||
+          null
+
+    const activeAssetPack = resolveAssetPackForProject(project)
+    const unmappedFurnitureIds = new Set<string>()
+    furniture.forEach((f: any) => {
+      const res = resolveFurnitureAsset(f, activeAssetPack)
+      if (res.flaggedUnmapped) {
+        unmappedFurnitureIds.add(String(f.id))
+      }
+    })
+    const validationReport = validateSceneBeforeBuild(project, Array.from(unmappedFurnitureIds))
+    if (typeof window !== 'undefined') {
+      ;(window as any).__ATELIER_VALIDATION_REPORT__ = validationReport
+    }
 
     // ==========================================================================
     // THREE.JS 3D PASCAL SCENE VIEWER (WITH HDRI, SSAO, CEILING & RAYCASTING)
@@ -252,26 +282,28 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
 
       const scene = new THREE.Scene()
       const backgroundByPreset = {
-        day: theme === 'dark' ? '#15171A' : '#E9EEF1',
+        day: theme === 'dark' ? '#15171A' : '#F8FAFC',
         sunset: '#4A332F',
         night: '#0B1020',
       }
       scene.background = new THREE.Color(backgroundByPreset[lightingPreset])
 
-      const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100)
+      const camera = new THREE.PerspectiveCamera(22, width / height, 0.1, 150)
       const cx = (roomMinX + roomMaxX) / 2000
       const cz = (roomMinY + roomMaxY) / 2000
-      camera.position.set(cx + Math.max(4.2, roomW / 1050), 4.3, cz + Math.max(4.8, roomD / 1050))
-      camera.lookAt(cx, 0.8, cz)
+      const spanM = Math.max(roomW, roomD) / 1000
+      camera.position.set(cx + spanM * 1.65, spanM * 2.06, cz + spanM * 1.65)
+      camera.lookAt(cx, 0.55, cz)
 
       const renderer = new THREE.WebGLRenderer({ antialias: !lowSpecMode, preserveDrawingBuffer: true })
+      renderer.localClippingEnabled = true
       renderer.setSize(width, height)
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowSpecMode ? 1.0 : 1.75))
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowSpecMode ? 1.0 : 2.0))
       renderer.shadowMap.enabled = !lowSpecMode
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
       renderer.outputColorSpace = THREE.SRGBColorSpace
       renderer.toneMapping = THREE.ACESFilmicToneMapping
-      renderer.toneMappingExposure = lightingPreset === 'day' ? 1.08 : lightingPreset === 'sunset' ? 0.92 : 0.65
+      renderer.toneMappingExposure = lightingPreset === 'day' ? 1.0 : lightingPreset === 'sunset' ? 0.92 : 0.72
       container.innerHTML = ''
       container.appendChild(renderer.domElement)
 
@@ -362,30 +394,51 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         }
       )
 
-      // Studio Architectural Lighting (Section 6.2)
-      const hemiIntensity = lightingPreset === 'day' ? 0.72 : lightingPreset === 'sunset' ? 0.42 : 0.18
+      // Studio Architectural Lighting (Dollhouse Soft Daylight + Warm Indoor Glow)
+      const hemiIntensity = lightingPreset === 'day' ? 0.85 : lightingPreset === 'sunset' ? 0.48 : 0.22
       const hemiLight = new THREE.HemisphereLight(
         lightingPreset === 'sunset' ? 0xffd7b0 : 0xffffff,
-        lightingPreset === 'night' ? 0x091126 : 0x6b625b,
+        lightingPreset === 'night' ? 0x091126 : 0x8c8378,
         hemiIntensity
       )
       hemiLight.position.set(0, 12, 0)
       scene.add(hemiLight)
 
       const dirLight = new THREE.DirectionalLight(
-        lightingPreset === 'sunset' ? 0xff9b63 : 0xfffdf8,
-        lightingPreset === 'day' ? 1.05 : lightingPreset === 'sunset' ? 0.72 : 0.12
+        lightingPreset === 'sunset' ? 0xff9b63 : 0xfffaf2,
+        lightingPreset === 'day' ? 1.32 : lightingPreset === 'sunset' ? 0.85 : 0.18
       )
-      dirLight.position.set(6.5, 11, 7.5)
+      dirLight.position.set(cx + spanM * 1.4, spanM * 2.1, cz + spanM * 1.1)
+      dirLight.target.position.set(cx, 0.3, cz)
+      scene.add(dirLight.target)
       dirLight.castShadow = !lowSpecMode
-      dirLight.shadow.mapSize.width = 1024
-      dirLight.shadow.mapSize.height = 1024
-      dirLight.shadow.bias = -0.0005
+      dirLight.shadow.mapSize.width = 2048
+      dirLight.shadow.mapSize.height = 2048
+      dirLight.shadow.radius = 3
+      const shadowPad = Math.max(4.5, spanM * 0.95)
+      dirLight.shadow.camera.left = -shadowPad
+      dirLight.shadow.camera.right = shadowPad
+      dirLight.shadow.camera.top = shadowPad
+      dirLight.shadow.camera.bottom = -shadowPad
+      dirLight.shadow.camera.near = 0.5
+      dirLight.shadow.camera.far = spanM * 5 + 10
+      dirLight.shadow.bias = -0.0004
+      dirLight.shadow.normalBias = 0.02
       scene.add(dirLight)
 
-      const fillLight = new THREE.DirectionalLight(0xe0f2fe, 0.28)
-      fillLight.position.set(-5, 6, -4)
+      const fillLight = new THREE.DirectionalLight(0xeef6ff, 0.32)
+      fillLight.position.set(cx - spanM * 1.2, spanM * 1.2, cz - spanM * 1.1)
       scene.add(fillLight)
+
+      // Subtle warm indoor fill light
+      const indoorWarmLight = new THREE.PointLight(
+        0xffe4b8,
+        lightingPreset === 'night' ? 14 : 2.6,
+        Math.max(6, spanM * 1.8),
+        1.6
+      )
+      indoorWarmLight.position.set(cx, 1.85, cz)
+      scene.add(indoorWarmLight)
 
       if (lightingPreset === 'night') {
         const warmFixtures = [
@@ -400,19 +453,50 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         })
       }
 
-      if (visibleLayers.grid) {
+      if (visibleLayers.grid && !cutawayEnabled && ceilingVisible) {
         const grid = new THREE.GridHelper(
           16,
           32,
           theme === 'dark' ? 0x27272a : 0xd4d4d8,
           theme === 'dark' ? 0x18181b : 0xe5e7eb
         )
-        grid.position.set(cx, -0.01, cz)
+        grid.position.set(cx, -0.09, cz)
         scene.add(grid)
+      }
+
+      // High-resolution PNG export hook for Studio viewport
+      ;(window as any).__ATELIER_CAPTURE_PNG__ = (scale = 2) => {
+        const prevW = renderer.domElement.width
+        const prevH = renderer.domElement.height
+        const prevPR = renderer.getPixelRatio()
+        const targetW = Math.min(2560, Math.round((container.clientWidth || 1280) * scale))
+        const targetH = Math.min(1600, Math.round((container.clientHeight || 800) * scale))
+        renderer.setPixelRatio(1)
+        renderer.setSize(targetW, targetH, false)
+        if (composer) composer.setSize(targetW, targetH)
+        if (composer && ssaoEnabled) composer.render()
+        else renderer.render(scene, camera)
+        const dataUrl = renderer.domElement.toDataURL('image/png')
+        renderer.setPixelRatio(prevPR)
+        renderer.setSize(container.clientWidth || 720, container.clientHeight || 520, false)
+        if (composer) composer.setSize(container.clientWidth || 720, container.clientHeight || 520)
+        renderScene()
+        void prevW
+        void prevH
+        return dataUrl
       }
 
       const pickableMeshes: THREE.Object3D[] = []
       const gltfLoader = new GLTFLoader()
+      const texLoader = new THREE.TextureLoader()
+      const loadPbrMap = (url: string, repeatX = 2, repeatY = 2, isColor = false) => {
+        const tex = texLoader.load(url, () => renderScene())
+        tex.wrapS = THREE.RepeatWrapping
+        tex.wrapT = THREE.RepeatWrapping
+        tex.repeat.set(repeatX, repeatY)
+        tex.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace
+        return tex
+      }
       const objectRoots = new Map<string, THREE.Object3D>()
       const materialDefinitions = new Map(pbrMaterials.map((material) => [material.material_id, material]))
       const initialMetrics = ((window as any).__ATELIER_MATERIAL_METRICS__ ||= {})
@@ -425,30 +509,162 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         : 0
       initialMetrics.meshUUIDs ||= {}
 
-      // 1. Floor Slab with Section 7B / G4 Tile & Grout UV Scale
-      const floorTex = createProceduralTileTexture(
-        floorMatInfo.hex_color || '#C8A986',
-        floorMatInfo.tile_width_mm || 600,
-        floorMatInfo.tile_length_mm || 600,
-        roomW,
-        roomD,
-        floorMatInfo.layout_pattern || 'straight',
-        floorMatInfo.grout_width_mm ?? 3,
-        floorMatInfo.grout_color || '#B8B1A6',
-        floorMatInfo.rotation_deg || 0,
-        floorMatInfo.texture_origin_mm || [0, 0]
+      // 1. Interior Floor Slab built to exact room polygon (room.polygon_mm) with Poly Haven CC0 Light Oak PBR + tint
+      const floorW = roomW / 1000
+      const floorD = roomD / 1000
+      const floorShape = new THREE.Shape()
+      poly.forEach((pt: number[], idx: number) => {
+        const px = pt[0] / 1000
+        const py = -pt[1] / 1000
+        if (idx === 0) floorShape.moveTo(px, py)
+        else floorShape.lineTo(px, py)
+      })
+      floorShape.closePath()
+      const floorGeo = new THREE.ExtrudeGeometry(floorShape, {
+        depth: 0.08,
+        bevelEnabled: false,
+      })
+      floorGeo.rotateX(-Math.PI / 2)
+      const posAttr = floorGeo.getAttribute('position')
+      const uvAttr = floorGeo.getAttribute('uv')
+      if (posAttr && uvAttr) {
+        const minXm = roomMinX / 1000
+        const minZm = roomMinY / 1000
+        for (let i = 0; i < posAttr.count; i++) {
+          const vx = posAttr.getX(i)
+          const vz = posAttr.getZ(i)
+          uvAttr.setXY(i, (vx - minXm) / Math.max(0.1, floorW), (vz - minZm) / Math.max(0.1, floorD))
+        }
+        uvAttr.needsUpdate = true
+      }
+
+      const floorPbrEntry = resolveMaterialOrDefault(
+        floorOverride?.material_id || room?.floor_material_id,
+        'floor'
       )
-      const floorGeo = new THREE.BoxGeometry(roomW / 1000, 0.08, roomD / 1000)
+      const floorRepX = Math.max(1.2, floorW / Math.max(0.4, floorPbrEntry.repeat_scale_m[0]))
+      const floorRepY = Math.max(1.2, floorD / Math.max(0.4, floorPbrEntry.repeat_scale_m[1]))
+      const floorBaseHex = floorOverride?.tint || floorPbrEntry.base_color || floorMatInfo.hex_color || '#E8D8C3'
       const floorMat = new THREE.MeshStandardMaterial({
-        map: floorTex,
-        roughness: floorMatInfo.roughness ?? 0.48,
-        metalness: 0.04,
+        map: loadPbrMap(floorPbrEntry.diffuse_url, floorRepX, floorRepY, true),
+        roughnessMap: loadPbrMap(floorPbrEntry.roughness_url, floorRepX, floorRepY, false),
+        normalMap: loadPbrMap(floorPbrEntry.normal_url, floorRepX, floorRepY, false),
+        normalScale: new THREE.Vector2(0.35, 0.35),
+        color: new THREE.Color(floorBaseHex).lerp(new THREE.Color('#FFFFFF'), 0.42),
+        roughness: floorPbrEntry.roughness ?? floorMatInfo.roughness ?? 0.52,
+        metalness: floorPbrEntry.metalness ?? 0.02,
+        emissive: selectedEntityId === 'floor_main' ? new THREE.Color('#0F766E') : new THREE.Color('#000000'),
+        emissiveIntensity: selectedEntityId === 'floor_main' ? 0.14 : 0,
       })
       const floorMesh = new THREE.Mesh(floorGeo, floorMat)
-      floorMesh.position.set(cx, -0.04, cz)
+      floorMesh.position.set(0, -0.08, 0)
       floorMesh.receiveShadow = true
       floorMesh.name = 'FLOOR_SLAB_MAIN'
+      floorMesh.userData = {
+        entityId: 'floor_main',
+        surfaceType: 'floor',
+        materialId: floorPbrEntry.id,
+        polygonVertices: poly.length,
+      }
       scene.add(floorMesh)
+      pickableMeshes.push(floorMesh)
+      objectRoots.set('floor_main', floorMesh)
+
+      // 1A. Exterior Architectural Tray (Light Oak Patio Deck + Grass Border + Multi-cluster Shrubs + Soft Studio Ground Shadow)
+      const patioDepth = Math.min(2.2, Math.max(1.1, floorD * 0.38))
+      const grassPad = 0.58
+      const trayW = floorW + grassPad * 2
+      const trayD = floorD + patioDepth + grassPad * 2
+      const trayCenterX = cx
+      const trayCenterZ = cz + patioDepth * 0.5
+
+      const shadowCatcher = new THREE.Mesh(
+        new THREE.PlaneGeometry(trayW * 3.5, trayD * 3.5),
+        new THREE.ShadowMaterial({ opacity: 0.14 })
+      )
+      shadowCatcher.rotation.x = -Math.PI / 2
+      shadowCatcher.position.set(trayCenterX, -0.095, trayCenterZ)
+      shadowCatcher.receiveShadow = true
+      scene.add(shadowCatcher)
+
+      const grassMat = new THREE.MeshStandardMaterial({
+        map: loadPbrMap(PBR_TEXTURES.grass.diffuse, Math.max(2, trayW / 1.2), Math.max(2, trayD / 1.2), true),
+        roughnessMap: loadPbrMap(PBR_TEXTURES.grass.roughness, Math.max(2, trayW / 1.2), Math.max(2, trayD / 1.2), false),
+        normalMap: loadPbrMap(PBR_TEXTURES.grass.normal, Math.max(2, trayW / 1.2), Math.max(2, trayD / 1.2), false),
+        normalScale: new THREE.Vector2(0.5, 0.5),
+        color: '#8CBF4B',
+        roughness: 0.9,
+      })
+      const grassTray = new THREE.Mesh(new THREE.BoxGeometry(trayW, 0.06, trayD), grassMat)
+      grassTray.position.set(trayCenterX, -0.06, trayCenterZ)
+      grassTray.receiveShadow = true
+      grassTray.castShadow = true
+      grassTray.name = 'EXTERIOR_GRASS_TRAY'
+      scene.add(grassTray)
+
+      const patioDeckMat = new THREE.MeshStandardMaterial({
+        map: loadPbrMap(PBR_TEXTURES.wood_oak.diffuse, Math.max(1.5, floorW / 1.3), Math.max(1, patioDepth / 1.3), true),
+        roughnessMap: loadPbrMap(PBR_TEXTURES.wood_oak.roughness, Math.max(1.5, floorW / 1.3), Math.max(1, patioDepth / 1.3), false),
+        normalMap: loadPbrMap(PBR_TEXTURES.wood_oak.normal, Math.max(1.5, floorW / 1.3), Math.max(1, patioDepth / 1.3), false),
+        normalScale: new THREE.Vector2(0.35, 0.35),
+        color: '#E5D3BC',
+        roughness: 0.6,
+      })
+      const patioDeck = new THREE.Mesh(new THREE.BoxGeometry(floorW + 0.16, 0.055, patioDepth), patioDeckMat)
+      patioDeck.position.set(cx, -0.042, roomMaxY / 1000 + patioDepth / 2)
+      patioDeck.receiveShadow = true
+      patioDeck.name = 'EXTERIOR_PATIO_DECK'
+      scene.add(patioDeck)
+
+      // Perimeter multi-cluster flowering shrubs on the grass tray
+      const shrubGreens = [
+        new THREE.MeshStandardMaterial({ color: '#4D7C0F', roughness: 0.88 }),
+        new THREE.MeshStandardMaterial({ color: '#65A30D', roughness: 0.86 }),
+        new THREE.MeshStandardMaterial({ color: '#84CC16', roughness: 0.84 }),
+      ]
+      const flowerColors = [
+        new THREE.MeshStandardMaterial({ color: '#FFFFFF', roughness: 0.72 }),
+        new THREE.MeshStandardMaterial({ color: '#A78BFA', roughness: 0.72 }),
+      ]
+      const shrubPositions: Array<[number, number, number]> = [
+        [roomMinX / 1000 - 0.28, roomMaxY / 1000 - 0.35, 0.22],
+        [roomMinX / 1000 - 0.26, roomMaxY / 1000 + 0.18, 0.24],
+        [roomMinX / 1000 - 0.28, roomMaxY / 1000 + 0.72, 0.21],
+        [roomMaxX / 1000 + 0.26, roomMaxY / 1000 + patioDepth - 0.22, 0.23],
+        [roomMaxX / 1000 - 0.15, roomMaxY / 1000 + patioDepth + 0.26, 0.22],
+        [roomMaxX / 1000 - 0.65, roomMaxY / 1000 + patioDepth + 0.28, 0.2],
+      ]
+      shrubPositions.forEach(([sx, sz, rad], idx) => {
+        const bush = new THREE.Group()
+        for (let k = 0; k < 14; k++) {
+          const ang = (k / 14) * Math.PI * 2 + idx
+          const rDist = (k % 3) * rad * 0.28
+          const leafSize = rad * (0.3 + ((k * 7) % 4) * 0.05)
+          const lobe = new THREE.Mesh(
+            new THREE.IcosahedronGeometry(leafSize, 0),
+            shrubGreens[k % shrubGreens.length]
+          )
+          lobe.position.set(
+            Math.cos(ang) * rDist,
+            leafSize * 0.85 + ((k % 3) * 0.05),
+            Math.sin(ang) * rDist
+          )
+          lobe.rotation.set(k * 0.7, k * 1.1, 0)
+          lobe.castShadow = true
+          lobe.receiveShadow = true
+          bush.add(lobe)
+        }
+        if (idx >= 3) {
+          for (let fIdx = 0; fIdx < 6; fIdx++) {
+            const ang = (fIdx / 6) * Math.PI * 2
+            const fl = new THREE.Mesh(new THREE.IcosahedronGeometry(0.028, 0), flowerColors[fIdx % flowerColors.length])
+            fl.position.set(Math.cos(ang) * rad * 0.45, rad * 0.95 + (fIdx % 2) * 0.04, Math.sin(ang) * rad * 0.45)
+            bush.add(fl)
+          }
+        }
+        bush.position.set(sx, -0.025, sz)
+        scene.add(bush)
+      })
 
       // 1B. Ceiling Slab with Downlights (G3 Ceiling Visibility Toggle)
       const ceilingGroup = new THREE.Group()
@@ -487,19 +703,27 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
       ceilingGroup.visible = ceilingVisible
       scene.add(ceilingGroup)
 
-      // 2. Walls (with Face A / Accent Wall color & Cutaway support)
+      // 2. Walls (Dollhouse 1.12m flat-cut with crisp white top caps + Poly Haven plaster PBR)
+      const DOLLHOUSE_CUT_H = 1.12
+      const dollhouseCut = cutawayEnabled || !ceilingVisible
+      const plasterNorm = loadPbrMap(PBR_TEXTURES.plaster_wall.normal, 2, 1, false)
+      const plasterRough = loadPbrMap(PBR_TEXTURES.plaster_wall.roughness, 2, 1, false)
+      const whiteCapMat = new THREE.MeshStandardMaterial({
+        color: '#FFFFFF',
+        roughness: 0.55,
+        metalness: 0.02,
+      })
+
       cutawayWallsRef.current = []
       walls.forEach((w: any, idx: number) => {
         const isCutawayWall = w.id === 'wall_south' || w.id === 'wall_east' || idx === 1 || idx === 2
-        const isFrontCutaway = cutawayEnabled && isCutawayWall
-
         const x0 = w.start_mm[0] / 1000
         const z0 = w.start_mm[1] / 1000
         const x1 = w.end_mm[0] / 1000
         const z1 = w.end_mm[1] / 1000
         const len = Math.hypot(x1 - x0, z1 - z0)
         const rawH = (w.height_mm || 2800) / 1000
-        const th = (w.thickness_mm || 200) / 1000
+        const th = Math.max(0.14, (w.thickness_mm || 200) / 1000)
         const directionX = (x1 - x0) / len
         const directionZ = (z1 - z0) / len
         const angle = Math.atan2(z1 - z0, x1 - x0)
@@ -516,19 +740,29 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
             .map((win: any) => {
               const center = len * (win.t ?? 0.5)
               const width = (win.width_mm || 1500) / 1000
-              const bottom = (win.sill_height_mm ?? 900) / 1000
+              const rawSill = (win.sill_height_mm ?? 900) / 1000
+              const bottom = dollhouseCut ? Math.min(rawSill, 0.55) : rawSill
               return { start: center - width / 2, end: center + width / 2, bottom, top: bottom + (win.height_mm || 1400) / 1000 }
             }),
         ]
         const solidRects = buildWallSolidRects(len, rawH, cuts)
 
-        const pMat = paintsById[w.face_a_material_id] || { hex_color: '#F5F2EB', roughness: 0.82 }
+        const wallPbrA = getPbrMaterialById(w.face_a_material_id)
+        const pMat = wallPbrA
+          ? { hex_color: wallPbrA.base_color, roughness: wallPbrA.roughness, diffuse_url: wallPbrA.diffuse_url, normal_url: wallPbrA.normal_url, roughness_url: wallPbrA.roughness_url }
+          : paintsById[w.face_a_material_id] || { hex_color: '#E5DFD5', roughness: 0.85 }
         const isSelected = w.id === selectedEntityId
+        const rawWallCol = new THREE.Color(pMat.hex_color || '#E5DFD5')
+        const wallLum = 0.2126 * rawWallCol.r + 0.7152 * rawWallCol.g + 0.0722 * rawWallCol.b
+        // Slightly warm/darken pure white paint so the pure white top cut cap contrasts crisply
+        const wallColor = wallLum > 0.82 ? rawWallCol.clone().lerp(new THREE.Color('#DDD6CA'), 0.48) : rawWallCol
         const wallMat = new THREE.MeshStandardMaterial({
-          color: pMat.hex_color || '#F5F2EB',
-          roughness: pMat.roughness ?? 0.82,
-          transparent: isFrontCutaway,
-          opacity: isFrontCutaway ? 0.45 : 1.0,
+          map: pMat.diffuse_url ? loadPbrMap(pMat.diffuse_url, Math.max(1, len / 1.8), 1, true) : undefined,
+          color: wallColor,
+          roughness: pMat.roughness ?? 0.85,
+          roughnessMap: pMat.roughness_url ? loadPbrMap(pMat.roughness_url, Math.max(1, len / 1.8), 1, false) : plasterRough,
+          normalMap: pMat.normal_url ? loadPbrMap(pMat.normal_url, Math.max(1, len / 1.8), 1, false) : plasterNorm,
+          normalScale: new THREE.Vector2(0.22, 0.22),
           emissive: isSelected ? new THREE.Color('#0F766E') : new THREE.Color('#000000'),
           emissiveIntensity: isSelected ? 0.16 : 0,
         })
@@ -539,24 +773,33 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
           const wallMesh = new THREE.Mesh(new THREE.BoxGeometry(segmentLength, segmentHeight, th), wallMat)
           wallMesh.position.set(x0 + directionX * along, (rect.bottom + rect.top) / 2, z0 + directionZ * along)
           wallMesh.rotation.y = -angle
-          wallMesh.castShadow = !isFrontCutaway
+          wallMesh.castShadow = true
           wallMesh.receiveShadow = true
           wallMesh.userData = { entityId: w.id }
-          if (isFrontCutaway) {
-            const visibleTop = Math.min(rect.top, 0.32)
+
+          let capMesh: THREE.Mesh | undefined
+          if (dollhouseCut) {
+            const visibleTop = Math.min(rect.top, DOLLHOUSE_CUT_H)
             if (visibleTop <= rect.bottom) {
               wallMesh.visible = false
             } else {
               wallMesh.scale.y = (visibleTop - rect.bottom) / segmentHeight
               wallMesh.position.y = (rect.bottom + visibleTop) / 2
+              if (visibleTop >= DOLLHOUSE_CUT_H - 0.01) {
+                capMesh = new THREE.Mesh(new THREE.BoxGeometry(segmentLength + 0.002, 0.014, th + 0.002), whiteCapMat)
+                capMesh.position.set(x0 + directionX * along, visibleTop + 0.006, z0 + directionZ * along)
+                capMesh.rotation.y = -angle
+                capMesh.receiveShadow = true
+                scene.add(capMesh)
+              }
             }
           }
           scene.add(wallMesh)
-          cutawayWallsRef.current.push({ mesh: wallMesh, bottom: rect.bottom, top: rect.top, cutaway: isCutawayWall })
-          if (!isFrontCutaway) pickableMeshes.push(wallMesh)
+          cutawayWallsRef.current.push({ mesh: wallMesh, capMesh, bottom: rect.bottom, top: rect.top, cutaway: isCutawayWall })
+          pickableMeshes.push(wallMesh)
         })
 
-        if (room?.wall_tile_zone?.enabled && !isFrontCutaway) {
+        if (room?.wall_tile_zone?.enabled && !dollhouseCut) {
           const wtH = (room.wall_tile_zone.tile_height_mm || 1200) / 1000
           const wtInfo = tilesById[room.wall_tile_zone.tile_material_id] || { hex_color: '#D8D4CC' }
           const wtGeo = new THREE.BoxGeometry(len * 0.99, wtH, th + 0.012)
@@ -571,7 +814,21 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         }
       })
 
-      // 3. Embedded door leaves and window frames
+      // 3. Parametric Doors & Windows (thin black frames + clear glass, clipped cleanly to dollhouse cut height)
+      const blackFrameMat = new THREE.MeshStandardMaterial({ color: '#1E2228', roughness: 0.42, metalness: 0.38 })
+      const oakLeafMat = new THREE.MeshStandardMaterial({
+        map: loadPbrMap(PBR_TEXTURES.wood_oak.diffuse, 1, 1, true),
+        roughness: 0.56,
+        color: '#D8C2A6',
+      })
+      const clearGlassMat = new THREE.MeshStandardMaterial({
+        color: '#DCEEF8',
+        transparent: true,
+        opacity: 0.24,
+        roughness: 0.06,
+        metalness: 0.08,
+      })
+
       doors.forEach((door: any) => {
         const w = walls.find((item: any) => item.id === door.wall_id)
         if (!w) return
@@ -583,40 +840,51 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         const centerX = x0 + (x1 - x0) * (door.t ?? 0.5)
         const centerZ = z0 + (z1 - z0) * (door.t ?? 0.5)
         const width = (door.width_mm || 900) / 1000
-        const height = (door.height_mm || 2100) / 1000
-        const frameSize = 0.06
-        const wallDepth = ((w.thickness_mm || 200) / 1000) + 0.035
+        const rawDoorH = (door.height_mm || 2100) / 1000
+        const height = dollhouseCut ? Math.min(rawDoorH, DOLLHOUSE_CUT_H) : rawDoorH
+        const frameSize = 0.036
+        const wallDepth = ((w.thickness_mm || 200) / 1000) + 0.008
         const doorGroup = new THREE.Group()
         doorGroup.position.set(centerX, 0, centerZ)
         doorGroup.rotation.y = -angle
 
-        const frameMat = new THREE.MeshStandardMaterial({ color: '#E7E2D8', roughness: 0.58 })
-        const leafMat = new THREE.MeshStandardMaterial({ color: '#C6905B', roughness: 0.62 })
         const addDoorPart = (partWidth: number, partHeight: number, partDepth: number, x: number, y: number) => {
-          const mesh = new THREE.Mesh(new THREE.BoxGeometry(partWidth, partHeight, partDepth), frameMat)
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(partWidth, partHeight, partDepth), blackFrameMat)
           mesh.position.set(x, y, 0)
           mesh.castShadow = true
           mesh.userData = { entityId: door.id }
           doorGroup.add(mesh)
           pickableMeshes.push(mesh)
         }
-        addDoorPart(frameSize, height + frameSize, wallDepth, -width / 2 - frameSize / 2, (height + frameSize) / 2)
-        addDoorPart(frameSize, height + frameSize, wallDepth, width / 2 + frameSize / 2, (height + frameSize) / 2)
-        addDoorPart(width + frameSize * 2, frameSize, wallDepth, 0, height + frameSize / 2)
+        addDoorPart(frameSize, height, wallDepth, -width / 2 + frameSize / 2, height / 2)
+        addDoorPart(frameSize, height, wallDepth, width / 2 - frameSize / 2, height / 2)
+        if (!dollhouseCut) {
+          addDoorPart(width + frameSize * 2, frameSize, wallDepth, 0, height + frameSize / 2)
+        }
 
-        const hingesLeft = door.hinges_side !== 'right'
-        const pivot = new THREE.Group()
-        pivot.position.x = hingesLeft ? -width / 2 : width / 2
-        const swing = Math.PI * 0.36 * (hingesLeft ? -1 : 1) * (door.swing_direction === 'outward' ? -1 : 1)
-        pivot.rotation.y = swing
-        const leafWidth = width - 0.035
-        const leaf = new THREE.Mesh(new THREE.BoxGeometry(leafWidth, height - 0.035, 0.045), leafMat)
-        leaf.position.set(hingesLeft ? leafWidth / 2 : -leafWidth / 2, height / 2, 0)
-        leaf.castShadow = true
-        leaf.userData = { entityId: door.id }
-        pivot.add(leaf)
-        doorGroup.add(pivot)
-        pickableMeshes.push(leaf)
+        const isGlassDoor = /glass|patio|sliding|balcony/i.test(String(door.type || door.name || ''))
+        if (isGlassDoor) {
+          const glass = new THREE.Mesh(new THREE.BoxGeometry(width - 0.04, height - 0.04, 0.018), clearGlassMat)
+          glass.position.set(0, height / 2, 0)
+          glass.userData = { entityId: door.id }
+          doorGroup.add(glass)
+          pickableMeshes.push(glass)
+          addDoorPart(0.032, height, 0.04, 0, height / 2)
+        } else {
+          const hingesLeft = door.hinges_side !== 'right'
+          const pivot = new THREE.Group()
+          pivot.position.x = hingesLeft ? -width / 2 : width / 2
+          const swing = Math.PI * 0.36 * (hingesLeft ? -1 : 1) * (door.swing_direction === 'outward' ? -1 : 1)
+          pivot.rotation.y = swing
+          const leafWidth = width - 0.035
+          const leaf = new THREE.Mesh(new THREE.BoxGeometry(leafWidth, height - 0.02, 0.042), oakLeafMat)
+          leaf.position.set(hingesLeft ? leafWidth / 2 : -leafWidth / 2, height / 2, 0)
+          leaf.castShadow = true
+          leaf.userData = { entityId: door.id }
+          pivot.add(leaf)
+          doorGroup.add(pivot)
+          pickableMeshes.push(leaf)
+        }
         scene.add(doorGroup)
       })
 
@@ -627,28 +895,24 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         const wz = (w.start_mm[1] + (w.end_mm[1] - w.start_mm[1]) * (win.t ?? 0.5)) / 1000
         const wallAngle = Math.atan2(w.end_mm[1] - w.start_mm[1], w.end_mm[0] - w.start_mm[0])
         const width = (win.width_mm || 1500) / 1000
-        const height = (win.height_mm || 1400) / 1000
-        const sill = (win.sill_height_mm ?? 900) / 1000
-        const frameSize = 0.055
-        const wallDepth = ((w.thickness_mm || 200) / 1000) + 0.025
+        const rawWinH = (win.height_mm || 1400) / 1000
+        const rawSill = (win.sill_height_mm ?? 900) / 1000
+        const sill = dollhouseCut ? Math.min(rawSill, 0.55) : rawSill
+        const topY = dollhouseCut ? DOLLHOUSE_CUT_H : rawSill + rawWinH
+        const height = Math.max(0.25, topY - sill)
+        const frameSize = 0.034
+        const wallDepth = Math.max(0.07, ((w.thickness_mm || 200) / 1000) - 0.018)
         const windowGroup = new THREE.Group()
         windowGroup.position.set(wx, 0, wz)
         windowGroup.rotation.y = -wallAngle
-        const glassMat = new THREE.MeshStandardMaterial({
-          color: '#BAE6FD',
-          transparent: true,
-          opacity: 0.3,
-          roughness: 0.1,
-          metalness: 0.05,
-        })
-        const frameMat = new THREE.MeshStandardMaterial({ color: '#E7E2D8', roughness: 0.48 })
-        const glass = new THREE.Mesh(new THREE.BoxGeometry(width - frameSize * 2, height - frameSize * 2, 0.02), glassMat)
+
+        const glass = new THREE.Mesh(new THREE.BoxGeometry(width - frameSize * 2, height - frameSize * 2, 0.016), clearGlassMat)
         glass.position.y = sill + height / 2
         glass.userData = { entityId: win.id }
         windowGroup.add(glass)
         pickableMeshes.push(glass)
         const addWindowFrame = (partWidth: number, partHeight: number, x: number, y: number) => {
-          const mesh = new THREE.Mesh(new THREE.BoxGeometry(partWidth, partHeight, wallDepth), frameMat)
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(partWidth, partHeight, wallDepth), blackFrameMat)
           mesh.position.set(x, y, 0)
           mesh.castShadow = true
           mesh.userData = { entityId: win.id }
@@ -671,22 +935,6 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         const fw = (f.width_mm || 1000) / 1000
         const fd = (f.depth_mm || 800) / 1000
         const fh = (f.height_mm || 750) / 1000
-
-        // Contact AO shadow plane under each furniture piece when SSAO/AO is enabled
-        if (ssaoEnabled) {
-          const aoPlane = new THREE.Mesh(
-            new THREE.PlaneGeometry(fw * 1.04, fd * 1.04),
-            new THREE.MeshBasicMaterial({
-              color: 0x09090b,
-              transparent: true,
-              opacity: 0.2,
-              depthWrite: false,
-            })
-          )
-          aoPlane.rotation.x = -Math.PI / 2
-          aoPlane.position.y = 0.002
-          group.add(aoPlane)
-        }
 
         const mainMat = new THREE.MeshStandardMaterial({
           color: f.color_hex || '#E4DDD3',
@@ -719,9 +967,18 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
           return mesh
         }
 
-        if (f.normalized_glb) {
+        const resolvedAsset = resolveFurnitureAsset(f, activeAssetPack)
+        if (resolvedAsset.flaggedUnmapped) {
+          const viewerState = ((window as any).__ATELIER_VIEWER_STATE__ ||= {})
+          viewerState.unmappedCategories = Array.from(
+            new Set([...(viewerState.unmappedCategories || []), String(f.category || f.name || 'unknown')])
+          )
+          console.warn('[StudioAssetCatalog]', resolvedAsset.reason)
+        }
+
+        if (resolvedAsset.kind === 'glb') {
           gltfLoader.load(
-            f.normalized_glb,
+            resolvedAsset.url,
             (gltf) => {
               if (disposed) return
               const model = gltf.scene
@@ -734,17 +991,125 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
               const normalizedBounds = new THREE.Box3().setFromObject(model)
               const normalizedCenter = normalizedBounds.getCenter(new THREE.Vector3())
               model.position.set(-normalizedCenter.x, -normalizedBounds.min.y, -normalizedCenter.z)
+              model.updateMatrixWorld(true)
+              const finalBounds = new THREE.Box3().setFromObject(model)
+              const finalSize = finalBounds.getSize(new THREE.Vector3())
+              const foundParts = new Set<string>()
+
               model.traverse((node) => {
                 if ((node as THREE.Mesh).isMesh) {
                   const mesh = node as THREE.Mesh
                   mesh.castShadow = !lowSpecMode
                   mesh.receiveShadow = true
-                  mesh.userData = { ...mesh.userData, entityId: f.id, assetId: f.asset_id }
+                  const mBox = new THREE.Box3().setFromObject(mesh)
+                  const mSize = mBox.getSize(new THREE.Vector3())
+                  const mCenter = mBox.getCenter(new THREE.Vector3())
+                  const relMinY = (mBox.min.y - finalBounds.min.y) / Math.max(0.01, finalSize.y)
+                  const relMaxY = (mBox.max.y - finalBounds.min.y) / Math.max(0.01, finalSize.y)
+                  const relCenterZ = (mCenter.z - finalBounds.min.z) / Math.max(0.01, finalSize.z) - 0.5
+                  const relW = mSize.x / Math.max(0.01, finalSize.x)
+                  const relH = mSize.y / Math.max(0.01, finalSize.y)
+                  const relD = mSize.z / Math.max(0.01, finalSize.z)
+                  const firstMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+                  const partName = classifyGlbMeshPartName(
+                    mesh.name,
+                    firstMat?.name || '',
+                    relMinY,
+                    relMaxY,
+                    relCenterZ,
+                    relW,
+                    relH,
+                    relD,
+                    f
+                  )
+                  foundParts.add(partName)
+                  if (dollhouseCut && fh > 1.5) {
+                    const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), DOLLHOUSE_CUT_H + 0.06)
+                    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+                    mats.forEach((m) => {
+                      if (m) {
+                        m.clippingPlanes = [clipPlane]
+                        m.clipShadows = true
+                        m.side = THREE.DoubleSide
+                      }
+                    })
+                  }
+                  mesh.userData = {
+                    ...mesh.userData,
+                    entityId: f.id,
+                    assetId: f.asset_id,
+                    partName,
+                  }
                   pickableMeshes.push(mesh)
                 }
               })
+
+              // Synthesize missing architectural sub-parts onto unscaled `group` only for single-mesh cabinet/table GLBs
+              const expectedParts = getNamedPartsForFurniture(f)
+              if (foundParts.size <= 1) {
+                expectedParts.forEach((spec) => {
+                  if (foundParts.has(spec.partId)) return
+                  if (spec.partId === 'countertop') {
+                    const topMat = new THREE.MeshStandardMaterial({
+                      map: loadPbrMap(PBR_TEXTURES.marble.diffuse, 1, 1, true),
+                      roughnessMap: loadPbrMap(PBR_TEXTURES.marble.roughness, 1, 1, false),
+                      color: '#F3EFEA',
+                      roughness: 0.28,
+                    })
+                    const topSlab = new THREE.Mesh(
+                      new THREE.BoxGeometry(fw * 0.99, Math.min(0.024, fh * 0.05), fd * 0.99),
+                      topMat
+                    )
+                    topSlab.position.set(0, fh + 0.008, 0)
+                    topSlab.castShadow = !lowSpecMode
+                    topSlab.receiveShadow = true
+                    topSlab.name = `${f.id}:countertop`
+                    topSlab.userData = { entityId: f.id, partName: 'countertop' }
+                    group.add(topSlab)
+                    pickableMeshes.push(topSlab)
+                  } else if (spec.partId === 'doors') {
+                    const doorMat = new THREE.MeshStandardMaterial({
+                      map: loadPbrMap(PBR_TEXTURES.wood_oak.diffuse, 1, 1, true),
+                      color: '#D8C2A6',
+                      roughness: 0.52,
+                    })
+                    const doorPanel = new THREE.Mesh(
+                      new THREE.BoxGeometry(fw * 0.88, fh * 0.64, 0.012),
+                      doorMat
+                    )
+                    doorPanel.position.set(0, fh * 0.5, fd * 0.49)
+                    doorPanel.castShadow = !lowSpecMode
+                    doorPanel.name = `${f.id}:doors`
+                    doorPanel.userData = { entityId: f.id, partName: 'doors' }
+                    group.add(doorPanel)
+                    pickableMeshes.push(doorPanel)
+                  } else if (spec.partId === 'legs') {
+                    const legMat = new THREE.MeshStandardMaterial({
+                      color: '#3F3A34',
+                      roughness: 0.42,
+                      metalness: 0.5,
+                    })
+                    const legR = Math.min(0.022, fw * 0.04)
+                    const legH = Math.min(0.08, fh * 0.14)
+                    for (const lx of [-fw * 0.42, fw * 0.42]) {
+                      for (const lz of [-fd * 0.42, fd * 0.42]) {
+                        const legMesh = new THREE.Mesh(
+                          new THREE.CylinderGeometry(legR, legR * 0.85, legH, 10),
+                          legMat
+                        )
+                        legMesh.position.set(lx, legH / 2, lz)
+                        legMesh.name = `${f.id}:legs`
+                        legMesh.userData = { entityId: f.id, partName: 'legs' }
+                        group.add(legMesh)
+                        pickableMeshes.push(legMesh)
+                      }
+                    }
+                  }
+                })
+              }
+
               group.add(model)
-              objectRoots.set(f.id, model)
+              objectRoots.set(f.id, group)
               Object.entries(f.material_overrides || {}).forEach(([slotId, override]: [string, any]) => {
                 const slot = (f.material_slots || []).find((item: any) => item.slot_id === slotId)
                 const definition = materialDefinitions.get(override.material_id)
@@ -752,10 +1117,49 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                   applyMaterialOverrideToObject(model, slot.source_material_name, definition, override)
                 }
               })
+              // Apply assigned PBR material per named part (or default PBR material for unassigned parts if part_materials is present)
+              const partMaterialMap: Record<string, string> = { ...(f.part_materials || {}) }
+              expectedParts.forEach((spec) => {
+                if (!partMaterialMap[spec.partId]) {
+                  const defaultEntry = resolveMaterialOrDefault(null, spec.surfaceType)
+                  if (defaultEntry) partMaterialMap[spec.partId] = defaultEntry.id
+                }
+              })
+              Object.entries(partMaterialMap).forEach(([partId, matId]: [string, any]) => {
+                const pbrEntry = getPbrMaterialById(String(matId))
+                if (!pbrEntry) return
+                group.traverse((node) => {
+                  const m = node as THREE.Mesh
+                  if (m.isMesh && (m.userData?.partName === partId || partId === 'all')) {
+                    const prevMats = Array.isArray(m.material) ? m.material : [m.material]
+                    const clipPlanes = prevMats[0]?.clippingPlanes || null
+                    const nextMat = new THREE.MeshStandardMaterial({
+                      map: loadPbrMap(pbrEntry.diffuse_url, 1 / pbrEntry.repeat_scale_m[0], 1 / pbrEntry.repeat_scale_m[1], true),
+                      roughnessMap: loadPbrMap(pbrEntry.roughness_url, 1 / pbrEntry.repeat_scale_m[0], 1 / pbrEntry.repeat_scale_m[1], false),
+                      normalMap: loadPbrMap(pbrEntry.normal_url, 1 / pbrEntry.repeat_scale_m[0], 1 / pbrEntry.repeat_scale_m[1], false),
+                      normalScale: new THREE.Vector2(0.3, 0.3),
+                      color: new THREE.Color(pbrEntry.base_color),
+                      roughness: pbrEntry.roughness,
+                      metalness: pbrEntry.metalness,
+                      transparent: Boolean(pbrEntry.transmission && pbrEntry.transmission > 0),
+                      opacity: pbrEntry.transmission ? 1 - pbrEntry.transmission * 0.65 : 1,
+                    })
+                    if (clipPlanes) {
+                      nextMat.clippingPlanes = clipPlanes
+                      nextMat.clipShadows = true
+                      nextMat.side = THREE.DoubleSide
+                    }
+                    m.material = nextMat
+                    m.userData.assignedMaterialId = pbrEntry.id
+                  }
+                })
+              })
               const metrics = ((window as any).__ATELIER_MATERIAL_METRICS__ ||= {})
               metrics.glbLoadCount = Number.isFinite(metrics.glbLoadCount) ? metrics.glbLoadCount + 1 : 1
               const viewerState = ((window as any).__ATELIER_VIEWER_STATE__ ||= {})
               viewerState.loadedGlbCount = metrics.glbLoadCount
+              viewerState.namedPartsByEntity ||= {}
+              viewerState.namedPartsByEntity[f.id] = expectedParts.map((p) => p.partId)
               metrics.meshUUIDs ||= {}
               metrics.meshUUIDs[f.id] = []
               model.traverse((node) => {
@@ -764,158 +1168,201 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
               renderScene()
             },
             undefined,
-            (error) => {
-              console.error(`Không thể tải GLB ${f.asset_id || f.id}`, error)
+            () => {
+              const fallbackMesh = addBoxPart(fw, fh, fd, 0, fh / 2, 0, f.name || f.id)
+              fallbackMesh.userData.partName = 'body'
+              renderScene()
             }
           )
-        } else if (f.category === 'bed' || f.category === 'double_bed') {
-          const frameHeight = Math.min(0.28, fh * 0.3)
-          const mattressHeight = Math.min(0.24, fh * 0.26)
-          const headboardDepth = Math.min(0.14, fd * 0.09)
-          addBoxPart(fw, frameHeight, fd * 0.94, 0, frameHeight / 2, fd * 0.02, 'bed-frame')
-          addBoxPart(fw * 0.96, mattressHeight, fd * 0.86, 0, frameHeight + mattressHeight / 2, fd * 0.06, 'bed-mattress')
-          addBoxPart(fw, fh, headboardDepth, 0, fh / 2, -fd / 2 + headboardDepth / 2, 'bed-headboard')
-          addBoxPart(fw * 0.38, mattressHeight * 0.55, fd * 0.2, -fw * 0.23, frameHeight + mattressHeight * 1.12, -fd * 0.27, 'bed-pillow')
-          addBoxPart(fw * 0.38, mattressHeight * 0.55, fd * 0.2, fw * 0.23, frameHeight + mattressHeight * 1.12, -fd * 0.27, 'bed-pillow')
-          addBoxPart(fw * 0.88, 0.035, fd * 0.42, 0, frameHeight + mattressHeight + 0.035, fd * 0.18, 'bed-blanket')
-        } else if (f.category === 'nightstand' || f.category === 'bedside_table') {
-          const leg = Math.min(0.045, fw * 0.12, fd * 0.12)
-          const bodyHeight = fh * 0.66
-          const bodyBottom = fh * 0.25
-          addBoxPart(fw, bodyHeight, fd, 0, bodyBottom + bodyHeight / 2, 0, 'nightstand-cabinet')
-          addBoxPart(fw * 0.88, bodyHeight * 0.42, Math.min(0.025, fd * 0.08), 0, bodyBottom + bodyHeight * 0.68, fd / 2 + 0.012, 'nightstand-drawer')
-          for (const x of [-fw / 2 + leg, fw / 2 - leg]) {
-            for (const z of [-fd / 2 + leg, fd / 2 - leg]) addBoxPart(leg, bodyBottom, leg, x, bodyBottom / 2, z, 'nightstand-leg')
-          }
-        } else if (f.category === 'rug' || f.category === 'round_rug' || f.category === 'rug_round') {
-          const rug = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, fh, 64), mainMat)
-          rug.scale.set(fw, 1, fd)
-          rug.position.y = fh / 2
-          rug.castShadow = false
-          rug.receiveShadow = true
-          rug.userData = { entityId: f.id }
-          group.add(rug)
-          pickableMeshes.push(rug)
-        } else if (f.category === 'tv_cabinet' || f.category === 'tv_console') {
-          const shell = Math.min(0.035, fh * 0.16)
-          addBoxPart(fw, shell, fd, 0, shell / 2, 0, 'tv-console-base')
-          addBoxPart(fw, shell, fd, 0, fh - shell / 2, 0, 'tv-console-top')
-          addBoxPart(shell, fh, fd, -fw / 2 + shell / 2, fh / 2, 0, 'tv-console-side')
-          addBoxPart(shell, fh, fd, fw / 2 - shell / 2, fh / 2, 0, 'tv-console-side')
-          addBoxPart(shell, fh, fd, 0, fh / 2, 0, 'tv-console-divider')
-          addBoxPart(fw / 2 - shell * 2, fh - shell * 2, shell, -fw / 4, fh / 2, fd / 2 - shell / 2, 'tv-console-door')
-          addBoxPart(fw / 2 - shell * 2, fh - shell * 2, shell, fw / 4, fh / 2, fd / 2 - shell / 2, 'tv-console-door')
-        } else if (f.category === 'chair' || f.category === 'armchair' || f.category === 'desk_chair') {
-          const leg = Math.min(0.055, fw * 0.12, fd * 0.12)
-          const seatY = Math.min(fh * 0.55, 0.46)
-          const seatH = Math.min(0.1, fh * 0.14)
-          addBoxPart(fw * 0.86, seatH, fd * 0.82, 0, seatY, 0, 'chair-seat')
-          addBoxPart(fw * 0.86, fh - seatY, Math.min(0.11, fd * 0.2), 0, seatY + (fh - seatY) / 2, -fd * 0.36, 'chair-back')
-          for (const x of [-fw * 0.34, fw * 0.34]) {
-            for (const z of [-fd * 0.32, fd * 0.32]) addBoxPart(leg, seatY, leg, x, seatY / 2, z, 'chair-leg')
-          }
-        } else if (f.category === 'bunk_bed' || f.category === 'bunkbed') {
-          const post = Math.min(0.08, fw * 0.08, fd * 0.08)
-          const frame = Math.min(0.1, fh * 0.08)
-          const lowerY = Math.min(fh - frame / 2, 0.4 + frame / 2)
-          const upperY = Math.min(fh - frame / 2, 1.4 + frame / 2)
-          for (const x of [-fw / 2 + post / 2, fw / 2 - post / 2]) {
-            for (const z of [-fd / 2 + post / 2, fd / 2 - post / 2]) {
-              addBoxPart(post, fh, post, x, fh / 2, z, 'bunk-post')
+        } else if (resolvedAsset.kind === 'parametric') {
+          const fabricNorm = loadPbrMap(PBR_TEXTURES.fabric_linen.normal, 2, 2, false)
+          const fabricRough = loadPbrMap(PBR_TEXTURES.fabric_linen.roughness, 2, 2, false)
+          if (resolvedAsset.parametricType === 'rug') {
+            const rugMat = new THREE.MeshStandardMaterial({
+              color: f.color_hex || '#D8CFC2',
+              roughness: 0.92,
+              roughnessMap: fabricRough,
+              normalMap: fabricNorm,
+              normalScale: new THREE.Vector2(0.35, 0.35),
+            })
+            const rugMesh = new THREE.Mesh(new THREE.BoxGeometry(fw, 0.014, fd), rugMat)
+            rugMesh.position.set(0, 0.007, 0)
+            rugMesh.receiveShadow = true
+            rugMesh.userData = { entityId: f.id, partName: 'body' }
+            group.add(rugMesh)
+            pickableMeshes.push(rugMesh)
+          } else if (resolvedAsset.parametricType === 'mirror') {
+            const frameMat = new THREE.MeshStandardMaterial({ color: '#27272A', roughness: 0.45, metalness: 0.3 })
+            const mirrorMat = new THREE.MeshStandardMaterial({ color: '#E2E8F0', roughness: 0.08, metalness: 0.92 })
+            const frame = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, Math.max(0.03, fd)), frameMat)
+            frame.position.set(0, fh / 2, 0)
+            frame.castShadow = true
+            frame.userData = { entityId: f.id, partName: 'frame' }
+            const glass = new THREE.Mesh(new THREE.BoxGeometry(fw * 0.88, fh * 0.88, 0.01), mirrorMat)
+            glass.position.set(0, fh / 2, Math.max(0.03, fd) * 0.5 + 0.002)
+            glass.userData = { entityId: f.id, partName: 'body' }
+            group.add(frame, glass)
+            pickableMeshes.push(frame, glass)
+          } else if (resolvedAsset.parametricType === 'painting') {
+            const frameMat = new THREE.MeshStandardMaterial({
+              map: loadPbrMap(PBR_TEXTURES.wood_oak.diffuse, 1, 1, true),
+              color: '#8C6239',
+              roughness: 0.55,
+            })
+            const artMat = new THREE.MeshStandardMaterial({ color: f.color_hex || '#C8A986', roughness: 0.78 })
+            const frame = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, Math.max(0.03, fd)), frameMat)
+            frame.position.set(0, fh / 2, 0)
+            frame.castShadow = true
+            frame.userData = { entityId: f.id, partName: 'frame' }
+            const canvasMesh = new THREE.Mesh(new THREE.BoxGeometry(fw * 0.86, fh * 0.86, 0.01), artMat)
+            canvasMesh.position.set(0, fh / 2, Math.max(0.03, fd) * 0.5 + 0.002)
+            canvasMesh.userData = { entityId: f.id, partName: 'body' }
+            group.add(frame, canvasMesh)
+            pickableMeshes.push(frame, canvasMesh)
+          } else if (resolvedAsset.parametricType === 'stair') {
+            const treadMat = new THREE.MeshStandardMaterial({
+              map: loadPbrMap(PBR_TEXTURES.wood_oak.diffuse, 1, 1, true),
+              color: '#D5BC9B',
+              roughness: 0.52,
+            })
+            const riserMat = new THREE.MeshStandardMaterial({
+              color: '#EAE3D9',
+              roughness: 0.72,
+            })
+            const railMat = new THREE.MeshStandardMaterial({
+              color: '#27272A',
+              roughness: 0.35,
+              metalness: 0.75,
+            })
+            const steps = Math.max(4, Math.round(fh / 0.2))
+            const stepW = fw / steps
+            const stepH = fh / steps
+            const treadThickness = Math.min(0.038, stepH * 0.22)
+            for (let si = 0; si < steps; si++) {
+              const hCur = (si + 1) * stepH
+              const riser = new THREE.Mesh(new THREE.BoxGeometry(stepW, hCur - treadThickness, fd * 0.94), riserMat)
+              riser.position.set(-fw / 2 + (si + 0.5) * stepW, (hCur - treadThickness) / 2, 0)
+              riser.castShadow = true
+              riser.receiveShadow = true
+              riser.name = `${f.id}:body:${si}`
+              riser.userData = { entityId: f.id, partName: 'body' }
+              group.add(riser)
+              pickableMeshes.push(riser)
+
+              const tread = new THREE.Mesh(new THREE.BoxGeometry(stepW * 1.06, treadThickness, fd), treadMat)
+              tread.position.set(-fw / 2 + (si + 0.5) * stepW, hCur - treadThickness / 2, 0)
+              tread.castShadow = true
+              tread.receiveShadow = true
+              tread.name = `${f.id}:steps:${si}`
+              tread.userData = { entityId: f.id, partName: 'steps' }
+              group.add(tread)
+              pickableMeshes.push(tread)
+            }
+            const railLen = Math.hypot(fw, fh)
+            const railBar = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, railLen, 10), railMat)
+            railBar.rotation.z = -Math.atan2(fw, fh)
+            railBar.position.set(0, fh * 0.5 + 0.42, fd * 0.46)
+            railBar.name = `${f.id}:legs:rail`
+            railBar.userData = { entityId: f.id, partName: 'legs' }
+            group.add(railBar)
+            pickableMeshes.push(railBar)
+          } else if (resolvedAsset.parametricType === 'console_table') {
+            const topMat = new THREE.MeshStandardMaterial({
+              map: loadPbrMap(PBR_TEXTURES.marble.diffuse, 1, 1, true),
+              roughnessMap: loadPbrMap(PBR_TEXTURES.marble.roughness, 1, 1, false),
+              color: '#F3EFEA',
+              roughness: 0.25,
+            })
+            const topT = Math.min(0.028, fh * 0.05)
+            const topSlab = new THREE.Mesh(new THREE.BoxGeometry(fw, topT, fd), topMat)
+            topSlab.position.set(0, fh - topT / 2, 0)
+            topSlab.castShadow = true
+            topSlab.receiveShadow = true
+            topSlab.userData = { entityId: f.id, partName: 'countertop' }
+            group.add(topSlab)
+            pickableMeshes.push(topSlab)
+
+            const barH = 0.024
+            const railFront = new THREE.Mesh(new THREE.BoxGeometry(fw - 0.04, barH, 0.022), blackFrameMat)
+            railFront.position.set(0, fh - topT - barH / 2, fd / 2 - 0.02)
+            railFront.userData = { entityId: f.id, partName: 'frame' }
+            const railBack = new THREE.Mesh(new THREE.BoxGeometry(fw - 0.04, barH, 0.022), blackFrameMat)
+            railBack.position.set(0, fh - topT - barH / 2, -fd / 2 + 0.02)
+            railBack.userData = { entityId: f.id, partName: 'frame' }
+            const shelfBar = new THREE.Mesh(new THREE.BoxGeometry(fw - 0.06, 0.016, fd - 0.06), blackFrameMat)
+            shelfBar.position.set(0, fh * 0.22, 0)
+            shelfBar.userData = { entityId: f.id, partName: 'frame' }
+            group.add(railFront, railBack, shelfBar)
+            pickableMeshes.push(railFront, railBack, shelfBar)
+
+            const legR = 0.014
+            const legH = fh - topT
+            for (const lx of [-fw / 2 + 0.022, fw / 2 - 0.022]) {
+              for (const lz of [-fd / 2 + 0.022, fd / 2 - 0.022]) {
+                const leg = new THREE.Mesh(new THREE.BoxGeometry(legR * 2, legH, legR * 2), blackFrameMat)
+                leg.position.set(lx, legH / 2, lz)
+                leg.castShadow = true
+                leg.userData = { entityId: f.id, partName: 'legs' }
+                group.add(leg)
+                pickableMeshes.push(leg)
+              }
+            }
+          } else {
+            // Curtain: pleated fabric folds + black rod
+            const curtainMat = new THREE.MeshStandardMaterial({
+              color: f.color_hex || '#EDE8DF',
+              roughness: 0.9,
+              roughnessMap: fabricRough,
+              normalMap: fabricNorm,
+            })
+            const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, fw, 10), blackFrameMat)
+            rod.rotation.z = Math.PI / 2
+            rod.position.set(0, fh - 0.02, 0)
+            rod.userData = { entityId: f.id, partName: 'legs' }
+            group.add(rod)
+            pickableMeshes.push(rod)
+            const folds = Math.max(4, Math.round(fw / 0.14))
+            for (let fi = 0; fi < folds; fi++) {
+              const pleat = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, fh - 0.04, 8), curtainMat)
+              pleat.position.set(-fw / 2 + (fi + 0.5) * (fw / folds), (fh - 0.04) / 2, 0)
+              pleat.castShadow = true
+              pleat.userData = { entityId: f.id, partName: 'body' }
+              group.add(pleat)
+              pickableMeshes.push(pleat)
             }
           }
-          for (const y of [lowerY, upperY]) {
-            addBoxPart(fw - post * 2, frame, fd - post * 2, 0, y, 0, 'bunk-frame')
-            addBoxPart(fw - post * 2.5, frame * 0.7, fd - post * 2.5, 0, y + frame * 0.72, 0, 'mattress')
-          }
-          const guardY = Math.min(fh - post / 2, upperY + 0.18)
-          addBoxPart(fw - post * 2, post, post, 0, guardY, -fd / 2 + post, 'guard-rail')
-          const ladderX = fw / 2 - post * 1.4
-          addBoxPart(post, upperY, post, ladderX, upperY / 2, fd / 2 + post, 'ladder-side')
-          addBoxPart(post, upperY, post, ladderX - 0.42, upperY / 2, fd / 2 + post, 'ladder-side')
-          for (let i = 1; i <= 5; i += 1) {
-            addBoxPart(0.42, post, post, ladderX - 0.21, (upperY * i) / 6, fd / 2 + post, 'ladder-rung')
-          }
-        } else if (f.category === 'desk' || f.category === 'study_desk') {
-          const topThickness = Math.min(0.06, fh * 0.12)
-          const legWidth = Math.min(0.08, fw * 0.12)
-          const legDepth = Math.min(0.08, fd * 0.18)
-          addBoxPart(fw, topThickness, fd, 0, fh - topThickness / 2, 0, 'desk-top')
-          for (const x of [-fw / 2 + legWidth, fw / 2 - legWidth]) {
-            for (const z of [-fd / 2 + legDepth, fd / 2 - legDepth]) {
-              addBoxPart(legWidth, fh - topThickness, legDepth, x, (fh - topThickness) / 2, z, 'desk-leg')
-            }
-          }
-          addBoxPart(fw * 0.46, fh * 0.62, fd * 0.42, fw * 0.25, (fh * 0.62) / 2, fd * 0.25, 'desk-drawer')
-        } else if (f.category === 'wardrobe') {
-          const panel = Math.min(0.05, fw * 0.08, fd * 0.12)
-          addBoxPart(fw, panel, fd, 0, panel / 2, 0, 'wardrobe-base')
-          addBoxPart(fw, panel, fd, 0, fh - panel / 2, 0, 'wardrobe-top')
-          addBoxPart(panel, fh, fd, -fw / 2 + panel / 2, fh / 2, 0, 'wardrobe-side')
-          addBoxPart(panel, fh, fd, fw / 2 - panel / 2, fh / 2, 0, 'wardrobe-side')
-          addBoxPart(fw / 2 - panel, fh - panel * 2, panel, -fw / 4, fh / 2, fd / 2 - panel / 2, 'wardrobe-door')
-          addBoxPart(fw / 2 - panel, fh - panel * 2, panel, fw / 4, fh / 2, fd / 2 - panel / 2, 'wardrobe-door')
-        } else if (f.category === 'bookshelf' || f.category === 'bookcase') {
-          const panel = Math.min(0.045, fw * 0.12, fd * 0.12)
-          addBoxPart(panel, fh, fd, -fw / 2 + panel / 2, fh / 2, 0, 'bookshelf-side')
-          addBoxPart(panel, fh, fd, fw / 2 - panel / 2, fh / 2, 0, 'bookshelf-side')
-          for (let i = 0; i <= 5; i += 1) {
-            const y = panel / 2 + ((fh - panel) * i) / 5
-            addBoxPart(fw, panel, fd, 0, y, 0, 'bookshelf-shelf')
-          }
-        } else if (f.category === 'stair' || f.category === 'staircase' || f.category === 'bunk_stair') {
-          const count = 8
-          const stepWidth = fw / count
-          for (let i = 0; i < count; i += 1) {
-            const stepHeight = (fh * (i + 1)) / count
-            addBoxPart(stepWidth, stepHeight, fd, -fw / 2 + stepWidth * (i + 0.5), stepHeight / 2, 0, 'bunk-step')
-          }
-        } else if (f.category === 'sofa') {
-          const base = new THREE.Mesh(new THREE.BoxGeometry(fw, fh * 0.46, fd), mainMat)
-          base.position.y = fh * 0.23
-          base.castShadow = true
-          base.receiveShadow = true
-          base.userData = { entityId: f.id }
-          group.add(base)
-          pickableMeshes.push(base)
-
-          const back = new THREE.Mesh(new THREE.BoxGeometry(fw, fh * 0.54, fd * 0.22), mainMat)
-          back.position.set(0, fh * 0.68, -fd * 0.39)
-          back.castShadow = true
-          back.userData = { entityId: f.id }
-          group.add(back)
-          pickableMeshes.push(back)
-
-          const armL = new THREE.Mesh(new THREE.BoxGeometry(fw * 0.08, fh * 0.62, fd), mainMat)
-          armL.position.set(-fw * 0.46, fh * 0.31, 0)
-          armL.castShadow = true
-          group.add(armL)
-
-          const armR = armL.clone()
-          armR.position.set(fw * 0.46, fh * 0.31, 0)
-          group.add(armR)
-        } else if (f.category === 'coffee_table') {
-          const top = new THREE.Mesh(new THREE.BoxGeometry(fw, 0.05, fd), mainMat)
-          top.position.y = fh - 0.025
-          top.castShadow = true
-          top.userData = { entityId: f.id }
-          group.add(top)
-          pickableMeshes.push(top)
-
-          const legBase = new THREE.Mesh(new THREE.BoxGeometry(fw * 0.72, fh - 0.05, fd * 0.72), mainMat)
-          legBase.position.y = (fh - 0.05) / 2
-          legBase.castShadow = true
-          legBase.userData = { entityId: f.id }
-          group.add(legBase)
-          pickableMeshes.push(legBase)
+          objectRoots.set(f.id, group)
         } else {
-          const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fd), mainMat)
-          box.position.y = fh / 2
-          box.castShadow = true
-          box.receiveShadow = true
-          box.userData = { entityId: f.id }
-          group.add(box)
-          pickableMeshes.push(box)
+          // Flagged approximate non-sofa geometry for unmapped categories (never falls back to sofa or anonymous box)
+          if (resolvedAsset.shape === 'cylinder') {
+            const cyl = new THREE.Mesh(
+              new THREE.CylinderGeometry(Math.min(fw, fd) * 0.45, Math.min(fw, fd) * 0.48, fh * 0.85, 20),
+              mainMat
+            )
+            cyl.position.set(0, fh * 0.525, 0)
+            cyl.castShadow = !lowSpecMode
+            cyl.receiveShadow = true
+            cyl.userData = { entityId: f.id, partName: 'body', flaggedUnmapped: true }
+            const base = new THREE.Mesh(
+              new THREE.CylinderGeometry(Math.min(fw, fd) * 0.38, Math.min(fw, fd) * 0.42, fh * 0.1, 20),
+              blackFrameMat
+            )
+            base.position.set(0, fh * 0.05, 0)
+            base.userData = { entityId: f.id, partName: 'legs', flaggedUnmapped: true }
+            group.add(cyl, base)
+            pickableMeshes.push(cyl, base)
+          } else {
+            const topH = Math.min(0.04, fh * 0.08)
+            const legH = Math.min(0.12, fh * 0.16)
+            const bodyH = Math.max(0.1, fh - topH - legH)
+            const bodyMesh = addBoxPart(fw, bodyH, fd, 0, legH + bodyH / 2, 0, `${f.id}:body`)
+            bodyMesh.userData.partName = 'body'
+            const topMesh = addBoxPart(fw * 1.02, topH, fd * 1.02, 0, fh - topH / 2, 0, `${f.id}:countertop`)
+            topMesh.userData.partName = 'countertop'
+            const legMesh = addBoxPart(fw * 0.9, legH, fd * 0.9, 0, legH / 2, 0, `${f.id}:legs`)
+            legMesh.userData.partName = 'legs'
+          }
+          objectRoots.set(f.id, group)
         }
 
         if (isSelected || isHovered) {
@@ -926,6 +1373,28 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
           const outline = new THREE.LineSegments(outlineGeo, outlineMat)
           outline.position.y = fh / 2
           group.add(outline)
+        }
+
+        if (resolvedAsset.kind !== 'glb' && f.part_materials) {
+          Object.entries(f.part_materials || {}).forEach(([partId, matId]: [string, any]) => {
+            const pbrEntry = getPbrMaterialById(String(matId))
+            if (!pbrEntry) return
+            group.traverse((node) => {
+              const m = node as THREE.Mesh
+              if (m.isMesh && (m.userData?.partName === partId || partId === 'all')) {
+                m.material = new THREE.MeshStandardMaterial({
+                  map: loadPbrMap(pbrEntry.diffuse_url, 1 / pbrEntry.repeat_scale_m[0], 1 / pbrEntry.repeat_scale_m[1], true),
+                  roughnessMap: loadPbrMap(pbrEntry.roughness_url, 1 / pbrEntry.repeat_scale_m[0], 1 / pbrEntry.repeat_scale_m[1], false),
+                  normalMap: loadPbrMap(pbrEntry.normal_url, 1 / pbrEntry.repeat_scale_m[0], 1 / pbrEntry.repeat_scale_m[1], false),
+                  normalScale: new THREE.Vector2(0.3, 0.3),
+                  color: new THREE.Color(pbrEntry.base_color),
+                  roughness: pbrEntry.roughness,
+                  metalness: pbrEntry.metalness,
+                })
+                m.userData.assignedMaterialId = pbrEntry.id
+              }
+            })
+          })
         }
 
         group.position.set((f.x_mm ?? 2000) / 1000, (f.z_mm ?? 0) / 1000, (f.y_mm ?? 2500) / 1000)
@@ -965,12 +1434,24 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         raycaster.setFromCamera(mouse, camera)
         const hits = raycaster.intersectObjects(pickableMeshes, false)
         if (hits.length > 0 && hits[0].object.userData?.entityId) {
-          onSelectEntity(hits[0].object.userData.entityId)
+          const hitData = hits[0].object.userData
+          onSelectEntity(hitData.entityId)
+          if (hitData.partName) {
+            window.dispatchEvent(
+              new CustomEvent('atelier:select-part', {
+                detail: { entityId: hitData.entityId, partName: hitData.partName },
+              })
+            )
+          }
         }
       }
       const sceneBounds = new THREE.Box3(
-        new THREE.Vector3(geometryMinX / 1000, -0.05, geometryMinY / 1000),
-        new THREE.Vector3(geometryMaxX / 1000, roomHeightMm / 1000, geometryMaxY / 1000),
+        new THREE.Vector3(roomMinX / 1000 - grassPad, -0.09, roomMinY / 1000 - grassPad),
+        new THREE.Vector3(
+          roomMaxX / 1000 + grassPad,
+          dollhouseCut ? DOLLHOUSE_CUT_H + 0.15 : roomHeightMm / 1000,
+          roomMaxY / 1000 + patioDepth + grassPad
+        ),
       )
       const cameraController = createStudioCameraController(
         camera,
@@ -1035,20 +1516,19 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
     }, [cameraPreset, viewMode])
 
     useEffect(() => {
-      cutawayWallsRef.current.forEach(({ mesh, bottom, top, cutaway }) => {
-        const active = cutawayEnabled && cutaway
+      const active = cutawayEnabled || !ceilingVisible
+      cutawayWallsRef.current.forEach(({ mesh, capMesh, bottom, top }) => {
         const fullHeight = top - bottom
-        const visibleTop = active ? Math.min(top, 0.32) : top
+        const visibleTop = active ? Math.min(top, 1.12) : top
         mesh.visible = visibleTop > bottom
         mesh.scale.y = mesh.visible ? (visibleTop - bottom) / fullHeight : 1
         mesh.position.y = mesh.visible ? (bottom + visibleTop) / 2 : (bottom + top) / 2
-        const material = mesh.material as THREE.MeshStandardMaterial
-        material.transparent = active
-        material.opacity = active ? 0.45 : 1
-        material.needsUpdate = true
+        if (capMesh) {
+          capMesh.visible = active && mesh.visible && visibleTop >= 1.11
+        }
       })
       cameraControllerRef.current?.render()
-    }, [cutawayEnabled])
+    }, [cutawayEnabled, ceilingVisible])
 
     useEffect(() => {
       const commandType = cameraCommand?.type
@@ -1186,8 +1666,10 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                 <polygon
                   points={poly.map((p: number[]) => `${p[0]},${p[1]}`).join(' ')}
                   fill="url(#floorTileGrid2D)"
-                  stroke={theme === 'dark' ? '#52525B' : '#171717'}
-                  strokeWidth={20}
+                  stroke={selectedEntityId === 'floor_main' ? '#0F766E' : theme === 'dark' ? '#52525B' : '#171717'}
+                  strokeWidth={selectedEntityId === 'floor_main' ? 32 : 20}
+                  onClick={() => onSelectEntity('floor_main')}
+                  style={{ cursor: 'pointer' }}
                 />
 
                 {/* Dimension Chains (Top & Left) */}
@@ -1417,13 +1899,58 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
 
         {/* Bottom-Left HUD: Scene Validation, HDRI/SSAO/Ceiling Toggles, XYZ Gizmo & Active Selection Dimensions */}
         <div className="viewport-hud-bottom-left">
-          <div className="viewport-hud-pill" data-testid="hud-scene-valid">
-            <span className="status-dot" />
+          <div
+            className="viewport-hud-pill"
+            data-testid="hud-scene-valid"
+            style={{
+              borderColor: validationReport.valid
+                ? validationReport.issues.length > 0
+                  ? '#F59E0B'
+                  : 'var(--border-subtle)'
+                : '#EF4444',
+            }}
+            title={
+              validationReport.issues.length > 0
+                ? validationReport.issues.map((i) => `[${i.code}] ${i.message}`).join('\n')
+                : 'Tất cả vật thể hợp lệ trong đa giác phòng, không chồng lấn, chiều cao chuẩn, cửa khớp tường.'
+            }
+          >
+            {validationReport.valid ? (
+              <CheckCircle2 size={12} style={{ color: validationReport.issues.length > 0 ? '#F59E0B' : '#10B981' }} />
+            ) : (
+              <AlertTriangle size={12} style={{ color: '#EF4444' }} />
+            )}
             <span className="mono" style={{ fontWeight: 600 }}>
-              Pascal SceneGraph: VALID
+              {validationReport.valid
+                ? validationReport.issues.length > 0
+                  ? `Validator: VALID (${validationReport.issues.length} lưu ý)`
+                  : 'Validator: VALID'
+                : `Validator: ${validationReport.issues.filter((i) => i.severity === 'error').length} LỖI`}
             </span>
-            <span>• {roomW / 1000}×{roomD / 1000}m</span>
+            <span>• {roomW / 1000}×{roomD / 1000}m ({poly.length} đỉnh)</span>
           </div>
+
+          {!validationReport.valid && (
+            <div
+              data-testid="hud-validation-errors"
+              style={{
+                background: 'rgba(254, 242, 242, 0.96)',
+                border: '1px solid #FCA5A5',
+                color: '#991B1B',
+                borderRadius: 6,
+                padding: '6px 10px',
+                fontSize: 11,
+                maxWidth: 420,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+              }}
+            >
+              {validationReport.issues.slice(0, 3).map((issue, idx) => (
+                <div key={idx} style={{ lineHeight: 1.35 }}>
+                  <strong>[{issue.code}]</strong> {issue.message}
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="viewport-hud-pill" data-testid="hud-hdri-status" title="Poly Haven CC0-1.0 Equirectangular HDRI">
             <Sparkles size={12} style={{ color: hdriLoaded ? '#10B981' : '#F59E0B' }} />

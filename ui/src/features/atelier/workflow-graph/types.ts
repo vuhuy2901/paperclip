@@ -6,12 +6,35 @@ export const WORKFLOW_NODE_KINDS = [
 
 export type WorkflowNodeKind = (typeof WORKFLOW_NODE_KINDS)[number];
 
+export type StepSettings = {
+  retry?: { maxAttempts: number; backoffSeconds?: number };
+  logging?: { enabled: boolean; level?: "info" | "debug" | "error" };
+  notifications?: { onStart?: boolean; onComplete?: boolean; onError?: boolean; channel?: string };
+};
+
+export type OptionalCostBomStep = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  runsAfterApproval: boolean;
+  requiredRole: string;
+  taskType: string;
+  capability: string;
+  description?: string;
+};
+
 export type WorkflowNode = {
   id: string;
   type: WorkflowNodeKind;
   name: string;
   description?: string;
   prompt?: string;
+  stepNumber?: number;
+  totalSteps?: number;
+  stepLabel?: string;
+  sourceNodes?: string[];
+  includesValidator?: boolean;
+  lifecycleStateOnly?: boolean;
   position?: { x: number; y: number };
   taskType?: string;
   requiredRole?: string;
@@ -24,6 +47,7 @@ export type WorkflowNode = {
   allowedTools?: string[];
   timeoutSeconds?: number;
   retryPolicy?: { maxAttempts: number; backoffSeconds?: number };
+  stepSettings?: StepSettings;
   approval?: { required: boolean; approverRole?: string; approverAgentIds?: string[] };
   conditionOutcomes?: string[];
 };
@@ -37,6 +61,9 @@ export type WorkflowDefinition = {
   version: number;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
+  optionalSteps?: {
+    costBomAfterApproval?: OptionalCostBomStep;
+  };
   canvas?: Record<string, unknown>;
   gatePolicy?: Record<string, unknown>;
   stateMachine?: string[];
