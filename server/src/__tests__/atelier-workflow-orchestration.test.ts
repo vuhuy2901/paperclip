@@ -7,16 +7,25 @@ import {
 } from "../services/atelier-workflow-orchestration.js";
 
 describe("Atelier company workflow orchestration contract", () => {
-  it("publishes exactly the eight canonical stages in an acyclic order", () => {
+  it("publishes the v2 graph without a lighting stage", () => {
     expect(ATELIER_COMPANY_WORKFLOW_NAME).toBe("Atelier Company Workflow");
-    expect(ATELIER_COMPANY_WORKFLOW_VERSION).toBe(1);
-    expect(ATELIER_CANONICAL_STAGES).toHaveLength(8);
+    expect(ATELIER_COMPANY_WORKFLOW_VERSION).toBe(2);
+    expect(ATELIER_CANONICAL_STAGES).toHaveLength(9);
     const seen = new Set<string>();
     for (const stage of ATELIER_CANONICAL_STAGES) {
       expect(seen.has(stage.key)).toBe(false);
       for (const dependency of stage.dependsOn) expect(seen.has(dependency)).toBe(true);
       seen.add(stage.key);
     }
+    expect(ATELIER_CANONICAL_STAGES.some((stage) => stage.key === "lighting")).toBe(false);
+    expect(ATELIER_CANONICAL_STAGES.find((stage) => stage.key === "render")).toMatchObject({
+      agentKey: "agent_render",
+      dependsOn: ["furniture", "style"],
+    });
+    expect(ATELIER_CANONICAL_STAGES.find((stage) => stage.key === "cost")?.dependsOn).toEqual([
+      "qa",
+      "research",
+    ]);
   });
 
   it("requires decisions and outputs, and routes unknown data to needs_input", () => {

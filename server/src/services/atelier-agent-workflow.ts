@@ -3,7 +3,7 @@ import { agents, issues, type Db } from "@paperclipai/db";
 import { unprocessable } from "../errors.js";
 import { issueService } from "./issues.js";
 
-export const ATELIER_WORKFLOW_VERSION = 1;
+export const ATELIER_WORKFLOW_VERSION = 2;
 export const ATELIER_WORKFLOW_ORIGIN = `atelier-agent-workflow:v${ATELIER_WORKFLOW_VERSION}`;
 
 export type AtelierAgentKey =
@@ -12,7 +12,7 @@ export type AtelierAgentKey =
   | "agent_geometry"
   | "agent_furniture"
   | "agent_style"
-  | "agent_ceiling_lighting"
+  | "agent_render"
   | "agent_qa"
   | "agent_research"
   | "agent_cost";
@@ -72,12 +72,12 @@ export const ATELIER_WORKFLOW_STAGES: readonly AtelierWorkflowStage[] = [
     description: "Chốt phong cách, bảng màu và vật liệu hoàn thiện dựa trên hình học đã xác nhận.",
   },
   {
-    key: "lighting",
-    label: "Lighting & Visualization — trần, đèn và camera",
-    agentKey: "agent_ceiling_lighting",
+    key: "render",
+    label: "Render — camera, ánh sáng kết xuất và phối cảnh",
+    agentKey: "agent_render",
     dependsOn: ["furniture", "style"],
     priority: "medium",
-    description: "Thiết kế trần/chiếu sáng, thiết lập camera và tạo bằng chứng phối cảnh bám sát SceneGraph.",
+    description: "Thiết lập camera, HDRI, ánh sáng kết xuất và tạo bằng chứng phối cảnh bám sát SceneGraph.",
   },
   {
     key: "research",
@@ -91,7 +91,7 @@ export const ATELIER_WORKFLOW_STAGES: readonly AtelierWorkflowStage[] = [
     key: "qa",
     label: "QA — kiểm định xung đột và quy chuẩn",
     agentKey: "agent_qa",
-    dependsOn: ["geometry", "furniture", "style", "lighting"],
+    dependsOn: ["geometry", "furniture", "style", "render"],
     priority: "high",
     description: "Kiểm định read-only hình học, va chạm, lối đi, góc mở cửa, vật liệu và tính nhất quán phối cảnh.",
   },

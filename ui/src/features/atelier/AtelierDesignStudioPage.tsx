@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Bed,
   Download,
   History,
   MessageCircle,
@@ -109,6 +110,7 @@ export function AtelierDesignStudioPage() {
       <header className="atelier-studio-header">
         <div className="atelier-header-group">
           <Link to="/chats" className="btn btn-sm" title="Quay lại Hội thoại"><ArrowLeft size={13} /> Hội thoại</Link>
+          <Link to="/bedroom-studio" className="btn btn-sm btn-soft" title="Mở Studio Thiết Kế Phòng Ngủ (Brief & Decision Ledger)"><Bed size={13} /> Phòng ngủ 2D</Link>
           <select aria-label="Chọn dự án nội thất" className="field-select atelier-project-select" value={activeProjectId} onChange={(event) => setActiveProjectId(event.target.value)}>
             {projects.map((item: any) => <option key={item.project_id} value={item.project_id}>{item.name} (Rev #{item.revision})</option>)}
           </select>

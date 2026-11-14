@@ -8,8 +8,8 @@ import {
   FloorPlanImportPage,
   MaterialsAndCatalogPage,
   RenderAndCadPage,
-  CostEstimationPage,
 } from "./SupportingPages";
+import { UnifiedBOQPage } from "./UnifiedBOQPage";
 import {
   Activity,
   Box,
@@ -317,26 +317,7 @@ export function AtelierRenderCompareRoute() {
 }
 
 export function AtelierCostEstimationRoute() {
-  const { setBreadcrumbs } = useBreadcrumbs();
-  const { theme } = useTheme();
-  const { project, estimate } = useAtelierStudio();
-
-  useEffect(() => {
-    setBreadcrumbs([
-      { label: "Thiết kế Nội thất" },
-      { label: "Bảng Dự toán Khối lượng & Ngân sách (BOQ)" },
-    ]);
-  }, [setBreadcrumbs]);
-
-  if (!project) return <div className="p-6 text-sm text-muted-foreground">Đang tải bảng dự toán BOQ...</div>;
-
-  return (
-    <div className="atelier-surface-root h-full overflow-y-auto" data-theme={theme}>
-      <CostEstimationPage
-        project={{ ...project, estimate_snapshot: estimate ?? project.estimate_snapshot }}
-      />
-    </div>
-  );
+  return <UnifiedBOQPage />;
 }
 
 export function AtelierShoppingCatalogRoute() {

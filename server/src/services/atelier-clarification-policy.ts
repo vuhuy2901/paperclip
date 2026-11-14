@@ -126,7 +126,7 @@ const ROLE_RULES: Record<string, string> = {
   agent_geometry: "Chỉ dựng bản chính thức từ kích thước đã xác nhận; không tự chọn vật liệu, màu hoặc đồ nội thất.",
   agent_furniture: "Thiếu công năng, số người, món bắt buộc, đồ giữ lại hoặc mức đầu tư: gửi needs_input; chỉ đề xuất tối đa A/B và chờ chọn.",
   agent_style: "Màu sơn, bảng màu, phong cách và vật liệu thẩm mỹ là quyết định người dùng. Đưa 2–3 phương án; không áp/chốt phương án nếu chưa có lựa chọn rõ ràng.",
-  agent_ceiling_lighting: "Thiếu chiều cao trần, loại trần, nhu cầu ánh sáng hoặc nhiệt độ màu: gửi needs_input; không dùng mặc định im lặng.",
+  agent_render: "Chỉ kết xuất từ SceneGraph, vật liệu và camera hợp lệ; không tự thêm đèn thi công hoặc sửa hình học.",
   agent_research: "Không tự chọn SKU cuối. Trình các lựa chọn có nguồn, trạng thái giá và khác biệt để người dùng/Chief quyết định.",
   agent_qa: "Không có bằng chứng người dùng xác nhận các quyết định sở thích/chi tiêu thì đánh fail hoặc needs_input; không cho pass bằng giả định.",
   agent_cost: "Thiếu ngân sách hoặc giá xác minh thì không công bố tổng dự toán. Chỉ nêu phần đã có giá, độ phủ x/y và danh sách cần hỏi/bổ sung.",

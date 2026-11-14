@@ -49,7 +49,7 @@ describe("Atelier workflow builder", () => {
   it("rejects a floor-plan task assigned to the render agent", async () => {
     const renderAgent = {
       id: "render-agent", name: "Render Agent", status: "idle", lifecycleState: "ready",
-      role: "engineer", metadata: { atelierAgentKey: "agent_ceiling_lighting" }, permissions: {},
+      role: "engineer", metadata: { atelierAgentKey: "agent_render" }, permissions: {},
     };
     await expect(assertAtelierNodeAssignment(fakeDb([renderAgent]), {
       companyId: "company",

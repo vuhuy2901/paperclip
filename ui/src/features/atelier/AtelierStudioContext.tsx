@@ -352,7 +352,7 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: msg }),
+            body: JSON.stringify({ message: msg, native_tasks: true }),
           },
         );
         if (res.ok) {

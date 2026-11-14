@@ -21,6 +21,7 @@ import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { createStudioCameraController, type StudioCameraMode } from './studioCamera'
 import { usePlanCamera, type PlanBounds } from './usePlanCamera'
+import { buildWallSolidRects } from './openingGeometry'
 import {
   applyMaterialOverrideToObject,
   disposeOwnedMaterials,
@@ -133,7 +134,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
   }) => {
     const mountRef = useRef<HTMLDivElement | null>(null)
     const cameraControllerRef = useRef<ReturnType<typeof createStudioCameraController> | null>(null)
-    const cutawayWallsRef = useRef<Array<{ mesh: THREE.Mesh; fullHeight: number; baseHeight: number; cutaway: boolean }>>([])
+    const cutawayWallsRef = useRef<Array<{ mesh: THREE.Mesh; bottom: number; top: number; cutaway: boolean }>>([])
     const [draggingId, setDraggingId] = useState<string | null>(null)
     const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null)
     const [ceilingVisible, setCeilingVisible] = useState<boolean>(false)
@@ -489,9 +490,8 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
       // 2. Walls (with Face A / Accent Wall color & Cutaway support)
       cutawayWallsRef.current = []
       walls.forEach((w: any, idx: number) => {
-        const isFrontCutaway =
-          cutawayEnabled &&
-          (w.id === 'wall_south' || w.id === 'wall_east' || idx === 1 || idx === 2)
+        const isCutawayWall = w.id === 'wall_south' || w.id === 'wall_east' || idx === 1 || idx === 2
+        const isFrontCutaway = cutawayEnabled && isCutawayWall
 
         const x0 = w.start_mm[0] / 1000
         const z0 = w.start_mm[1] / 1000
@@ -499,11 +499,30 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         const z1 = w.end_mm[1] / 1000
         const len = Math.hypot(x1 - x0, z1 - z0)
         const rawH = (w.height_mm || 2800) / 1000
-        const h = isFrontCutaway ? 0.32 : rawH
         const th = (w.thickness_mm || 200) / 1000
+        const directionX = (x1 - x0) / len
+        const directionZ = (z1 - z0) / len
+        const angle = Math.atan2(z1 - z0, x1 - x0)
+        const cuts = [
+          ...doors
+            .filter((door: any) => door.wall_id === w.id)
+            .map((door: any) => {
+              const center = len * (door.t ?? 0.5)
+              const width = (door.width_mm || 900) / 1000
+              return { start: center - width / 2, end: center + width / 2, bottom: 0, top: (door.height_mm || 2100) / 1000 }
+            }),
+          ...windows
+            .filter((win: any) => win.wall_id === w.id)
+            .map((win: any) => {
+              const center = len * (win.t ?? 0.5)
+              const width = (win.width_mm || 1500) / 1000
+              const bottom = (win.sill_height_mm ?? 900) / 1000
+              return { start: center - width / 2, end: center + width / 2, bottom, top: bottom + (win.height_mm || 1400) / 1000 }
+            }),
+        ]
+        const solidRects = buildWallSolidRects(len, rawH, cuts)
 
         const pMat = paintsById[w.face_a_material_id] || { hex_color: '#F5F2EB', roughness: 0.82 }
-        const wallGeo = new THREE.BoxGeometry(len, h, th)
         const isSelected = w.id === selectedEntityId
         const wallMat = new THREE.MeshStandardMaterial({
           color: pMat.hex_color || '#F5F2EB',
@@ -513,21 +532,29 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
           emissive: isSelected ? new THREE.Color('#0F766E') : new THREE.Color('#000000'),
           emissiveIntensity: isSelected ? 0.16 : 0,
         })
-        const wallMesh = new THREE.Mesh(wallGeo, wallMat)
-        const angle = Math.atan2(z1 - z0, x1 - x0)
-        wallMesh.position.set((x0 + x1) / 2, h / 2, (z0 + z1) / 2)
-        wallMesh.rotation.y = -angle
-        wallMesh.castShadow = !isFrontCutaway
-        wallMesh.receiveShadow = true
-        wallMesh.userData = { entityId: w.id }
-        scene.add(wallMesh)
-        cutawayWallsRef.current.push({
-          mesh: wallMesh,
-          fullHeight: rawH,
-          baseHeight: h,
-          cutaway: w.id === 'wall_south' || w.id === 'wall_east' || idx === 1 || idx === 2,
+        solidRects.forEach((rect) => {
+          const segmentLength = rect.end - rect.start
+          const segmentHeight = rect.top - rect.bottom
+          const along = (rect.start + rect.end) / 2
+          const wallMesh = new THREE.Mesh(new THREE.BoxGeometry(segmentLength, segmentHeight, th), wallMat)
+          wallMesh.position.set(x0 + directionX * along, (rect.bottom + rect.top) / 2, z0 + directionZ * along)
+          wallMesh.rotation.y = -angle
+          wallMesh.castShadow = !isFrontCutaway
+          wallMesh.receiveShadow = true
+          wallMesh.userData = { entityId: w.id }
+          if (isFrontCutaway) {
+            const visibleTop = Math.min(rect.top, 0.32)
+            if (visibleTop <= rect.bottom) {
+              wallMesh.visible = false
+            } else {
+              wallMesh.scale.y = (visibleTop - rect.bottom) / segmentHeight
+              wallMesh.position.y = (rect.bottom + visibleTop) / 2
+            }
+          }
+          scene.add(wallMesh)
+          cutawayWallsRef.current.push({ mesh: wallMesh, bottom: rect.bottom, top: rect.top, cutaway: isCutawayWall })
+          if (!isFrontCutaway) pickableMeshes.push(wallMesh)
         })
-        if (!isFrontCutaway) pickableMeshes.push(wallMesh)
 
         if (room?.wall_tile_zone?.enabled && !isFrontCutaway) {
           const wtH = (room.wall_tile_zone.tile_height_mm || 1200) / 1000
@@ -544,22 +571,96 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         }
       })
 
-      // 3. Windows Visual Frames
+      // 3. Embedded door leaves and window frames
+      doors.forEach((door: any) => {
+        const w = walls.find((item: any) => item.id === door.wall_id)
+        if (!w) return
+        const x0 = w.start_mm[0] / 1000
+        const z0 = w.start_mm[1] / 1000
+        const x1 = w.end_mm[0] / 1000
+        const z1 = w.end_mm[1] / 1000
+        const angle = Math.atan2(z1 - z0, x1 - x0)
+        const centerX = x0 + (x1 - x0) * (door.t ?? 0.5)
+        const centerZ = z0 + (z1 - z0) * (door.t ?? 0.5)
+        const width = (door.width_mm || 900) / 1000
+        const height = (door.height_mm || 2100) / 1000
+        const frameSize = 0.06
+        const wallDepth = ((w.thickness_mm || 200) / 1000) + 0.035
+        const doorGroup = new THREE.Group()
+        doorGroup.position.set(centerX, 0, centerZ)
+        doorGroup.rotation.y = -angle
+
+        const frameMat = new THREE.MeshStandardMaterial({ color: '#E7E2D8', roughness: 0.58 })
+        const leafMat = new THREE.MeshStandardMaterial({ color: '#C6905B', roughness: 0.62 })
+        const addDoorPart = (partWidth: number, partHeight: number, partDepth: number, x: number, y: number) => {
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(partWidth, partHeight, partDepth), frameMat)
+          mesh.position.set(x, y, 0)
+          mesh.castShadow = true
+          mesh.userData = { entityId: door.id }
+          doorGroup.add(mesh)
+          pickableMeshes.push(mesh)
+        }
+        addDoorPart(frameSize, height + frameSize, wallDepth, -width / 2 - frameSize / 2, (height + frameSize) / 2)
+        addDoorPart(frameSize, height + frameSize, wallDepth, width / 2 + frameSize / 2, (height + frameSize) / 2)
+        addDoorPart(width + frameSize * 2, frameSize, wallDepth, 0, height + frameSize / 2)
+
+        const hingesLeft = door.hinges_side !== 'right'
+        const pivot = new THREE.Group()
+        pivot.position.x = hingesLeft ? -width / 2 : width / 2
+        const swing = Math.PI * 0.36 * (hingesLeft ? -1 : 1) * (door.swing_direction === 'outward' ? -1 : 1)
+        pivot.rotation.y = swing
+        const leafWidth = width - 0.035
+        const leaf = new THREE.Mesh(new THREE.BoxGeometry(leafWidth, height - 0.035, 0.045), leafMat)
+        leaf.position.set(hingesLeft ? leafWidth / 2 : -leafWidth / 2, height / 2, 0)
+        leaf.castShadow = true
+        leaf.userData = { entityId: door.id }
+        pivot.add(leaf)
+        doorGroup.add(pivot)
+        pickableMeshes.push(leaf)
+        scene.add(doorGroup)
+      })
+
       windows.forEach((win: any) => {
         const w = walls.find((item: any) => item.id === win.wall_id) || walls[0]
         if (!w) return
         const wx = (w.start_mm[0] + (w.end_mm[0] - w.start_mm[0]) * (win.t ?? 0.5)) / 1000
         const wz = (w.start_mm[1] + (w.end_mm[1] - w.start_mm[1]) * (win.t ?? 0.5)) / 1000
-        const winGeo = new THREE.BoxGeometry((win.width_mm || 1500) / 1000, (win.height_mm || 1400) / 1000, 0.24)
-        const winMat = new THREE.MeshStandardMaterial({
+        const wallAngle = Math.atan2(w.end_mm[1] - w.start_mm[1], w.end_mm[0] - w.start_mm[0])
+        const width = (win.width_mm || 1500) / 1000
+        const height = (win.height_mm || 1400) / 1000
+        const sill = (win.sill_height_mm ?? 900) / 1000
+        const frameSize = 0.055
+        const wallDepth = ((w.thickness_mm || 200) / 1000) + 0.025
+        const windowGroup = new THREE.Group()
+        windowGroup.position.set(wx, 0, wz)
+        windowGroup.rotation.y = -wallAngle
+        const glassMat = new THREE.MeshStandardMaterial({
           color: '#BAE6FD',
           transparent: true,
-          opacity: 0.52,
+          opacity: 0.3,
           roughness: 0.1,
+          metalness: 0.05,
         })
-        const winMesh = new THREE.Mesh(winGeo, winMat)
-        winMesh.position.set(wx, ((win.sill_height_mm || 900) + (win.height_mm || 1400) / 2) / 1000, wz)
-        scene.add(winMesh)
+        const frameMat = new THREE.MeshStandardMaterial({ color: '#E7E2D8', roughness: 0.48 })
+        const glass = new THREE.Mesh(new THREE.BoxGeometry(width - frameSize * 2, height - frameSize * 2, 0.02), glassMat)
+        glass.position.y = sill + height / 2
+        glass.userData = { entityId: win.id }
+        windowGroup.add(glass)
+        pickableMeshes.push(glass)
+        const addWindowFrame = (partWidth: number, partHeight: number, x: number, y: number) => {
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(partWidth, partHeight, wallDepth), frameMat)
+          mesh.position.set(x, y, 0)
+          mesh.castShadow = true
+          mesh.userData = { entityId: win.id }
+          windowGroup.add(mesh)
+          pickableMeshes.push(mesh)
+        }
+        addWindowFrame(frameSize, height, -width / 2 + frameSize / 2, sill + height / 2)
+        addWindowFrame(frameSize, height, width / 2 - frameSize / 2, sill + height / 2)
+        addWindowFrame(width, frameSize, 0, sill + frameSize / 2)
+        addWindowFrame(width, frameSize, 0, sill + height - frameSize / 2)
+        addWindowFrame(frameSize, height - frameSize * 2, 0, sill + height / 2)
+        scene.add(windowGroup)
       })
 
       // 4. Furniture 3D Models + Contact AO Grounding + Selection Outline Box
@@ -597,6 +698,26 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
             : new THREE.Color('#000000'),
           emissiveIntensity: isSelected ? 0.22 : isHovered ? 0.1 : 0,
         })
+
+        const addBoxPart = (
+          width: number,
+          height: number,
+          depth: number,
+          x: number,
+          y: number,
+          z: number,
+          name: string,
+        ) => {
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), mainMat)
+          mesh.position.set(x, y, z)
+          mesh.name = name
+          mesh.castShadow = !lowSpecMode
+          mesh.receiveShadow = true
+          mesh.userData = { entityId: f.id }
+          group.add(mesh)
+          pickableMeshes.push(mesh)
+          return mesh
+        }
 
         if (f.normalized_glb) {
           gltfLoader.load(
@@ -647,6 +768,108 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
               console.error(`Không thể tải GLB ${f.asset_id || f.id}`, error)
             }
           )
+        } else if (f.category === 'bed' || f.category === 'double_bed') {
+          const frameHeight = Math.min(0.28, fh * 0.3)
+          const mattressHeight = Math.min(0.24, fh * 0.26)
+          const headboardDepth = Math.min(0.14, fd * 0.09)
+          addBoxPart(fw, frameHeight, fd * 0.94, 0, frameHeight / 2, fd * 0.02, 'bed-frame')
+          addBoxPart(fw * 0.96, mattressHeight, fd * 0.86, 0, frameHeight + mattressHeight / 2, fd * 0.06, 'bed-mattress')
+          addBoxPart(fw, fh, headboardDepth, 0, fh / 2, -fd / 2 + headboardDepth / 2, 'bed-headboard')
+          addBoxPart(fw * 0.38, mattressHeight * 0.55, fd * 0.2, -fw * 0.23, frameHeight + mattressHeight * 1.12, -fd * 0.27, 'bed-pillow')
+          addBoxPart(fw * 0.38, mattressHeight * 0.55, fd * 0.2, fw * 0.23, frameHeight + mattressHeight * 1.12, -fd * 0.27, 'bed-pillow')
+          addBoxPart(fw * 0.88, 0.035, fd * 0.42, 0, frameHeight + mattressHeight + 0.035, fd * 0.18, 'bed-blanket')
+        } else if (f.category === 'nightstand' || f.category === 'bedside_table') {
+          const leg = Math.min(0.045, fw * 0.12, fd * 0.12)
+          const bodyHeight = fh * 0.66
+          const bodyBottom = fh * 0.25
+          addBoxPart(fw, bodyHeight, fd, 0, bodyBottom + bodyHeight / 2, 0, 'nightstand-cabinet')
+          addBoxPart(fw * 0.88, bodyHeight * 0.42, Math.min(0.025, fd * 0.08), 0, bodyBottom + bodyHeight * 0.68, fd / 2 + 0.012, 'nightstand-drawer')
+          for (const x of [-fw / 2 + leg, fw / 2 - leg]) {
+            for (const z of [-fd / 2 + leg, fd / 2 - leg]) addBoxPart(leg, bodyBottom, leg, x, bodyBottom / 2, z, 'nightstand-leg')
+          }
+        } else if (f.category === 'rug' || f.category === 'round_rug' || f.category === 'rug_round') {
+          const rug = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, fh, 64), mainMat)
+          rug.scale.set(fw, 1, fd)
+          rug.position.y = fh / 2
+          rug.castShadow = false
+          rug.receiveShadow = true
+          rug.userData = { entityId: f.id }
+          group.add(rug)
+          pickableMeshes.push(rug)
+        } else if (f.category === 'tv_cabinet' || f.category === 'tv_console') {
+          const shell = Math.min(0.035, fh * 0.16)
+          addBoxPart(fw, shell, fd, 0, shell / 2, 0, 'tv-console-base')
+          addBoxPart(fw, shell, fd, 0, fh - shell / 2, 0, 'tv-console-top')
+          addBoxPart(shell, fh, fd, -fw / 2 + shell / 2, fh / 2, 0, 'tv-console-side')
+          addBoxPart(shell, fh, fd, fw / 2 - shell / 2, fh / 2, 0, 'tv-console-side')
+          addBoxPart(shell, fh, fd, 0, fh / 2, 0, 'tv-console-divider')
+          addBoxPart(fw / 2 - shell * 2, fh - shell * 2, shell, -fw / 4, fh / 2, fd / 2 - shell / 2, 'tv-console-door')
+          addBoxPart(fw / 2 - shell * 2, fh - shell * 2, shell, fw / 4, fh / 2, fd / 2 - shell / 2, 'tv-console-door')
+        } else if (f.category === 'chair' || f.category === 'armchair' || f.category === 'desk_chair') {
+          const leg = Math.min(0.055, fw * 0.12, fd * 0.12)
+          const seatY = Math.min(fh * 0.55, 0.46)
+          const seatH = Math.min(0.1, fh * 0.14)
+          addBoxPart(fw * 0.86, seatH, fd * 0.82, 0, seatY, 0, 'chair-seat')
+          addBoxPart(fw * 0.86, fh - seatY, Math.min(0.11, fd * 0.2), 0, seatY + (fh - seatY) / 2, -fd * 0.36, 'chair-back')
+          for (const x of [-fw * 0.34, fw * 0.34]) {
+            for (const z of [-fd * 0.32, fd * 0.32]) addBoxPart(leg, seatY, leg, x, seatY / 2, z, 'chair-leg')
+          }
+        } else if (f.category === 'bunk_bed' || f.category === 'bunkbed') {
+          const post = Math.min(0.08, fw * 0.08, fd * 0.08)
+          const frame = Math.min(0.1, fh * 0.08)
+          const lowerY = Math.min(fh - frame / 2, 0.4 + frame / 2)
+          const upperY = Math.min(fh - frame / 2, 1.4 + frame / 2)
+          for (const x of [-fw / 2 + post / 2, fw / 2 - post / 2]) {
+            for (const z of [-fd / 2 + post / 2, fd / 2 - post / 2]) {
+              addBoxPart(post, fh, post, x, fh / 2, z, 'bunk-post')
+            }
+          }
+          for (const y of [lowerY, upperY]) {
+            addBoxPart(fw - post * 2, frame, fd - post * 2, 0, y, 0, 'bunk-frame')
+            addBoxPart(fw - post * 2.5, frame * 0.7, fd - post * 2.5, 0, y + frame * 0.72, 0, 'mattress')
+          }
+          const guardY = Math.min(fh - post / 2, upperY + 0.18)
+          addBoxPart(fw - post * 2, post, post, 0, guardY, -fd / 2 + post, 'guard-rail')
+          const ladderX = fw / 2 - post * 1.4
+          addBoxPart(post, upperY, post, ladderX, upperY / 2, fd / 2 + post, 'ladder-side')
+          addBoxPart(post, upperY, post, ladderX - 0.42, upperY / 2, fd / 2 + post, 'ladder-side')
+          for (let i = 1; i <= 5; i += 1) {
+            addBoxPart(0.42, post, post, ladderX - 0.21, (upperY * i) / 6, fd / 2 + post, 'ladder-rung')
+          }
+        } else if (f.category === 'desk' || f.category === 'study_desk') {
+          const topThickness = Math.min(0.06, fh * 0.12)
+          const legWidth = Math.min(0.08, fw * 0.12)
+          const legDepth = Math.min(0.08, fd * 0.18)
+          addBoxPart(fw, topThickness, fd, 0, fh - topThickness / 2, 0, 'desk-top')
+          for (const x of [-fw / 2 + legWidth, fw / 2 - legWidth]) {
+            for (const z of [-fd / 2 + legDepth, fd / 2 - legDepth]) {
+              addBoxPart(legWidth, fh - topThickness, legDepth, x, (fh - topThickness) / 2, z, 'desk-leg')
+            }
+          }
+          addBoxPart(fw * 0.46, fh * 0.62, fd * 0.42, fw * 0.25, (fh * 0.62) / 2, fd * 0.25, 'desk-drawer')
+        } else if (f.category === 'wardrobe') {
+          const panel = Math.min(0.05, fw * 0.08, fd * 0.12)
+          addBoxPart(fw, panel, fd, 0, panel / 2, 0, 'wardrobe-base')
+          addBoxPart(fw, panel, fd, 0, fh - panel / 2, 0, 'wardrobe-top')
+          addBoxPart(panel, fh, fd, -fw / 2 + panel / 2, fh / 2, 0, 'wardrobe-side')
+          addBoxPart(panel, fh, fd, fw / 2 - panel / 2, fh / 2, 0, 'wardrobe-side')
+          addBoxPart(fw / 2 - panel, fh - panel * 2, panel, -fw / 4, fh / 2, fd / 2 - panel / 2, 'wardrobe-door')
+          addBoxPart(fw / 2 - panel, fh - panel * 2, panel, fw / 4, fh / 2, fd / 2 - panel / 2, 'wardrobe-door')
+        } else if (f.category === 'bookshelf' || f.category === 'bookcase') {
+          const panel = Math.min(0.045, fw * 0.12, fd * 0.12)
+          addBoxPart(panel, fh, fd, -fw / 2 + panel / 2, fh / 2, 0, 'bookshelf-side')
+          addBoxPart(panel, fh, fd, fw / 2 - panel / 2, fh / 2, 0, 'bookshelf-side')
+          for (let i = 0; i <= 5; i += 1) {
+            const y = panel / 2 + ((fh - panel) * i) / 5
+            addBoxPart(fw, panel, fd, 0, y, 0, 'bookshelf-shelf')
+          }
+        } else if (f.category === 'stair' || f.category === 'staircase' || f.category === 'bunk_stair') {
+          const count = 8
+          const stepWidth = fw / count
+          for (let i = 0; i < count; i += 1) {
+            const stepHeight = (fh * (i + 1)) / count
+            addBoxPart(stepWidth, stepHeight, fd, -fw / 2 + stepWidth * (i + 0.5), stepHeight / 2, 0, 'bunk-step')
+          }
         } else if (f.category === 'sofa') {
           const base = new THREE.Mesh(new THREE.BoxGeometry(fw, fh * 0.46, fd), mainMat)
           base.position.y = fh * 0.23
@@ -705,8 +928,8 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
           group.add(outline)
         }
 
-        group.position.set((f.x_mm || 2000) / 1000, 0, (f.y_mm || 2500) / 1000)
-        group.rotation.y = -((f.rotation_deg || 0) * Math.PI) / 180
+        group.position.set((f.x_mm ?? 2000) / 1000, (f.z_mm ?? 0) / 1000, (f.y_mm ?? 2500) / 1000)
+        group.rotation.y = -((f.rotation_deg ?? 0) * Math.PI) / 180
         scene.add(group)
       })
 
@@ -812,11 +1035,13 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
     }, [cameraPreset, viewMode])
 
     useEffect(() => {
-      cutawayWallsRef.current.forEach(({ mesh, fullHeight, baseHeight, cutaway }) => {
+      cutawayWallsRef.current.forEach(({ mesh, bottom, top, cutaway }) => {
         const active = cutawayEnabled && cutaway
-        const nextHeight = active ? 0.32 : fullHeight
-        mesh.scale.y = nextHeight / baseHeight
-        mesh.position.y = nextHeight / 2
+        const fullHeight = top - bottom
+        const visibleTop = active ? Math.min(top, 0.32) : top
+        mesh.visible = visibleTop > bottom
+        mesh.scale.y = mesh.visible ? (visibleTop - bottom) / fullHeight : 1
+        mesh.position.y = mesh.visible ? (bottom + visibleTop) / 2 : (bottom + top) / 2
         const material = mesh.material as THREE.MeshStandardMaterial
         material.transparent = active
         material.opacity = active ? 0.45 : 1
@@ -971,7 +1196,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                     <line x1={0} y1={-250} x2={roomW} y2={-250} />
                     <line x1={0} y1={-330} x2={0} y2={-170} />
                     <line x1={roomW} y1={-330} x2={roomW} y2={-170} />
-                    <text x={roomW / 2} y={-310} textAnchor="middle" fontSize={135} fontFamily="JetBrains Mono" fontWeight={600}>
+                    <text x={roomW / 2} y={-310} textAnchor="middle" fontSize={135} fontFamily="'JetBrains Mono', monospace" fontWeight={600}>
                       {roomW} mm ({(roomW / 1000).toFixed(2)}m)
                     </text>
 
@@ -983,7 +1208,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                       y={roomD / 2}
                       textAnchor="middle"
                       fontSize={135}
-                      fontFamily="JetBrains Mono"
+                      fontFamily="'JetBrains Mono', monospace"
                       fontWeight={600}
                       transform={`rotate(-90, -320, ${roomD / 2})`}
                     >
@@ -1019,11 +1244,12 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                           x={(w.start_mm[0] + w.end_mm[0]) / 2 + 190}
                           y={(w.start_mm[1] + w.end_mm[1]) / 2}
                           fontSize={112}
+                          fontFamily="'Inter', -apple-system, sans-serif"
                           fill="#0F766E"
                           fontWeight={600}
                           transform={`rotate(90, ${(w.start_mm[0] + w.end_mm[0]) / 2 + 190}, ${(w.start_mm[1] + w.end_mm[1]) / 2})`}
                         >
-                          TƯỜNG NHẤN ({pMat?.name?.slice(0, 18) || w.face_a_material_id})
+                          TƯỜNG NHẤN ({pMat?.name || w.face_a_material_id})
                         </text>
                       )}
                     </g>
@@ -1036,13 +1262,26 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                   if (!w) return null
                   const cx = w.start_mm[0] + (w.end_mm[0] - w.start_mm[0]) * (d.t ?? 0.3)
                   const cy = w.start_mm[1] + (w.end_mm[1] - w.start_mm[1]) * (d.t ?? 0.3)
+                  const angleDeg = (Math.atan2(w.end_mm[1] - w.start_mm[1], w.end_mm[0] - w.start_mm[0]) * 180) / Math.PI
                   const dw = d.width_mm || 900
+                  const hingesLeft = d.hinges_side !== 'right'
+                  const hingeX = hingesLeft ? cx - dw / 2 : cx + dw / 2
+                  const closedX = hingesLeft ? cx + dw / 2 : cx - dw / 2
+                  const direction = hingesLeft ? 1 : -1
+                  const inwardSign = d.swing_direction === 'outward' ? -1 : 1
+                  const swingAngle = (65 * Math.PI) / 180
+                  const openX = hingeX + direction * dw * Math.cos(swingAngle)
+                  const openY = cy + inwardSign * dw * Math.sin(swingAngle)
+                  const gapColor = theme === 'dark' ? '#18181B' : '#FFFFFF'
                   return (
-                    <g key={d.id}>
-                      <rect x={cx - dw / 2} y={cy - 110} width={dw} height={220} fill="#FFFFFF" stroke="#B45309" strokeWidth={18} />
+                    <g key={d.id} transform={`rotate(${angleDeg}, ${cx}, ${cy})`}>
+                      <line x1={cx - dw / 2} y1={cy} x2={cx + dw / 2} y2={cy} stroke={gapColor} strokeWidth={(w.thickness_mm || 200) + 36} />
+                      <line x1={cx - dw / 2} y1={cy - 105} x2={cx - dw / 2} y2={cy + 105} stroke="#B45309" strokeWidth={22} />
+                      <line x1={cx + dw / 2} y1={cy - 105} x2={cx + dw / 2} y2={cy + 105} stroke="#B45309" strokeWidth={22} />
+                      <line x1={hingeX} y1={cy} x2={openX} y2={openY} stroke="#B45309" strokeWidth={32} strokeLinecap="round" />
                       {visibleLayers.doorSwings && (
                         <path
-                          d={`M ${cx - dw / 2} ${cy} A ${dw} ${dw} 0 0 1 ${cx + dw / 2} ${cy - dw}`}
+                          d={`M ${closedX} ${cy} A ${dw} ${dw} 0 0 ${hingesLeft ? 1 : 0} ${openX} ${openY}`}
                           fill="rgba(180, 83, 9, 0.08)"
                           stroke="#B45309"
                           strokeWidth={14}
@@ -1050,7 +1289,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                         />
                       )}
                       {visibleLayers.dimensions && (
-                        <text x={cx} y={cy + 240} textAnchor="middle" fontSize={110} fill="#B45309" fontFamily="JetBrains Mono">
+                        <text x={cx} y={cy + 240} textAnchor="middle" fontSize={110} fill="#B45309" fontFamily="'JetBrains Mono', monospace">
                           Cửa {dw}mm
                         </text>
                       )}
@@ -1064,12 +1303,19 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                   if (!w) return null
                   const cx = w.start_mm[0] + (w.end_mm[0] - w.start_mm[0]) * (win.t ?? 0.5)
                   const cy = w.start_mm[1] + (w.end_mm[1] - w.start_mm[1]) * (win.t ?? 0.5)
+                  const angleDeg = (Math.atan2(w.end_mm[1] - w.start_mm[1], w.end_mm[0] - w.start_mm[0]) * 180) / Math.PI
                   const ww = win.width_mm || 1500
+                  const gapColor = theme === 'dark' ? '#18181B' : '#FFFFFF'
                   return (
-                    <g key={win.id}>
-                      <rect x={cx - ww / 2} y={cy - 105} width={ww} height={210} fill="#E0F2FE" stroke="#0284C7" strokeWidth={18} />
+                    <g key={win.id} transform={`rotate(${angleDeg}, ${cx}, ${cy})`}>
+                      <line x1={cx - ww / 2} y1={cy} x2={cx + ww / 2} y2={cy} stroke={gapColor} strokeWidth={(w.thickness_mm || 200) + 36} />
+                      <line x1={cx - ww / 2} y1={cy - 42} x2={cx + ww / 2} y2={cy - 42} stroke="#0284C7" strokeWidth={20} />
+                      <line x1={cx - ww / 2} y1={cy + 42} x2={cx + ww / 2} y2={cy + 42} stroke="#0284C7" strokeWidth={20} />
+                      <line x1={cx - ww / 2} y1={cy - 82} x2={cx - ww / 2} y2={cy + 82} stroke="#0284C7" strokeWidth={24} />
+                      <line x1={cx} y1={cy - 82} x2={cx} y2={cy + 82} stroke="#0284C7" strokeWidth={18} />
+                      <line x1={cx + ww / 2} y1={cy - 82} x2={cx + ww / 2} y2={cy + 82} stroke="#0284C7" strokeWidth={24} />
                       {visibleLayers.dimensions && (
-                        <text x={cx} y={cy - 140} textAnchor="middle" fontSize={105} fill="#0284C7" fontFamily="JetBrains Mono">
+                        <text x={cx} y={cy - 140} textAnchor="middle" fontSize={105} fill="#0284C7" fontFamily="'JetBrains Mono', monospace">
                           Cửa sổ {ww}mm
                         </text>
                       )}
@@ -1115,17 +1361,18 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
                             y={f.y_mm - 26}
                             textAnchor="middle"
                             fontSize={110}
+                            fontFamily="'Inter', -apple-system, sans-serif"
                             fontWeight={600}
                             fill="#171717"
                           >
-                            {f.name.slice(0, 18)}
+                            {f.name}
                           </text>
                           <text
                             x={f.x_mm}
                             y={f.y_mm + 110}
                             textAnchor="middle"
                             fontSize={96}
-                            fontFamily="JetBrains Mono"
+                            fontFamily="'JetBrains Mono', monospace"
                             fill="#52525B"
                           >
                             {Math.round(f.width_mm)}×{Math.round(f.depth_mm)}mm

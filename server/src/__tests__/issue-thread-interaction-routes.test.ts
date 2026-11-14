@@ -835,6 +835,33 @@ describe("issue thread interaction routes", () => {
     }), expect.anything());
   });
 
+  it("rejects corrupted Unicode in agent interactions before persistence", async () => {
+    const app = await createApp({
+      type: "agent",
+      agentId: CREATED_AGENT_ID,
+      companyId: "company-1",
+      runId: RUN_1,
+    });
+    const res = await request(app)
+      .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions")
+      .send({
+        kind: "ask_user_questions",
+        payload: {
+          version: 1,
+          questions: [{
+            id: "style",
+            prompt: "Phong c�ch nào?",
+            selectionMode: "single",
+            options: [{ id: "japandi", label: "Japandi sáng" }],
+          }],
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body.error).toContain("payload.payload.questions[0].prompt");
+    expect(mockInteractionService.create).not.toHaveBeenCalled();
+  });
+
   it.each(["in_review", "done"])("keeps interaction reads free of expiry, activity writes, and recovery while %s", async (status) => {
     mockIssueService.getById.mockResolvedValue(createIssue({
       status,

@@ -1009,6 +1009,23 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
+  it("rejects corrupted Unicode in agent comments before persistence", async () => {
+    mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+      allowed: input.action === "issue:comment" || input.action === "issue:read",
+      action: input.action,
+      reason: "allow_issue_mention_grant",
+      explanation: "Allowed by a mention-scoped issue comment grant.",
+    }));
+
+    const res = await request(await createApp(peerActor()))
+      .post(`/api/issues/${issueId}/comments`)
+      .send({ body: "Concept ph�ng ngủ" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body.error).toContain("Unicode replacement character");
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+  });
+
   it("keeps visible peer comments agent-class even when authorType tries to smuggle user wake privilege", async () => {
     mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
       allowed: input.action === "issue:read" || input.action === "issue:comment",

@@ -17,18 +17,23 @@ describe("Atelier agent workflow", () => {
     }
   });
 
-  it("covers the chief and all eight specialist agents", () => {
+  it("uses the render specialist and omits the retired lighting agent", () => {
     expect(new Set(ATELIER_WORKFLOW_STAGES.map((stage) => stage.agentKey))).toEqual(new Set([
       "agent_concierge",
       "agent_floorplan",
       "agent_geometry",
       "agent_furniture",
       "agent_style",
-      "agent_ceiling_lighting",
+      "agent_render",
       "agent_qa",
       "agent_research",
       "agent_cost",
     ]));
+    expect(ATELIER_WORKFLOW_STAGES.some((stage) => stage.key === "lighting")).toBe(false);
+    expect(ATELIER_WORKFLOW_STAGES.find((stage) => stage.key === "render")?.dependsOn).toEqual([
+      "furniture",
+      "style",
+    ]);
   });
 
   it("publishes only downstream handoff targets", () => {

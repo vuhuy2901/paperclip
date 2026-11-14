@@ -19,7 +19,7 @@ import { assertAtelierNodeAssignment, upgradeLegacyAtelierDefinition } from "./a
 
 export const ATELIER_COMPANY_ID = "b2e1c8a5-c3c9-412c-99cb-63180c4015dc";
 export const ATELIER_COMPANY_WORKFLOW_NAME = "Atelier Company Workflow";
-export const ATELIER_COMPANY_WORKFLOW_VERSION = 1;
+export const ATELIER_COMPANY_WORKFLOW_VERSION = 2;
 export const ATELIER_COMPANY_WORKFLOW_ORIGIN = `atelier-company-workflow:v${ATELIER_COMPANY_WORKFLOW_VERSION}`;
 
 export type AtelierCanonicalStage = {
@@ -70,37 +70,46 @@ export const ATELIER_CANONICAL_STAGES: readonly AtelierCanonicalStage[] = [
     gate: { decisionLedger: true, outputReferences: true, approval: true },
   },
   {
-    key: "lighting",
-    label: "Lighting / Visualization",
-    agentKey: "agent_ceiling_lighting",
+    key: "render",
+    label: "Render / Visualization",
+    agentKey: "agent_render",
     dependsOn: ["furniture", "style"],
-    description: "Thiết kế chiếu sáng và visualization dựa trên layout/vật liệu đã gate.",
+    description: "Thiết lập camera, HDRI, ánh sáng kết xuất và visualization dựa trên layout/vật liệu đã gate.",
     requiredInputs: ["furniture_handoff", "style_handoff"],
+    gate: { decisionLedger: true, outputReferences: true, approval: false },
+  },
+  {
+    key: "research",
+    label: "Product Research",
+    agentKey: "agent_research",
+    dependsOn: ["furniture", "style"],
+    description: "Xác minh sản phẩm, kích thước, nguồn hàng, link và trạng thái giá.",
+    requiredInputs: ["furniture_handoff", "style_handoff"],
+    gate: { decisionLedger: true, outputReferences: true, approval: false },
+  },
+  {
+    key: "qa",
+    label: "QA",
+    agentKey: "agent_qa",
+    dependsOn: ["geometry", "furniture", "style", "render"],
+    description: "Kiểm tra hình học, công năng, vật liệu và tính nhất quán của ảnh render.",
+    requiredInputs: ["all_design_outputs", "render_handoff"],
     gate: { decisionLedger: true, outputReferences: true, approval: false },
   },
   {
     key: "cost",
     label: "Cost / BOM",
     agentKey: "agent_cost",
-    dependsOn: ["lighting"],
+    dependsOn: ["qa", "research"],
     description: "Bóc tách BOM và dự toán; ngân sách thiếu phải needs_input, không tự chốt.",
     requiredInputs: ["design_handoff", "budget_range", "price_sources"],
     gate: { decisionLedger: true, outputReferences: true, approval: true },
   },
   {
-    key: "qa",
-    label: "QA",
-    agentKey: "agent_qa",
-    dependsOn: ["cost"],
-    description: "Kiểm tra hình học, công năng, hồ sơ, nguồn giá và các quyết định còn thiếu.",
-    requiredInputs: ["all_prior_outputs"],
-    gate: { decisionLedger: true, outputReferences: true, approval: false },
-  },
-  {
     key: "final_review",
     label: "Final Review",
     agentKey: "agent_concierge",
-    dependsOn: ["qa"],
+    dependsOn: ["cost"],
     description: "Chief tổng hợp, nêu phần cần người dùng duyệt và chỉ kết luận sau approval.",
     requiredInputs: ["qa_handoff", "approval_record"],
     gate: { decisionLedger: true, outputReferences: true, approval: true },
@@ -145,7 +154,7 @@ const workflowDefinition: AtelierWorkflowDefinition = {
 
 function validateCanonicalGraph(stages: readonly AtelierCanonicalStage[]) {
   const keys = new Set(stages.map((stage) => stage.key));
-  if (keys.size !== stages.length || keys.size !== 8) throw new Error("Atelier canonical workflow must contain exactly eight unique stages");
+  if (stages.length === 0 || keys.size !== stages.length) throw new Error("Atelier canonical workflow stages must be non-empty and unique");
   const visiting = new Set<string>();
   const visited = new Set<string>();
   const byKey = new Map(stages.map((stage) => [stage.key, stage]));

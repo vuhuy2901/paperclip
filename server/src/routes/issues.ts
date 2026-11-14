@@ -5,6 +5,7 @@ import { notifyNativeStatusReassessment } from "../services/native-status-reasse
 import { notifyUnsafeWorkspaceExportRecovery } from "../services/unsafe-workspace-export-notifications.js";
 import { notifyChatInboundWakeNotices } from "../services/chat-inbound-wake-notice-notifications.js";
 import { completeIssueCommentReceipt } from "../services/issue-comment-receipt.js";
+import { findUnicodeReplacementPath } from "../services/agent-text-ingestion.js";
 import { readInboxMine } from "../services/inbox-mine-read.js";
 import { subscribeCompanyLiveEvents } from "../services/live-events.js";
 import { INBOX_MINE_ISSUE_STATUS_FILTER, latestFailedRunsByAgent } from "@paperclipai/shared";
@@ -17747,6 +17748,15 @@ export function issueRoutes(
         assertBoard(req);
       }
 
+      if (req.actor.type === "agent") {
+        const corruptedField = findUnicodeReplacementPath(req.body);
+        if (corruptedField) {
+          throw unprocessable(
+            `Agent text contains the Unicode replacement character at ${corruptedField}. Encode JSON as UTF-8 bytes and send Content-Type: application/json; charset=utf-8.`,
+          );
+        }
+      }
+
       const actor = getActorInfo(req);
       const agentSourceRunId =
         req.actor.type === "agent" ? requireAgentRunId(req, res) : null;
@@ -19215,6 +19225,14 @@ export function issueRoutes(
         "Issue not found",
       );
       if (!issue) return;
+      if (req.actor.type === "agent") {
+        const corruptedField = findUnicodeReplacementPath(req.body);
+        if (corruptedField) {
+          throw unprocessable(
+            `Agent text contains the Unicode replacement character at ${corruptedField}. Encode JSON as UTF-8 bytes and send Content-Type: application/json; charset=utf-8.`,
+          );
+        }
+      }
       if (issue.conversationAgentId && req.actor.type === "board") {
         if (!(await instanceSettings.getExperimental()).enableAgentChat) throw notFound("Agent Chat is disabled");
         if (!req.actor.userId) throw forbidden("Board user access required");

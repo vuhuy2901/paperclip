@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Inbox, Boxes, ChevronRight, CircleCheck, FolderOpen, History, LayoutDashboard, MessageCircle, MoreHorizontal, Network, Pin, PinOff, Plus, Repeat, Search, Settings, SquarePen, Unplug, Send, Cpu, type LucideIcon } from "lucide-react";
+import { Inbox, Boxes, Bed, ChevronRight, CircleCheck, FolderOpen, History, LayoutDashboard, MessageCircle, MoreHorizontal, Network, Pin, PinOff, Plus, Repeat, Search, Settings, SquarePen, Unplug, Send, Cpu, type LucideIcon } from "lucide-react";
 import type { Agent, Project } from "@paperclipai/shared";
 import { useCoordinatorAttentionCount } from "@/hooks/useCoordinatorAttentionCount";
 import { issuesApi } from "@/api/issues";
@@ -29,9 +29,9 @@ import { agentChatPinKey } from "./AgentChatPin";
 import { PinnedNavigationList, type PinnedNavigationItem } from "./PinnedNavigationList";
 
 const moreDestinations = [
+  { label: "Thiết kế Phòng ngủ 2D", to: "/bedroom-studio", icon: Bed },
   { label: "Không gian thiết kế 2D/3D", to: "/design-studio", icon: Boxes },
-  { label: "Danh mục nội thất", to: "/inventory-bom", icon: Boxes },
-  { label: "Dự toán", to: "/cost-estimation", icon: Boxes },
+  { label: "Dự toán & Ngân sách (BOQ)", to: "/cost-estimation", icon: Boxes },
   { label: "Phối cảnh Render", to: "/render-compare", icon: Boxes },
   { label: "Agent Control / Workflow", to: "/control-center", icon: Cpu },
   { label: "Nhập mặt bằng 2D", to: "/floorplan-import", icon: FolderOpen },
@@ -174,8 +174,8 @@ export function CoordinatorSidebar({ children }: { children?: ReactNode }) {
           <SidebarNavItem className="design-sidebar-item" to="/skills" label="Skills / Skill Studio" icon={Boxes} />
           <SidebarNavItem className="design-sidebar-item" to="/apps" label="Kết nối AI / MCP" icon={Unplug} />
           <SidebarNavItem className="design-sidebar-item" to="/design-studio" label="Không gian thiết kế 2D/3D" icon={Boxes} textBadge="3D" />
-          <SidebarNavItem className="design-sidebar-item" to="/inventory-bom" label="Danh mục nội thất" icon={Boxes} />
-          <SidebarNavItem className="design-sidebar-item" to="/cost-estimation" label="Dự toán" icon={FolderOpen} />
+          <SidebarNavItem className="design-sidebar-item" to="/bedroom-studio" label="Thiết kế Phòng ngủ" icon={Bed} textBadge="2D" />
+          <SidebarNavItem className="design-sidebar-item" to="/cost-estimation" label="Dự toán & Ngân sách (BOQ)" icon={FolderOpen} />
         </div>
         <Flyout open={moreOpen} onOpenChange={setMoreOpen}>
           <FlyoutTrigger asChild><button type="button" aria-label="More workspace pages" className="design-sidebar-item flex w-auto items-center gap-2.5 rounded-lg py-1.5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring"><MoreHorizontal className="size-4 shrink-0" /><span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : undefined}>More</span></button></FlyoutTrigger>
