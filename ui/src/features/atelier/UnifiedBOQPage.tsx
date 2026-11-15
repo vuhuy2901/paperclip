@@ -132,7 +132,7 @@ interface UnifiedProjectBOQ {
   tax_vnd: number;
   total_with_tax_vnd: number;
   budget_variance_vnd: number;
-  is_within_budget: bool;
+  is_within_budget: boolean;
   generated_at: string;
 }
 

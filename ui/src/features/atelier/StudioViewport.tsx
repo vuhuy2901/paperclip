@@ -40,6 +40,8 @@ import {
   disposeOwnedMaterials,
   type MaterialDefinitionValue,
 } from './materialResolver'
+import { PlacementTracker } from './scene-animation/placement'
+import { createPlacementAnimation } from './scene-animation/actor'
 import { Eye, Sparkles, Layers, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 interface StudioViewportProps {
@@ -146,6 +148,15 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
     },
   }) => {
     const mountRef = useRef<HTMLDivElement | null>(null)
+    const placementTracker = useRef(new PlacementTracker())
+    const [animationEnabled, setAnimationEnabled] = useState(true)
+    const [placementStatus, setPlacementStatus] = useState('')
+    const placementRef = useRef<ReturnType<typeof createPlacementAnimation> | null>(null)
+    useEffect(() => {
+      const reset = () => { if (document.hidden) placementTracker.current.reset() }
+      document.addEventListener('visibilitychange', reset)
+      return () => document.removeEventListener('visibilitychange', reset)
+    }, [])
     const cameraControllerRef = useRef<ReturnType<typeof createStudioCameraController> | null>(null)
     const cutawayWallsRef = useRef<
       Array<{ mesh: THREE.Mesh; capMesh?: THREE.Mesh; bottom: number; top: number; cutaway: boolean }>
@@ -364,6 +375,12 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
       scene.environment = environmentTarget.texture
 
       let disposed = false
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+      const addedIds = placementTracker.current.observe(project, animationEnabled && !reducedMotion.matches && !document.hidden && viewMode !== '2d')
+      const placement = createPlacementAnimation(scene, project, addedIds, renderScene, setPlacementStatus)
+      placementRef.current = placement
+      const motionChanged = () => { if (reducedMotion.matches) placement.dispose() }
+      reducedMotion.addEventListener('change', motionChanged)
       const hdriUrl = '/api/v1/assets/hdri/photo_studio_loft_hall_1k.hdr'
       const rgbeLoader = new RGBELoader()
       rgbeLoader.load(
@@ -1110,6 +1127,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
 
               group.add(model)
               objectRoots.set(f.id, group)
+              placement.register(f.id, group)
               Object.entries(f.material_overrides || {}).forEach(([slotId, override]: [string, any]) => {
                 const slot = (f.material_slots || []).find((item: any) => item.slot_id === slotId)
                 const definition = materialDefinitions.get(override.material_id)
@@ -1169,8 +1187,10 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
             },
             undefined,
             () => {
+              placement.failed(f.id)
               const fallbackMesh = addBoxPart(fw, fh, fd, 0, fh / 2, 0, f.name || f.id)
               fallbackMesh.userData.partName = 'body'
+              placement.register(f.id, group)
               renderScene()
             }
           )
@@ -1397,6 +1417,10 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
           })
         }
 
+        if (resolvedAsset.kind !== 'glb') {
+          placement.register(f.id, group)
+        }
+
         group.position.set((f.x_mm ?? 2000) / 1000, (f.z_mm ?? 0) / 1000, (f.y_mm ?? 2500) / 1000)
         group.rotation.y = -((f.rotation_deg ?? 0) * Math.PI) / 180
         scene.add(group)
@@ -1432,7 +1456,12 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
         mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
         mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
         raycaster.setFromCamera(mouse, camera)
-        const hits = raycaster.intersectObjects(pickableMeshes, false)
+        const hits = raycaster.intersectObjects(pickableMeshes, false).filter((hit) => {
+          for (let node: THREE.Object3D | null = hit.object; node; node = node.parent) {
+            if (!node.visible) return false
+          }
+          return true
+        })
         if (hits.length > 0 && hits[0].object.userData?.entityId) {
           const hitData = hits[0].object.userData
           onSelectEntity(hitData.entityId)
@@ -1478,6 +1507,9 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
 
       return () => {
         disposed = true
+        placement.dispose()
+        placementRef.current = null
+        reducedMotion.removeEventListener('change', motionChanged)
         cameraControllerRef.current = null
         cutawayWallsRef.current = []
         resizeObs.disconnect()
@@ -1505,7 +1537,12 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
       pbrMaterials,
       ceilingVisible,
       ssaoEnabled,
+      animationEnabled,
     ])
+
+    useEffect(() => {
+      if (viewMode === '2d' || lowSpecMode) placementRef.current?.dispose()
+    }, [viewMode, lowSpecMode])
 
     useEffect(() => {
       const controller = cameraControllerRef.current
@@ -1894,6 +1931,16 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
               data-testid="viewport-3d-canvas"
               style={{ flex: '1 1 0', width: '100%', height: '100%', minWidth: 0, minHeight: 320, overflow: 'hidden' }}
             />
+          </div>
+        )}
+
+        {!lowSpecMode && viewMode !== '2d' && (
+          <div style={{ position: 'absolute', right: 12, bottom: 48, zIndex: 20, maxWidth: 'calc(100% - 24px)', padding: '6px 10px', borderRadius: 8, background: 'var(--card, #ffffff)', color: 'var(--foreground, #18181b)', fontSize: 12, border: '1px solid var(--border-subtle, rgba(0,0,0,0.1))', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={animationEnabled} onChange={(event) => setAnimationEnabled(event.target.checked)} />
+              <span>Minh hoạ bố trí đồ</span>
+            </label>
+            {placementStatus && <div role="status" aria-live="polite" style={{ fontSize: 11, color: 'var(--muted-foreground, #71717a)', marginTop: 2 }}>{placementStatus}</div>}
           </div>
         )}
 
