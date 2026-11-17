@@ -264,7 +264,7 @@ export function AtelierWorkflowBuilder() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
-  const [workspaceMode, setWorkspaceMode] = useState<"design" | "execution">("design");
+  const [workspaceMode, setWorkspaceMode] = useState<"library" | "design" | "execution">("library");
   const [diagramMode, setDiagramMode] = useState<"pipeline" | "lifecycle">(() => new URLSearchParams(window.location.search).get("diagram") === "lifecycle" ? "lifecycle" : "pipeline");
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
@@ -606,6 +606,45 @@ export function AtelierWorkflowBuilder() {
       : null;
 
   if (!active) return <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">{error || "Đang nạp workflow authority..."}</div>;
+
+  if (workspaceMode === "library") {
+    const published = latestPublished ?? versions.find((item) => item.status === "published") ?? null;
+    const draft = draftVersion;
+    const stepCount = published?.definition.nodes.filter((node) => !node.lifecycleStateOnly && node.type !== "START" && node.type !== "END").length ?? 0;
+    const workflowName = published?.definition.name ?? active.definition.name;
+    const workflowDescription = published?.definition.description ?? "Workflow điều phối AI của công ty.";
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+        <header className="shrink-0 border-b border-border bg-card px-5 py-4">
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="mr-auto"><div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Workflow Manager</div><h1 className="mt-1 text-2xl font-semibold tracking-tight">Thư viện workflow</h1><p className="mt-1 text-sm text-muted-foreground">Chọn workflow để xem chi tiết hoặc mở Designer khi cần tinh chỉnh.</p></div>
+            <button type="button" className={buttonClass} onClick={() => void load()} disabled={busy === "load"}><RefreshCw className="size-4" /> Làm mới</button>
+            <button type="button" className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground" onClick={() => void newDraft(true)}><Sparkles className="size-4" /> Tạo workflow</button>
+          </div>
+          <nav className="mt-4 flex gap-1" aria-label="Workflow Manager sections">
+            <button className="rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">Workflow Library</button>
+            <button className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted" onClick={() => { setWorkspaceMode("execution"); void refreshExecutions(); }}>Đang thực thi</button>
+            <button className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted" onClick={() => { setWorkspaceMode("execution"); void refreshExecutions(); }}>Lịch sử</button>
+          </nav>
+        </header>
+        <main className="min-h-0 flex-1 overflow-auto p-5 md:p-8">
+          <div className="mx-auto max-w-6xl">
+            <div className="mb-4 flex flex-wrap items-center gap-3"><div className="relative min-w-[260px] flex-1"><Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" /><input className={`${fieldClass} pl-9`} placeholder="Tìm workflow…" /></div><select className={fieldClass + " w-auto"}><option>Tất cả trạng thái</option><option>Published</option><option>Draft</option><option>Archived</option></select></div>
+            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Danh sách workflow">
+              <article className="rounded-xl border border-border bg-card p-5 shadow-sm transition hover:border-primary/50">
+                <div className="flex items-start justify-between gap-3"><div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary"><GitBranch className="size-5" /></div><SimpleStateBadge status={published ? "Published" : "Draft"} /></div>
+                <h2 className="mt-4 text-base font-semibold">{workflowName}</h2><p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">{workflowDescription}</p>
+                <div className="mt-4 grid grid-cols-3 gap-2 border-y border-border py-3 text-xs"><span><b className="block text-foreground">v{published?.version ?? active.version}</b><span className="text-muted-foreground">Published</span></span><span><b className="block text-foreground">{stepCount}</b><span className="text-muted-foreground">Bước</span></span><span><b className="block text-foreground">{projects.length}</b><span className="text-muted-foreground">Dự án</span></span></div>
+                <div className="mt-4 flex gap-2"><button type="button" className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground" onClick={() => setWorkspaceMode("design")}><Eye className="size-4" /> Xem chi tiết</button><button type="button" className={buttonClass} onClick={() => setWorkspaceMode("design")}><LayoutTemplate className="size-4" /> Tinh chỉnh</button></div>
+                {draft ? <p className="mt-3 text-[11px] text-amber-700">Có bản nháp v{draft.version} chưa publish.</p> : null}
+              </article>
+            </section>
+            <section className="mt-6 rounded-xl border border-border bg-card p-5"><div className="flex items-center justify-between"><div><h2 className="font-semibold">Dự án đang theo dõi</h2><p className="mt-1 text-sm text-muted-foreground">Mở project để xem execution và trạng thái các bước.</p></div><span className="text-xs text-muted-foreground">{projects.length} dự án</span></div><div className="mt-4 divide-y divide-border">{projects.slice(0, 8).map((project) => <button key={project.id} type="button" className="flex w-full items-center gap-3 py-3 text-left hover:bg-muted/30" onClick={() => navigate(`/${prefix}/projects/${project.id}/workflow`)}><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{project.name}</span><span className="font-mono text-[11px] text-muted-foreground">{project.id}</span></span><SimpleStateBadge status={project.workflow_status} /><ChevronRight className="size-4 text-muted-foreground" /></button>)}</div></section>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
